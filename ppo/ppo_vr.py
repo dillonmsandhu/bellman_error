@@ -29,7 +29,7 @@ def make_train(config):
 
     def train(rng):
         k = config.get('k', 32)
-        network, network_params = networks.initialize_network(rng, obs_shape, env, env_params, k, n_heads=2)
+        network, network_params = networks.initialize_network(rng, obs_shape, env, env_params, k, n_heads=2,layer_norm=config['LAYER_NORM'])
         train_state = networks.initialize_flax_train_state(config, network, network_params,)
         
         rng, _rng = jax.random.split(rng)
@@ -95,6 +95,8 @@ def make_train(config):
             initial_update_state = (train_state, traj_batch, advantages, target, rng)
             update_state, loss_info = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
             train_state, _, _, _, rng = update_state
+            value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False)
+            w_vr = value_metrics['VR_weights']
             # --------- Metrics ---------
             metric = {
                 k: v.mean() 
@@ -114,10 +116,7 @@ def make_train(config):
             # def value_metrics(evaluator, network, params, random_policy=False):
             value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False)
             metric.update(value_metrics)
-            
-            w_vr = value_metrics['VR_weights']
             train_state = helpers.inject_weights(train_state, w_vr)
-
 
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric
