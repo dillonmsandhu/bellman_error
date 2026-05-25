@@ -15,8 +15,10 @@ config = {
         "TOTAL_TIMESTEPS": 5e5,
         "NUM_EPOCHS": 4,
         "MINIBATCH_SIZE": 128,
-        "GAMMA": 0.99, # similar to that used by RND
-        "GAE_LAMBDA": 0.0,
+        "GAMMA": 0.99, 
+        "VALUE_LAMBDA": 0.0,
+        "POLICY_LAMBDA": 0.6,
+        "GAE_LAMBDA": 1.0,
         "CLIP_EPS": 0.2,
         "VF_CLIP": 0.2,
         "ENT_COEF": 0.01,

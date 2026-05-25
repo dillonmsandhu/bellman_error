@@ -246,8 +246,8 @@ def make_train(config):
             (_, env_state, last_obs, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
 
             # --- ADVANTAGE CALCULATION ---
-            advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"],)
-            _, target = helpers.calculate_gae(traj_batch, config["GAMMA"], 1.0,)
+            advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["POLICY_LAMBDA"])
+            _, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["VALUE_LAMBDA"])
 
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):

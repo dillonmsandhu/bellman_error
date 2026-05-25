@@ -80,7 +80,8 @@ def make_train(config):
 
 
             # --- ADVANTAGE CALCULATION ---
-            advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"], )
+            advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["POLICY_LAMBDA"])
+            _, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["VALUE_LAMBDA"])
 
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):
