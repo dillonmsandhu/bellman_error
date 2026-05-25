@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_lstd"
+SAVE_DIR = "random_vr"
 
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -37,7 +37,7 @@ def make_train(config):
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
-        train_state = networks.initialize_flax_train_state(config, network, network_params,)
+        train_state = networks.initialize_flax_train_state_no_w(config, network, network_params,)
         
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
@@ -76,11 +76,12 @@ def make_train(config):
             # --- ADVANTAGE CALCULATION ---
             advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"], )
 
+
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
                     traj_batch, advantages, targets = batch_info
-                    grad_fn = jax.value_and_grad(helpers.no_w_v_loss_fn, has_aux=False)
+                    grad_fn = jax.value_and_grad(helpers.v_loss_fn, has_aux=False)
                     
                     # 1. Unpack the auxiliary tuple here!
                     total_loss, grads = grad_fn(
@@ -118,9 +119,9 @@ def make_train(config):
                 }
             )
             value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=True)
+            w_br = value_metrics['VR_weights']
+            train_state = helpers.inject_weights(train_state, w_br)
             metric.update(value_metrics)
-            w_lstd = value_metrics['LSTD_weights']
-            train_state = helpers.inject_weights(train_state, w_lstd)
 
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric

@@ -134,59 +134,15 @@ def v_loss_fn(params, network, traj_batch, gae, targets, config):
     total_loss = config["VF_COEF"] * value_loss
     return total_loss
 
-def coordinate_descent_v_loss_fn(params, network, traj_batch, gae, targets, config):
-    # ---------------------------------------------------------
-    # 1. Create the Firewalled Parameters
-    # ---------------------------------------------------------
-    def freeze_w_map(path, val):
-        is_w = any('critic_head' in str(p) for p in path)
-        return jax.lax.stop_gradient(val) if is_w else val
-
-    def freeze_phi_map(path, val):
-        is_phi = any('critic_cnn' in str(p) for p in path)
-        return jax.lax.stop_gradient(val) if is_phi else val
-
-    params_w_frozen = jax.tree_util.tree_map_with_path(freeze_w_map, params)
-    params_phi_frozen = jax.tree_util.tree_map_with_path(freeze_phi_map, params)
-
-    # ---------------------------------------------------------
-    # 2. PPO Clipped Loss Helper
-    # ---------------------------------------------------------
-    def ppo_clipped_loss(value_pred):
-        value_pred_clipped = traj_batch.value + (value_pred - traj_batch.value).clip(
-            -config["VF_CLIP"], config["VF_CLIP"]
-        )
-        value_losses = jnp.square(value_pred - targets)
-        value_losses_clipped = jnp.square(value_pred_clipped - targets)
-        return 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-
-    # ---------------------------------------------------------
-    # 3. Decoupled Forward Passes & Losses
-    # ---------------------------------------------------------
-    # Train Phi: Forward pass with frozen W
-    value_for_phi = network.apply(params_w_frozen, traj_batch.obs, method = network.value)
-    loss_phi = ppo_clipped_loss(value_for_phi)
-
-    # Train W: Forward pass with frozen Phi
-    value_for_w = network.apply(params_phi_frozen, traj_batch.obs, method = network.value)
-    loss_w = ppo_clipped_loss(value_for_w)
-
-    # ---------------------------------------------------------
-    # 4. Combine
-    # ---------------------------------------------------------
-    
-    total_loss = config["VF_COEF"] * (loss_phi + loss_w)
-    
-    return total_loss
-
 def no_w_v_loss_fn(params, network, traj_batch, gae, targets, config):
     # ---------------------------------------------------------
     # 1. Create the Firewalled Parameters
     # ---------------------------------------------------------
     def freeze_w_map(path, val):
-        is_w = any('critic_head' in str(p) for p in path)
+        is_w = any(getattr(p, 'key', None) in ('w_layer', 'critic_head') or 
+                   'w_layer' in str(p) or 'critic_head' in str(p) for p in path)
         return jax.lax.stop_gradient(val) if is_w else val
-
+    
     params_w_frozen = jax.tree_util.tree_map_with_path(freeze_w_map, params)
 
     # ---------------------------------------------------------
@@ -204,6 +160,33 @@ def no_w_v_loss_fn(params, network, traj_batch, gae, targets, config):
     value_for_phi = network.apply(params_w_frozen, traj_batch.obs, method = network.value)
     loss_phi = ppo_clipped_loss(value_for_phi)
     return config["VF_COEF"] * loss_phi
+
+def v_loss_fn_no_grad(params, network, traj_batch, gae, targets, config):
+    "No update to phi."
+    # 1. Forward pass through the CNN to get the features
+    phi = network.apply(params, traj_batch.obs, method=network.value_features)
+    
+    # 2. SEVER THE GRAPH: Gradients from the value loss cannot pass this point.
+    # The CNN weights will receive zero gradient from this loss function.
+    phi_freeze = jax.lax.stop_gradient(phi)
+    
+    # 3. Forward pass through ONLY the linear head using the frozen features
+    value = network.apply(params, phi_freeze, method=network.value_from_features)
+    
+    # --- Standard Clipped Value Loss below ---
+    value_pred_clipped = traj_batch.value + (
+        value - traj_batch.value
+    ).clip(-config["VF_CLIP"], config["VF_CLIP"])
+    
+    value_losses = jnp.square(value - targets)
+    value_losses_clipped = jnp.square(value_pred_clipped - targets)
+    
+    value_loss = (
+        0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    )
+
+    total_loss = config["VF_COEF"] * value_loss
+    return total_loss
 
 
 def shuffle_and_batch(rng, transitions, n_minibatches):
@@ -320,21 +303,24 @@ def inject_weights(train_state, w):
     bias_weight = w[-1:]
     
     # 2. Define the new layer dictionary
-    new_critic_head = {
+    new_head = {
         'kernel': kernel_weights,
         'bias': bias_weight
     }
     
     # 3. Inject it while preserving the container type (dict vs frozendict)
+    params = train_state.params
+    if not isinstance(params, dict):
+        params = unfreeze(params)
+    
+    new_params = dict(params)
+    new_params['params'] = dict(new_params['params'])
+    if 'critic_head' in new_params['params']:
+        new_params['params']['critic_head'] = new_head
+    if 'w_layer' in new_params['params']:
+        new_params['params']['w_layer'] = new_head
+
     if isinstance(train_state.params, dict):
-        # Newer Flax (Standard Dict): Use a functional copy to avoid mutating JAX Tracers in-place
-        new_params = dict(train_state.params)
-        new_params['params'] = dict(new_params['params'])
-        new_params['params']['critic_head'] = new_critic_head
         return train_state.replace(params=new_params)
-        
     else:
-        # Older Flax (FrozenDict): Safe to use unfreeze/freeze
-        params = unfreeze(train_state.params)
-        params['params']['critic_head'] = new_critic_head
-        return train_state.replace(params=freeze(params))
+        return train_state.replace(params=freeze(new_params))

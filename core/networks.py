@@ -195,20 +195,41 @@ def initialize_flax_train_state(config, network, params):
                 eps=config.get('ADAM_EPS', 1e-5)
                 ),
         )
-        # tx = optax.chain(
-        #     optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-        #     optax.adamw(lr_scheduler, eps=1e-5),
-        # )
-    elif config.get('OPTIMIZER','AdamW')=='SGD':
-        lr_scheduler = optax.linear_schedule(
-            init_value=config["LR"] * 1000,
-            end_value=config["LR_END"] * 1000,
-            transition_steps=total_grad_steps
-        )
-        tx = optax.chain(
-                optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                optax.sgd(lr_scheduler),
-        )
+    train_state = TrainState.create(
+        apply_fn=network.apply,
+        params=params,
+        tx=tx,
+    )
+    return train_state
+
+def initialize_flax_train_state_no_w(config, network, params):
+    "Final critic weights are excluded from the optimizer."
+    # --- PPO Agent Scheduler & Optimizer ---
+    total_grad_steps = config["NUM_UPDATES"] * config["NUM_MINIBATCHES"] * config["NUM_EPOCHS"]
+
+    lr_scheduler = optax.linear_schedule(
+        init_value=config["LR"],
+        end_value=config["LR_END"],
+        transition_steps=total_grad_steps
+    )
+    adam_tx = optax.chain(
+            optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+            optax.adamw(lr_scheduler, 
+            weight_decay = config.get('WEIGHT_DECAY', 1e-2),
+            eps=config.get('ADAM_EPS', 1e-5)
+            ),
+    )
+    zero_tx = optax.set_to_zero()
+
+    def param_labels(path, val):
+        is_w = any(getattr(p, 'key', None) in ('w_layer', 'critic_head') or 
+                    'w_layer' in str(p) or 'critic_head' in str(p) for p in path)
+        return 'zero' if is_w else 'adam'
+
+    tx = optax.multi_transform(
+        {'adam': adam_tx, 'zero': zero_tx},
+        jax.tree_util.tree_map_with_path(param_labels, params)
+    )
     train_state = TrainState.create(
         apply_fn=network.apply,
         params=params,
@@ -235,4 +256,3 @@ def initialize_network(rng, obs_shape, env, env_params, k, n_heads: int, layer_n
     params = model.init(init_rng, jnp.zeros(obs_shape))
     print('number of features is ', model.final_hidden_dim)
     return model, params
-

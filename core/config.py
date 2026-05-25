@@ -21,7 +21,7 @@ config = {
         "VF_CLIP": 0.2,
         "ENT_COEF": 0.01,
         "VF_COEF": 0.5,
-        "MAX_GRAD_NORM": 0.5,
+        "MAX_GRAD_NORM": 1.0,
         "NETWORK_TYPE": 'cnn',
         "NORMALIZE_OBS": False,
         "CALC_TRUE_VALUES": True,

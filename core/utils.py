@@ -5,6 +5,7 @@ import json
 import cloudpickle
 import matplotlib.pyplot as plt
 from core.networks import *
+import pandas as pd
 
 # MAIN function in most algos.
 def run_experiment_main(make_train, SAVE_DIR):
@@ -17,7 +18,7 @@ def run_experiment_main(make_train, SAVE_DIR):
     run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default=None)
-    parser.add_argument('--run_suffix', type=str, default=run_timestamp)
+    parser.add_argument('--run-suffix', type=str, default=run_timestamp)
     parser.add_argument('--n-seeds', type=int, default=0)
     parser.add_argument('--save-checkpoint', action='store_true')
     parser.add_argument('--save-metrics', action='store_true')
@@ -236,6 +237,8 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         save_results(out, run_config, full_env_name, env_dir)
     elif args.save_metrics:
         save_results(metrics, run_config, full_env_name, env_dir)
+    else: # save config only
+        save_results(run_config, run_config, full_env_name, env_dir)
     
     
     # --- Helper for Metrics extraction ---

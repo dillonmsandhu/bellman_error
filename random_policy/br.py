@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_vr"
+SAVE_DIR = "random_br"
 
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -37,7 +37,7 @@ def make_train(config):
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
-        train_state = networks.initialize_flax_train_state(config, network, network_params,)
+        train_state = networks.initialize_flax_train_state_no_w(config, network, network_params,)
         
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
@@ -119,7 +119,7 @@ def make_train(config):
                 }
             )
             value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=True)
-            w_br = value_metrics['VR_weights']
+            w_br = value_metrics['BR_weights']
             train_state = helpers.inject_weights(train_state, w_br)
             metric.update(value_metrics)
 

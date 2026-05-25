@@ -6,7 +6,7 @@ import core.networks as networks
 import core.bellman_error as bellman_error
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "ppo"
+SAVE_DIR = "ppo_lstd"
 
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -29,8 +29,8 @@ def make_train(config):
 
     def train(rng):
         k = config.get('k', 32)
-        network, network_params = networks.initialize_network(rng, obs_shape, env, env_params, k, n_heads=2)
-        train_state = networks.initialize_flax_train_state(config, network, network_params,)
+        network, network_params = networks.initialize_network(rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM'])
+        train_state = networks.initialize_flax_train_state_no_w(config, network, network_params,)
         
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
@@ -72,7 +72,7 @@ def make_train(config):
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
                     traj_batch, advantages, targets = batch_info
-                    grad_fn = jax.value_and_grad(helpers._loss_fn, has_aux=True)
+                    grad_fn = jax.value_and_grad(helpers._loss_fn_no_w, has_aux=True)
                     
                     # 1. Unpack the auxiliary tuple here!
                     (total_loss, (value_loss, loss_actor, entropy)), grads = grad_fn(
@@ -95,6 +95,9 @@ def make_train(config):
             initial_update_state = (train_state, traj_batch, advantages, target, rng)
             update_state, loss_info = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
             train_state, _, _, _, rng = update_state
+            w_lstd = bellman_error.get_lstd_weights(evaluator, network, train_state.params, random_policy=False)
+            train_state = helpers.inject_weights(train_state, w_lstd)
+            
             # --------- Metrics ---------
             metric = {
                 k: v.mean() 
@@ -111,9 +114,13 @@ def make_train(config):
                     "mean_rew": traj_batch.reward.mean(),
                 }
             )
+            
             # def value_metrics(evaluator, network, params, random_policy=False):
             value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False)
             metric.update(value_metrics)
+            
+            w_lstd = value_metrics['LSTD_weights']
+            train_state = helpers.inject_weights(train_state, w_lstd)
 
 
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)

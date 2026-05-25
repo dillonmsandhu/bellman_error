@@ -101,6 +101,48 @@ def get_capacity_angle(V_true, V_vr, D):
     
     return inner_product / (norm_true * norm_vr + ε)
 
+def get_lstd_weights(evaluator, network, params, random_policy):
+    m = evaluator.num_actions
+    def get_policy_matrix():
+        if random_policy:
+            pi_dist = distrax.Categorical(
+                logits=jnp.zeros((evaluator.num_states, m))
+            )
+        else:
+            pi_dist = network.apply(params, evaluator.obs_stack, method=network.policy)
+
+        pi = pi_dist.probs
+        terminal_policy = jnp.ones( [1,m], dtype=pi.dtype) / m
+        pi = jnp.vstack([pi, terminal_policy])
+        return pi
+    
+    # Get policy as S x A matrix
+    pi = get_policy_matrix()
+    # Get the value features:
+    Φ = network.apply(params, evaluator.obs_stack, method=network.value_features)
+    # terminal state
+    Φ = jnp.vstack([Φ, jnp.zeros((1, Φ.shape[-1]))]) 
+    
+    # (add bias, but keep terminal state strictly zero):
+    bias_col = jnp.ones((Φ.shape[0], 1)).at[-1].set(0.0)
+    Φ = jnp.concatenate([Φ, bias_col], axis=-1)
+
+    # Compute stationary dist (no terminal state)
+    mu = evaluator.compute_stationary_distribution_raw(pi[:-1, :])
+    mu = jnp.append(mu, 0.0)
+    D = jnp.diag(mu) 
+
+    # Get the exact formulation of the MDP
+    γ = evaluator.gamma
+    P = evaluator.P # 3d tensor S x A x S'
+    P_π = jnp.einsum("sa,sam->sm", pi, P)
+    R_π_s = jnp.einsum("sa,sa->s", pi, evaluator.R)
+    # Gymnax awards the reward on the transition *INTO* s'
+    R_π = P_π @ R_π_s
+    V_lstd, w_lstd = LSTD_Exact(D, Φ, P_π, R_π, γ)
+    return w_lstd    
+
+
 def value_metrics(evaluator, network, params, random_policy=False):
     m = evaluator.num_actions
     def get_policy_matrix():

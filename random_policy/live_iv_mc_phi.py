@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 from core.networks import nn
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_iv_is_fixed_phi"
+SAVE_DIR = "random_policy_live_z_mc_phi"
 
 class IVActorCritic(nn.Module):
     action_dim: int
@@ -27,8 +27,7 @@ class IVActorCritic(nn.Module):
         
         # g_A will automatically size its input kernel to (z_dim + action_dim) 
         # on the first forward pass.
-        self.g_A_dense1 = nn.Dense(64)
-        self.g_A_norm = nn.LayerNorm(use_scale=False, use_bias=False)
+        self.g_A_dense1 = nn.Dense(32)
         self.g_A_dense2 = nn.Dense(self.phi_dim) # predicts td-diff
         self.g_A_dense_done = nn.Dense(1) # predicts done
 
@@ -45,6 +44,11 @@ class IVActorCritic(nn.Module):
     
     def value_features(self, obs):
         return self.phi(obs)
+
+    def value_from_features(self, phi):
+        phi_curr = phi
+        value = self.w(phi_curr).squeeze(-1)
+        return value
     
     def phi(self, obs):
         return self.phi_net(obs)
@@ -53,12 +57,20 @@ class IVActorCritic(nn.Module):
         return self.z_net(obs)
 
     def g_A(self, z_and_a):
+        # z_and_a is [phi_curr, one_hot_action]
+        phi_curr = z_and_a[..., :self.phi_dim] 
+        
+        # Predict the discounted expected next features
         x = self.g_A_dense1(z_and_a)
         x = jax.nn.leaky_relu(x)
-        x = self.g_A_norm(x)
-        x = self.g_A_dense2(x)
+        gamma_phi_prime = self.g_A_dense2(x)
+        
+        # The Residual Connection
+        x_hat = phi_curr - gamma_phi_prime 
+        
+        # Done prediction can branch off the hidden state
         done_logit = self.g_A_dense_done(x)
-        return x, done_logit
+        return x_hat, done_logit
 
     # --- Action optional ---
     def __call__(self, obs, action=None):
@@ -89,52 +101,57 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
     # =========================================================
     # STAGE 1
     # =========================================================
-    z = network.apply(params, traj_batch.obs, method=network.phi)
+    z = network.apply(params, traj_batch.obs, method=network.z) # z is seperate from phi. it is differentiable for next feature prediction.
+    
     action_features = one_hot_action(traj_batch, config['IS_CONTINUOUS'], network.action_dim)
     z = jnp.concatenate([z, action_features], axis=-1)
-    z = jax.lax.stop_gradient(z)
     x_hat, done_logit = network.apply(params, z, method=network.g_A)
     
-    phi_curr = network.apply(params, traj_batch.obs, method=network.phi)
     phi_next = network.apply(params, traj_batch.next_obs, method=network.phi)
-    phi_curr = jax.lax.stop_gradient(phi_curr)
-    phi_next = jax.lax.stop_gradient(phi_next)
+    not_done = (1 - jnp.expand_dims(traj_batch.done, -1))
 
-    done_loss = jnp.mean(optax.sigmoid_binary_cross_entropy(
-        logits=done_logit, 
-        labels=jnp.expand_dims(traj_batch.done, -1)
-    ))
+    phi = network.apply(params, traj_batch.obs, method=network.phi)
+
+    x_target = jax.lax.stop_gradient(
+        phi - config['GAMMA'] * phi_next * not_done
+    )
     
-    x_theta = phi_curr - config["GAMMA"] * phi_next
-    forward_loss = jnp.mean((x_theta - x_hat) ** 2)
+    forward_loss = jnp.mean((x_target - x_hat) ** 2)
+    done_loss = 0
+    # done_loss = jnp.mean(optax.sigmoid_binary_cross_entropy(
+    #     logits=done_logit, 
+    #     labels=jnp.expand_dims(traj_batch.done, -1)
+    # ))
+    
     # =========================================================
     # STAGE 2
     # =========================================================
-    x_hat_freeze, done_logit_freeze = jax.tree.map(
-                        lambda x: jax.lax.stop_gradient(x), 
-                        (x_hat, done_logit)
-    )
-    # z is live. x_hat_freeze remains differentiable w.r.t z.
-    p_done_freeze = jax.nn.sigmoid(done_logit_freeze)
+    def firewall_map(path, val):
+        is_g_A = any('g_A' in str(p) for p in path)
+        return jax.lax.stop_gradient(val) if is_g_A else val
 
-    # Expected X-hat based on g(z)'s prediction of x-hat and prediction of done.
-    x_hat_freeze = p_done_freeze * jax.lax.stop_gradient(phi_curr)  \
-                 + (1.0 - p_done_freeze) * x_hat_freeze
+    params_frozen_A = jax.tree_util.tree_map_with_path(firewall_map, params)
+    x_hat_freeze, done_logit_freeze = network.apply(params_frozen_A,z, method=network.g_A)
+    # supposed to learn to predict 0 for phi_prime_hat when done = true.
     
     # w is live. Predict immediate reward.
-    reward_pred = network.apply(params, x_hat_freeze,method=network.w).squeeze(-1)
+    reward_pred = network.apply(params, x_hat_freeze, method=network.w).squeeze(-1)
     reward_loss = jnp.mean((reward_pred - traj_batch.reward) ** 2)
-
+    
+    # Doesn't flow gradient through w, only φ.
+    v_loss = helpers.no_w_v_loss_fn(params, network, traj_batch, advantages, targets, config)
+    # v_loss = helpers.v_loss_fn(params, network, traj_batch, advantages, targets, config)
     # =========================================================
     # PPO Actor Loss (Standard)
     # =========================================================
     # loss_actor, entropy = helpers.pi_loss_fn(params, network, traj_batch, advantages, config)
     loss_actor, entropy = (0,0)
-    total_loss = forward_loss + done_loss + reward_loss + loss_actor - (config["ENT_COEF"] * entropy)
+    total_loss = forward_loss + done_loss + reward_loss + loss_actor - (config["ENT_COEF"] * entropy) + 0.1 * v_loss
 
     loss_dict = {   'forward_loss': forward_loss,
                     'done_loss': done_loss,
-                    'reward_loss': reward_loss    
+                    'reward_loss': reward_loss,
+                    "v_loss": v_loss
     }
     return total_loss, loss_dict
 
@@ -209,7 +226,7 @@ def make_train(config):
             (_, env_state, last_obs, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
 
             # --- ADVANTAGE CALCULATION ---
-            advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"], )
+            advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], λ=1)
 
 
             # UPDATE NETWORK

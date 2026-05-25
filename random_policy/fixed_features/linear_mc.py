@@ -3,10 +3,39 @@
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
+import distrax
 import core.bellman_error as bellman_error
+
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "ppo_lstd"
+SAVE_DIR = "random_linear_mc"
+
+def v_loss_fn_no_grad(params, network, traj_batch, gae, targets, config):
+    
+    # 1. Forward pass through the CNN to get the features
+    phi = network.apply(params, traj_batch.obs, method=network.value_features)
+    
+    # 2. SEVER THE GRAPH: Gradients from the value loss cannot pass this point.
+    # The CNN weights will receive zero gradient from this loss function.
+    phi_freeze = jax.lax.stop_gradient(phi)
+    
+    # 3. Forward pass through ONLY the linear head using the frozen features
+    value = network.apply(params, phi_freeze, method=network.value_from_features)
+    
+    # --- Standard Clipped Value Loss below ---
+    value_pred_clipped = traj_batch.value + (
+        value - traj_batch.value
+    ).clip(-config["VF_CLIP"], config["VF_CLIP"])
+    
+    value_losses = jnp.square(value - targets)
+    value_losses_clipped = jnp.square(value_pred_clipped - targets)
+    
+    value_loss = (
+        0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    )
+
+    total_loss = config["VF_COEF"] * value_loss
+    return total_loss
 
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -23,13 +52,18 @@ def make_train(config):
     batch_size = config["NUM_STEPS"] * config["NUM_ENVS"]
     config["NUM_MINIBATCHES"] = batch_size // config["MINIBATCH_SIZE"]
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // batch_size
+    
     env, env_params = helpers.make_env(config)
     evaluator = helpers.initialize_evaluator(config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
+    n_actions = env.action_space(env_params).n
+    pi = distrax.Categorical(logits=jnp.zeros(n_actions))
 
     def train(rng):
         k = config.get('k', 32)
-        network, network_params = networks.initialize_network(rng, obs_shape, env, env_params, k, n_heads=2)
+        network, network_params = networks.initialize_network(
+            rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
+        )
         train_state = networks.initialize_flax_train_state(config, network, network_params,)
         
         rng, _rng = jax.random.split(rng)
@@ -44,7 +78,8 @@ def make_train(config):
                 train_state, env_state, last_obs, rng = env_scan_state
 
                 rng, _rng = jax.random.split(rng)
-                pi, value = network.apply(train_state.params, last_obs)
+                value = network.apply(train_state.params, last_obs)
+                pi = distrax.Categorical(logits=jnp.zeros((config['NUM_ENVS'], n_actions)))
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action)
 
@@ -54,7 +89,7 @@ def make_train(config):
                     rng_step, env_state, action, env_params
                 )
                 true_next_obs = info['real_next_obs']
-                next_val = network.apply(train_state.params, true_next_obs, method=network.value)
+                next_val = network.apply(train_state.params, true_next_obs)
 
                 transition = Transition(
                     done, action, value, next_val, reward, log_prob, last_obs, info
@@ -66,22 +101,22 @@ def make_train(config):
 
 
             # --- ADVANTAGE CALCULATION ---
-            advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"], )
+            advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], λ=1, )
 
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
                     traj_batch, advantages, targets = batch_info
-                    grad_fn = jax.value_and_grad(helpers._loss_fn_no_w, has_aux=True)
+                    grad_fn = jax.value_and_grad(v_loss_fn_no_grad, has_aux=False)
                     
                     # 1. Unpack the auxiliary tuple here!
-                    (total_loss, (value_loss, loss_actor, entropy)), grads = grad_fn(
+                    total_loss, grads = grad_fn(
                         train_state.params, network, traj_batch, advantages, targets, config
                     )
                     train_state = train_state.apply_gradients(grads=grads)
                     
                     # 2. Return them all so they get stacked by the scan
-                    return train_state, (total_loss, value_loss, loss_actor, entropy)
+                    return train_state, total_loss
 
                 train_state, traj_batch, advantages, targets, rng = update_state
                 rng, _rng = jax.random.split(rng)
@@ -89,11 +124,11 @@ def make_train(config):
                 minibatches = helpers.shuffle_and_batch(_rng, batch, config["NUM_MINIBATCHES"])
                 
                 # loss_info is now a tuple of 4 arrays: (total_loss, value_loss, loss_actor, entropy)
-                train_state, loss_info = jax.lax.scan(_update_minbatch, train_state, minibatches)
-                return (train_state, traj_batch, advantages, targets, rng), loss_info
+                train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
+                return (train_state, traj_batch, advantages, targets, rng), total_loss
 
             initial_update_state = (train_state, traj_batch, advantages, target, rng)
-            update_state, loss_info = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
+            update_state, total_loss = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
             train_state, _, _, _, rng = update_state
             # --------- Metrics ---------
             metric = {
@@ -104,20 +139,13 @@ def make_train(config):
             # Shared Metrics
             metric.update(
                 {
-                    "total_loss": loss_info[0].mean(),
-                    "value_loss": loss_info[1].mean(),
-                    "actor_loss": loss_info[2].mean(),
-                    "entropy": loss_info[3].mean(),
+                    "total_loss": total_loss.mean(),
+                    "value_loss": total_loss.mean(),
                     "mean_rew": traj_batch.reward.mean(),
                 }
             )
-            # def value_metrics(evaluator, network, params, random_policy=False):
-            value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False)
+            value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=True)
             metric.update(value_metrics)
-            
-            w_lstd = value_metrics['LSTD_weights']
-            train_state = helpers.inject_weights(train_state, w_lstd)
-
 
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric
