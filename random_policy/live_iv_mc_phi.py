@@ -132,6 +132,7 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
 
     params_frozen_A = jax.tree_util.tree_map_with_path(firewall_map, params)
     x_hat_freeze, done_logit_freeze = network.apply(params_frozen_A,z, method=network.g_A)
+    # x_hat_freeze = jax.lax.stop_gradient(x_hat)
     # supposed to learn to predict 0 for phi_prime_hat when done = true.
     
     # w is live. Predict immediate reward.

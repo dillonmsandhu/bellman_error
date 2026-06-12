@@ -1,5 +1,4 @@
-# Uses TD(1) only for feature learning.
-# The linear model is trianed on top of these fixed features, and does not update
+# Uses monte carlo learning and instrumental variables to update w.
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -9,7 +8,7 @@ from core.networks import nn
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_policy_linear_model_mc_feats"
+SAVE_DIR = "random_policy_live_z"
 
 
 class IVActorCritic(nn.Module):
@@ -29,7 +28,7 @@ class IVActorCritic(nn.Module):
 
         # g_A will automatically size its input kernel to (z_dim + action_dim)
         # on the first forward pass.
-        self.g_A_dense1 = nn.Dense(64)
+        self.g_A_dense1 = nn.Dense(32)
         self.g_A_dense2 = nn.Dense(self.phi_dim)  # predicts td-diff
         self.g_A_dense_done = nn.Dense(1)  # predicts done
 
@@ -41,16 +40,16 @@ class IVActorCritic(nn.Module):
         value = self.w(phi_curr).squeeze(-1)
         return value
 
-    def value_from_features(self, phi):
-        phi_curr = phi
-        value = self.w(phi_curr).squeeze(-1)
-        return value
-
     def policy(self, x):
         return self.pi_head(self.actor_torso(x))
 
     def value_features(self, obs):
         return self.phi(obs)
+
+    def value_from_features(self, phi):
+        phi_curr = phi
+        value = self.w(phi_curr).squeeze(-1)
+        return value
 
     def phi(self, obs):
         return self.phi_net(obs)
@@ -59,11 +58,20 @@ class IVActorCritic(nn.Module):
         return self.z_net(obs)
 
     def g_A(self, z_and_a):
+        # z_and_a is [phi_curr, one_hot_action]
+        phi_curr = z_and_a[..., : self.phi_dim]
+
+        # Predict the discounted expected next features
         x = self.g_A_dense1(z_and_a)
         x = jax.nn.leaky_relu(x)
-        x = self.g_A_dense2(x)
+        gamma_phi_prime = self.g_A_dense2(x)
+
+        # The Residual Connection
+        x_hat = phi_curr - gamma_phi_prime
+
+        # Done prediction can branch off the hidden state
         done_logit = self.g_A_dense_done(x)
-        return x, done_logit
+        return x_hat, done_logit
 
     # --- Action optional ---
     def __call__(self, obs, action=None):
@@ -96,17 +104,22 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
     # =========================================================
     # STAGE 1
     # =========================================================
-    phi = network.apply(params, traj_batch.obs, method=network.phi)
-    phi = jax.lax.stop_gradient(phi)
+    z = network.apply(
+        params, traj_batch.obs, method=network.z
+    )  # z is seperate from phi. it is differentiable for next feature prediction.
+
     action_features = one_hot_action(traj_batch, config["IS_CONTINUOUS"], network.action_dim)
-    z = jnp.concatenate([phi, action_features], axis=-1)
-    z = jax.lax.stop_gradient(z)
-    phi_prime_hat, done_logit = network.apply(params, z, method=network.g_A)
+    z = jnp.concatenate([z, action_features], axis=-1)
+    x_hat, done_logit = network.apply(params, z, method=network.g_A)
 
     phi_next = network.apply(params, traj_batch.next_obs, method=network.phi)
     not_done = 1 - jnp.expand_dims(traj_batch.done, -1)
-    phi_next = jax.lax.stop_gradient(phi_next) * not_done
-    forward_loss = jnp.mean((phi_next - phi_prime_hat) ** 2)
+
+    phi = network.apply(params, traj_batch.obs, method=network.phi)
+
+    x_target = jax.lax.stop_gradient(phi - config["GAMMA"] * phi_next * not_done)
+
+    forward_loss = jnp.mean((x_target - x_hat) ** 2)
     done_loss = 0
     # done_loss = jnp.mean(optax.sigmoid_binary_cross_entropy(
     #     logits=done_logit,
@@ -116,18 +129,22 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
     # =========================================================
     # STAGE 2
     # =========================================================
-    x_hat = phi - config["GAMMA"] * phi_prime_hat
-    x_hat_freeze, done_logit_freeze = jax.tree.map(lambda x: jax.lax.stop_gradient(x), (x_hat, done_logit))
+    def firewall_map(path, val):
+        is_g_A = any("g_A" in str(p) for p in path)
+        return jax.lax.stop_gradient(val) if is_g_A else val
+
+    params_frozen_A = jax.tree_util.tree_map_with_path(firewall_map, params)
+    x_hat_freeze, done_logit_freeze = network.apply(params_frozen_A, z, method=network.g_A)
+    # x_hat_freeze = jax.lax.stop_gradient(x_hat)
     # supposed to learn to predict 0 for phi_prime_hat when done = true.
 
     # w is live. Predict immediate reward.
     reward_pred = network.apply(params, x_hat_freeze, method=network.w).squeeze(-1)
     reward_loss = jnp.mean((reward_pred - traj_batch.reward) ** 2)
 
-    # Value (MC) Loss.
-    # gradient flows only through phi, not w.
-    v_loss = helpers.no_w_v_loss_fn(params, network, traj_batch, advantages, targets, config)
-
+    # Doesn't flow gradient through w, only φ.
+    v_loss = helpers.v_loss_fn(params, network, traj_batch, advantages, targets, config)
+    # v_loss = helpers.v_loss_fn(params, network, traj_batch, advantages, targets, config)
     # =========================================================
     # PPO Actor Loss (Standard)
     # =========================================================
@@ -213,11 +230,7 @@ def make_train(config):
             )
 
             # --- ADVANTAGE CALCULATION ---
-            advantages, target = helpers.calculate_gae(
-                traj_batch,
-                config["GAMMA"],
-                λ=1,
-            )
+            advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], λ=1)
 
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):

@@ -1,5 +1,5 @@
-# Uses TD(1) only for feature learning.
-# The linear model is trianed on top of these fixed features, and does not update
+# Uses TD(1) and linear model for feature learning.
+
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -9,7 +9,7 @@ from core.networks import nn
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_policy_linear_model_mc_feats"
+SAVE_DIR = "random_policy_live_model"
 
 
 class IVActorCritic(nn.Module):
@@ -97,10 +97,10 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
     # STAGE 1
     # =========================================================
     phi = network.apply(params, traj_batch.obs, method=network.phi)
-    phi = jax.lax.stop_gradient(phi)
+    
     action_features = one_hot_action(traj_batch, config["IS_CONTINUOUS"], network.action_dim)
     z = jnp.concatenate([phi, action_features], axis=-1)
-    z = jax.lax.stop_gradient(z)
+    
     phi_prime_hat, done_logit = network.apply(params, z, method=network.g_A)
 
     phi_next = network.apply(params, traj_batch.next_obs, method=network.phi)
@@ -117,11 +117,9 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
     # STAGE 2
     # =========================================================
     x_hat = phi - config["GAMMA"] * phi_prime_hat
-    x_hat_freeze, done_logit_freeze = jax.tree.map(lambda x: jax.lax.stop_gradient(x), (x_hat, done_logit))
-    # supposed to learn to predict 0 for phi_prime_hat when done = true.
-
+    x_hat = jax.lax.stop_gradient(x_hat)
     # w is live. Predict immediate reward.
-    reward_pred = network.apply(params, x_hat_freeze, method=network.w).squeeze(-1)
+    reward_pred = network.apply(params, x_hat, method=network.w).squeeze(-1)
     reward_loss = jnp.mean((reward_pred - traj_batch.reward) ** 2)
 
     # Value (MC) Loss.
