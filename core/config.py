@@ -16,7 +16,7 @@ config = {
         "NUM_EPOCHS": 4,
         "MINIBATCH_SIZE": 128,
         "GAMMA": 0.99, 
-        "VALUE_LAMBDA": 0.0,
+        "VALUE_LAMBDA": 1.0,
         "POLICY_LAMBDA": 0.6,
         "GAE_LAMBDA": 1.0,
         "CLIP_EPS": 0.2,
@@ -27,7 +27,9 @@ config = {
         "NETWORK_TYPE": 'cnn',
         "NORMALIZE_OBS": False,
         "CALC_TRUE_VALUES": True,
-        # "OPTIMIZER": "AdamW", # or AdamW
-        # "ADAM_EPS": 1e-5,
-        # "WEIGHT_DECAY": 0.0
+        # IV settings:
+        "FORWARD_COEFF": 0.0,
+        "REWARD_COEFF": 0.0,
+        "DONE_COEFF": 0.0,  
+        "V_LOSS_SHARED": True, # whether the TD / MC can update the final weights w.
         }
