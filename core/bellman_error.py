@@ -240,6 +240,8 @@ def value_metrics(evaluator, network, params, random_policy=False):
     # 2. Symmetric and Skew-Symmetric components
     S = 0.5 * (A + A.T)
     K = 0.5 * (A - A.T)
+    norm_s = jnp.linalg.norm(S, ord='fro')
+    norm_k = jnp.linalg.norm(K, ord='fro')
     
     # 3. Precompute matrices for the alignment condition
     S_sq = S @ S
@@ -249,8 +251,15 @@ def value_metrics(evaluator, network, params, random_policy=False):
     # 4. Check global positive definiteness of SA 
     # (If min eigenvalue > 0, SA is positive definite and E will globally decrease)
     # Using jnp.real to handle potential complex eigenvalues from numerical imprecision
-    eigenvalues_SA = jnp.linalg.eigvals(SA)
-    min_eig_SA = jnp.min(jnp.real(eigenvalues_SA))
+    
+    # 1. Extract the symmetric part of SA
+    SA_symmetric = 0.5 * (SA + SA.T)
+    
+    # 2. Use 'eigvalsh' (the 'h' stands for Hermitian/Symmetric), which works perfectly on GPUs
+    eigenvalues_SA = jnp.linalg.eigvalsh(SA_symmetric)
+    
+    # 3. Minimum eigenvalue
+    min_eig_SA = jnp.min(eigenvalues_SA) # No jnp.real needed; symmetric eigenvalues are strictly real
     is_SA_pos_def = min_eig_SA > 0
 
     e = V_nn - V_pi
@@ -273,6 +282,8 @@ def value_metrics(evaluator, network, params, random_policy=False):
         "is_SA_positive_definite": is_SA_pos_def,
         "alignment_condition": alignment_condition, # if zero, decreases E.
         "E": E,
+        "norm_s": norm_s,
+        "norm_k": norm_k
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
