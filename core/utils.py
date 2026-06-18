@@ -77,7 +77,6 @@ def parse_config_override(config_str):
         print("Config override should be valid JSON, e.g.: '{\"LR\": 0.001, \"LAMBDA\": 0.0}'")
         exit(1)
 
-
 def save_config(config, env_dir):
     config_path = os.path.join(env_dir, f"config.json")
     with open(config_path, 'w') as f:
@@ -275,6 +274,11 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "vic_loss_cov": "vic_loss_cov",
         "vic_loss_var": "vic_loss_var",
         "v_loss": "v_loss",
+        "E": "E",
+        "alignment_condition": "Alignment Condition",
+        "alignment": "Alignment (cosine similarity)",
+        "SA_min_eigenvalue": "Min. Eigenvalue of SA",
+        "is_SA_positive_definite": "Is SA Positive Definite",
     }
 
     for m_key, save_name in standard_plots.items():

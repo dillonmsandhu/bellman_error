@@ -140,7 +140,7 @@ def iv_loss_fn(params, network, traj_batch, advantages, targets, config):
     reward_pred = network.apply(params, x_hat_freeze, method=network.w).squeeze(-1)
     reward_loss = jnp.mean((reward_pred - traj_batch.reward) ** 2)
     
-    # Value Loss. If V_LOSS_SHARED, then w is updated by the value loss. 
+    # Value Loss. If V_LOSS_SHARED, then w is updated by the value
     v_loss_fn = helpers.v_loss_fn if config.get('V_LOSS_SHARED', False) else helpers.no_w_v_loss_fn
     v_loss = v_loss_fn(params, network, traj_batch, advantages, targets, config)
     
@@ -249,8 +249,7 @@ def make_train(config):
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["POLICY_LAMBDA"])
             _, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["VALUE_LAMBDA"])
 
-            # UPDATE NETWORK
-            
+            # UPDATE NETWORK            
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
                     traj_batch, advantages, targets = batch_info

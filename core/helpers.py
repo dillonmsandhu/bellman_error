@@ -62,7 +62,7 @@ def _loss_fn(params, network, traj_batch, gae, targets, config):
     loss_actor, entropy = pi_loss_fn(params, network, traj_batch, gae, config)
 
     total_loss = (
-        loss_actor
+        config['POLICY_COEFF'] * loss_actor
         + config["VF_COEF"] * value_loss
         - config["ENT_COEF"] * entropy
     )
@@ -119,24 +119,24 @@ def pi_loss_fn(params, network, traj_batch, gae, config):
     entropy = pi.entropy().mean()
     return loss_actor, entropy
 
+def ppo_clipped_v_loss(traj_batch, value_pred, targets, config):
+    e = config["VF_CLIP"]
+    value_pred_clipped = traj_batch.value + (
+        value_pred - traj_batch.value).clip(-e,e)
+    value_losses = jnp.square(value_pred - targets)
+    value_losses_clipped = jnp.square(value_pred_clipped - targets)
+    return 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    
 def v_loss_fn(params, network, traj_batch, gae, targets, config):
     # VALUE LOSS
-    value = network.apply(params, traj_batch.obs, method=network.value)
-    value_pred_clipped = traj_batch.value + (
-        value - traj_batch.value
-    ).clip(-config["VF_CLIP"], config["VF_CLIP"])
-    value_losses = jnp.square(value - targets)
-    value_losses_clipped = jnp.square(value_pred_clipped - targets)
-    value_loss = (
-        0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-    )
-
+    value_pred = network.apply(params, traj_batch.obs, method=network.value)
+    value_loss = ppo_clipped_v_loss(traj_batch, value_pred, targets, config)
     total_loss = config["VF_COEF"] * value_loss
     return total_loss
 
 def no_w_v_loss_fn(params, network, traj_batch, gae, targets, config):
     # ---------------------------------------------------------
-    # 1. Create the Firewalled Parameters
+    # Firewalled Parameters
     # ---------------------------------------------------------
     def freeze_w_map(path, val):
         is_w = any(getattr(p, 'key', None) in ('w_layer', 'critic_head') or 
@@ -144,21 +144,8 @@ def no_w_v_loss_fn(params, network, traj_batch, gae, targets, config):
         return jax.lax.stop_gradient(val) if is_w else val
     
     params_w_frozen = jax.tree_util.tree_map_with_path(freeze_w_map, params)
-
-    # ---------------------------------------------------------
-    # 2. PPO Clipped Loss Helper
-    # ---------------------------------------------------------
-    def ppo_clipped_loss(value_pred):
-        value_pred_clipped = traj_batch.value + (value_pred - traj_batch.value).clip(
-            -config["VF_CLIP"], config["VF_CLIP"]
-        )
-        value_losses = jnp.square(value_pred - targets)
-        value_losses_clipped = jnp.square(value_pred_clipped - targets)
-        return 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-
-    # Train Phi: Forward pass with frozen W
     value_for_phi = network.apply(params_w_frozen, traj_batch.obs, method = network.value)
-    loss_phi = ppo_clipped_loss(value_for_phi)
+    loss_phi = ppo_clipped_v_loss(traj_batch, value_for_phi, targets, config)
     return config["VF_COEF"] * loss_phi
 
 def v_loss_fn_no_grad(params, network, traj_batch, gae, targets, config):
@@ -171,23 +158,10 @@ def v_loss_fn_no_grad(params, network, traj_batch, gae, targets, config):
     phi_freeze = jax.lax.stop_gradient(phi)
     
     # 3. Forward pass through ONLY the linear head using the frozen features
-    value = network.apply(params, phi_freeze, method=network.value_from_features)
-    
-    # --- Standard Clipped Value Loss below ---
-    value_pred_clipped = traj_batch.value + (
-        value - traj_batch.value
-    ).clip(-config["VF_CLIP"], config["VF_CLIP"])
-    
-    value_losses = jnp.square(value - targets)
-    value_losses_clipped = jnp.square(value_pred_clipped - targets)
-    
-    value_loss = (
-        0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-    )
-
+    value_pred = network.apply(params, phi_freeze, method=network.value_from_features)
+    value_loss = ppo_clipped_v_loss(traj_batch, value_pred, targets, config)
     total_loss = config["VF_COEF"] * value_loss
     return total_loss
-
 
 def shuffle_and_batch(rng, transitions, n_minibatches):
     def preprocess_transition(x, rng):

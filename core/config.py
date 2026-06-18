@@ -5,7 +5,7 @@ config = {
         "GAMMA": 0.99,
         "k": 32,
         "MAX_STEPS_IN_EPISODE": 1e6,
-        "LAYER_NORM": False,
+        "LAYER_NORM": True,
 
         "LR": 5e-4,
         "LR_END": 5e-4,
@@ -16,9 +16,9 @@ config = {
         "NUM_EPOCHS": 4,
         "MINIBATCH_SIZE": 128,
         "GAMMA": 0.99, 
-        "VALUE_LAMBDA": 1.0,
+        "VALUE_LAMBDA": 0.0,
         "POLICY_LAMBDA": 0.6,
-        "GAE_LAMBDA": 1.0,
+        "GAE_LAMBDA": 0.0,
         "CLIP_EPS": 0.2,
         "VF_CLIP": 0.2,
         "ENT_COEF": 0.01,
@@ -31,5 +31,6 @@ config = {
         "FORWARD_COEFF": 0.0,
         "REWARD_COEFF": 0.0,
         "DONE_COEFF": 0.0,  
+        "POLICY_COEFF": 1.0,
         "V_LOSS_SHARED": True, # whether the TD / MC can update the final weights w.
         }

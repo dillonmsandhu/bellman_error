@@ -185,7 +185,6 @@ def value_metrics(evaluator, network, params, random_policy=False):
     R_π = P_π @ R_π_s
     I = jnp.eye(D.shape[-1])
 
-
     # Feature Quality (effective rank and PCA).
     _, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
     sig_level = (1-γ) / 10.0
@@ -234,6 +233,34 @@ def value_metrics(evaluator, network, params, random_policy=False):
     # 3. Calculate true cosine similarity
     alignment = alignment_dot_product / (norm_VE_VR * norm_nn_ortho + 1e-8)
 
+    # Consider the symmetry of the key matrix.
+    # 1. Key Matrix A (State Space)
+    A = D @ (jnp.eye(D.shape[0]) - γ * P_π)
+    
+    # 2. Symmetric and Skew-Symmetric components
+    S = 0.5 * (A + A.T)
+    K = 0.5 * (A - A.T)
+    
+    # 3. Precompute matrices for the alignment condition
+    S_sq = S @ S
+    SK_KS = (S @ K) - (K @ S)
+    SA = S @ A 
+    
+    # 4. Check global positive definiteness of SA 
+    # (If min eigenvalue > 0, SA is positive definite and E will globally decrease)
+    # Using jnp.real to handle potential complex eigenvalues from numerical imprecision
+    eigenvalues_SA = jnp.linalg.eigvals(SA)
+    min_eig_SA = jnp.min(jnp.real(eigenvalues_SA))
+    is_SA_pos_def = min_eig_SA > 0
+
+    e = V_nn - V_pi
+    term_1 = jnp.dot(e, S_sq @ e)
+    term_2 = 0.5 * jnp.dot(e, SK_KS @ e)
+    alignment_condition = term_1 + term_2 # If > 0, TD update decreases E
+
+    # Compute the weighted value error E
+    E = 0.5 * jnp.dot(e, A @ e)
+
     # 2. Initialize base metrics
     metrics = {
         "effective_rank": effective_rank,
@@ -241,7 +268,11 @@ def value_metrics(evaluator, network, params, random_policy=False):
         "nn_lstd_diff": jnp.mean((val_configs["LSTD"][0] - V_nn)**2),
         "negative_alignment": negative_alignment,
         "alignment": alignment, # cosine similarity
-        "value_grid": evaluator.get_value_grid(V_pi)
+        "value_grid": evaluator.get_value_grid(V_pi),
+        "SA_min_eigenvalue": min_eig_SA,
+        "is_SA_positive_definite": is_SA_pos_def,
+        "alignment_condition": alignment_condition, # if zero, decreases E.
+        "E": E,
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
