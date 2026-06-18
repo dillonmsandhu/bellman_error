@@ -28,10 +28,13 @@ def make_train(config):
     _, out = utils.load_run_data(model_dir, 'FourRooms-misc', 'results') 
     policy_train_state = out['runner_state'][0]
     
+    # The saved train state is batched over N_SEEDS (which is 1 by default).
+    # We need to extract the parameters for the first seed to remove this extra dimension.
+    policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
+    
     def fixed_policy_fn(obs):
-        "The fixed policy we will evaluate"
-        pi_params = policy_train_state.params
-        _, pi = policy_train_state.apply_fn(obs, policy_train_state.params)
+        "The fixed policy this script will sample from."       
+        pi, _ = policy_train_state.apply_fn(policy_params, obs)
         return pi
 
     batch_size = config["NUM_STEPS"] * config["NUM_ENVS"]
@@ -42,7 +45,6 @@ def make_train(config):
     evaluator = helpers.initialize_evaluator(config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
-
 
     def train(rng):
         k = config.get('k', 32)
@@ -83,7 +85,6 @@ def make_train(config):
 
             env_step_state = (train_state, env_state, last_obs, rng)
             (_, env_state, last_obs, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
-
 
             # --- ADVANTAGE CALCULATION ---
             advantages, target = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"], )
