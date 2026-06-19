@@ -31,7 +31,7 @@ def make_train(config):
     # The saved train state is batched over N_SEEDS (which is 1 by default).
     # We need to extract the parameters for the first seed to remove this extra dimension.
     policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
-    
+    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)
     def fixed_policy_fn(obs):
         "The fixed policy this script will sample from."       
         pi, _ = policy_train_state.apply_fn(policy_params, obs)
@@ -130,7 +130,7 @@ def make_train(config):
                     "mean_rew": traj_batch.reward.mean(),
                 }
             )
-            value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False)
+            value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy)
             metric.update(value_metrics)
 
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)

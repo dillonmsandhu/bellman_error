@@ -214,10 +214,10 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
     rngs = jax.random.split(rng, run_config['N_SEEDS'])
     out = run_fn(rngs)
     metrics = out["metrics"]
-
-    print(f"[{run_config['ENV_NAME']}] Mean return: {jnp.mean(metrics['returned_discounted_episode_returns']):.4f}")
-    print(f"[{run_config['ENV_NAME']}] Max return:  {jnp.max(metrics['returned_discounted_episode_returns']):.4f}")
-
+    ret = metrics.get('returned_discounted_episode_returns', 0.0)
+    print(f"[{run_config['ENV_NAME']}] Mean return: {jnp.mean(ret):.4f}")
+    print(f"[{run_config['ENV_NAME']}] Max return:  {jnp.max(ret):.4f}")
+    
     # Directory structure: results/SAVE_DIR/timestamp/EnvName-Size/
     base_env_name = run_config['ENV_NAME']
     env_size = run_config.get("ENV_SIZE")

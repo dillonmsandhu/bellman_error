@@ -101,10 +101,12 @@ def get_capacity_angle(V_true, V_vr, D):
     
     return inner_product / (norm_true * norm_vr + ε)
 
-def get_lstd_weights(evaluator, network, params, random_policy):
+def get_lstd_weights(evaluator, network, params, random_policy, target_policy_fn = None):
     m = evaluator.num_actions
     def get_policy_matrix():
-        if random_policy:
+        if target_policy_fn is not None:
+            pi_dist = target_policy_fn(evaluator.obs_stack)
+        elif random_policy:
             pi_dist = distrax.Categorical(
                 logits=jnp.zeros((evaluator.num_states, m))
             )
@@ -143,10 +145,12 @@ def get_lstd_weights(evaluator, network, params, random_policy):
     return w_lstd    
 
 
-def value_metrics(evaluator, network, params, random_policy=False):
+def value_metrics(evaluator, network, params, random_policy=False, target_policy_fn = None):
     m = evaluator.num_actions
     def get_policy_matrix():
-        if random_policy:
+        if target_policy_fn is not None:
+            pi_dist = target_policy_fn(evaluator.obs_stack)
+        elif random_policy:
             pi_dist = distrax.Categorical(
                 logits=jnp.zeros((evaluator.num_states, m))
             )
