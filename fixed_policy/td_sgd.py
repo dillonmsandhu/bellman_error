@@ -52,7 +52,7 @@ def make_train(config):
     # The saved train state is batched over N_SEEDS (which is 1 by default).
     # We need to extract the parameters for the first seed to remove this extra dimension.
     policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
-    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)
+    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)[0]
     def fixed_policy_fn(obs):
         "The fixed policy this script will sample from."       
         pi, _ = policy_train_state.apply_fn(policy_params, obs)
