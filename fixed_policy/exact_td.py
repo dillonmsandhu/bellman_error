@@ -15,6 +15,8 @@ def make_train(config):
     # The saved train state is batched over N_SEEDS (which is 1 by default).
     # We need to extract the parameters for the first seed to remove this extra dimension.
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
+    config['NUM_ENVS'] = 1
+    config['NUM_STEPS'] = 1
     
     env, env_params = helpers.make_env(config)
     evaluator = helpers.initialize_evaluator(config, env, env_params)
