@@ -8,8 +8,10 @@ from envs.wrappers import NormalizeObservationWrapper, NormalizeRewardWrapper, A
 from gymnax.environments import spaces
 from flax.core import unfreeze, freeze
 
+
 def initialize_evaluator(config, env, env_params):
     from envs.fourrooms import FourRoomsExactValue
+    from envs.fourrooms_continuing import ContinuingFourRooms
     
     if not config.get("CALC_TRUE_VALUES", False):
         return None
@@ -17,9 +19,9 @@ def initialize_evaluator(config, env, env_params):
     evaluator = None
     if config['ENV_NAME'] == 'FourRooms-misc':
         evaluator = FourRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob) # for computing the true 
-    
+    if config['ENV_NAME'] == 'FourRooms-cont':
+        evaluator = ContinuingFourRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob)
     return evaluator 
-
 
 def make_env(config):
 
@@ -29,6 +31,16 @@ def make_env(config):
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
             fail_prob=config['FAIL_PROB']
         )
+        env = TerminalInfoWrapper(env) # adds the terminal state to info. also adds goal information.
+    elif config['ENV_NAME'] == 'FourRooms-cont':
+        from envs.wrappers import ContinuingWrapper
+        env, env_params = gymnax.make('FourRooms-misc', use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
+        env_params = env_params.replace(
+            max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
+            fail_prob=config['FAIL_PROB']
+        )
+        env = TerminalInfoWrapper(env) # adds the terminal state to info. also adds goal information.
+        env = ContinuingWrapper(env)
 
     else:
         env, env_params = gymnax.make(config["ENV_NAME"])
@@ -36,7 +48,7 @@ def make_env(config):
     print('Env:', config['ENV_NAME'])
     print('Default Obs Shape:', env.observation_space(env_params).shape)
     
-    env = TerminalInfoWrapper(env) # adds the terminal state to info. also adds goal information.
+    
     env = LogWrapper(env)
     
     if isinstance(env.action_space(env_params), spaces.Box):
@@ -214,7 +226,6 @@ def add_values_to_metric(config, metric, evaluator, network, train_state, traj_b
     })
     
     return metric
-
 
 
 # def calculate_gae(traj_batch, γ, λ,):

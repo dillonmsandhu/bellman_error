@@ -280,7 +280,8 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "SA_min_eigenvalue": "Min. Eigenvalue of SA",
         "is_SA_positive_definite": "Is SA Positive Definite",
         "norm_s": "norm_s",
-        "norm_k": "norm_k"
+        "norm_k": "norm_k",
+        "entropy": "entropy"
     }
 
     for m_key, save_name in standard_plots.items():

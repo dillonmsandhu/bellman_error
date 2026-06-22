@@ -210,3 +210,27 @@ class SubtractOneRewardWrapper(GymnaxWrapper):
         modified_reward = reward - 1.0
         
         return obs, env_state, modified_reward, done, info
+
+class ContinuingWrapper(GymnaxWrapper):
+    """
+    Forces an episodic environment into an infinite-horizon continuing task.
+    When the agent hits the goal, it is instantly teleported back to the start.
+    `done` is permanently kept False.
+    """
+    def __init__(self, env):
+        super().__init__(env)
+
+    def step(self, key, state, action, params=None):
+        
+        # 1. Step the inner env (TerminalInfoWrapper).
+        # It handles the physical teleportation for us!
+        obs, env_state, reward, done, info = self._env.step(key, state, action, params)
+
+        # 2. Mask 'done' to False ONLY if it hit the goal.
+        # If it was a timeout, let done=True pass through to prevent wormholes.
+        is_timeout = info.get("is_timeout", False)
+        
+        # logical_and ensures done is only True if both (done == True) AND (is_timeout == True)
+        masked_done = jnp.logical_and(done, is_timeout)
+
+        return obs, env_state, reward, masked_done, info
