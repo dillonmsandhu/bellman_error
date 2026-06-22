@@ -277,6 +277,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "E": "E",
         "alignment_condition": "Alignment Condition",
         "alignment": "Alignment (cosine similarity)",
+        "alignment_condition_sign": "alignment_condition_sign",
         "SA_min_eigenvalue": "Min. Eigenvalue of SA",
         "is_SA_positive_definite": "Is SA Positive Definite",
         "norm_s": "norm_s",

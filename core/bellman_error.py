@@ -270,6 +270,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     term_1 = jnp.dot(e, S_sq @ e)
     term_2 = 0.5 * jnp.dot(e, SK_KS @ e)
     alignment_condition = term_1 + term_2 # If > 0, TD update decreases E
+    alignment_condition_sign = alignment_condition > 0 # If > 0, TD update decreases E
 
     # Compute the weighted value error E
     E = 0.5 * jnp.dot(e, A @ e)
@@ -287,7 +288,8 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "alignment_condition": alignment_condition, # if zero, decreases E.
         "E": E,
         "norm_s": norm_s,
-        "norm_k": norm_k
+        "norm_k": norm_k,
+        "alignment_condition_sign": alignment_condition_sign
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
