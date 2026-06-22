@@ -12,8 +12,8 @@ class FourRoomsExactValue:
     def __init__(
         self,
         size: int = 13,
-        fail_prob: float = 1.0 / 3.0,
-        gamma: float = 0.99,
+        fail_prob: float = 0.01,
+        gamma: float = 0.999,
         episodic: bool = True,
         use_visual_obs: bool = True,
         goal_pos: Tuple[int, int] | None = None,

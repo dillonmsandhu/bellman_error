@@ -35,5 +35,5 @@ config = {
         "V_LOSS_SHARED": True, # whether the TD / MC can update the final weights w.
 
         # For the fixed:
-        'MODEL_LOAD_DIR': "short_run",
+        'MODEL_LOAD_DIR': "cont",
         }
