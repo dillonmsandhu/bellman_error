@@ -5,22 +5,25 @@ import gymnax
 from gymnax.wrappers.purerl import FlattenObservationWrapper
 from envs.log_wrapper import LogWrapper
 from envs.wrappers import NormalizeObservationWrapper, NormalizeRewardWrapper, AddChannelWrapper, ClipAction, NormalizeRewardEnvState, NormalizeObsEnvState, TerminalInfoWrapper
+from envs.boyan_chain import MatrixMockEnv, BoyanParams
 from gymnax.environments import spaces
 from flax.core import unfreeze, freeze
 
-
 def initialize_evaluator(config, env, env_params):
+    # for computing the true value
     from envs.fourrooms import FourRoomsExactValue
     from envs.fourrooms_continuing import ContinuingFourRooms
-    
+    from envs.boyan_chain import ContinuingBoyanRing
     if not config.get("CALC_TRUE_VALUES", False):
         return None
     
     evaluator = None
     if config['ENV_NAME'] == 'FourRooms-misc':
-        evaluator = FourRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob) # for computing the true 
+        evaluator = FourRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob,gamma=config['GAMMA']) 
     if config['ENV_NAME'] == 'FourRooms-cont':
-        evaluator = ContinuingFourRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob)
+        evaluator = ContinuingFourRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
+    if config['ENV_NAME'] == 'boyan':
+        evaluator = ContinuingBoyanRing(gamma=config['GAMMA'], use_visual_obs=True)
     return evaluator 
 
 def make_env(config):
@@ -31,7 +34,8 @@ def make_env(config):
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
             fail_prob=config['FAIL_PROB']
         )
-        env = TerminalInfoWrapper(env) # adds the terminal state to info. also adds goal information.
+        env = TerminalInfoWrapper(env)
+        
     elif config['ENV_NAME'] == 'FourRooms-cont':
         from envs.wrappers import ContinuingWrapper
         env, env_params = gymnax.make('FourRooms-misc', use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
@@ -39,8 +43,18 @@ def make_env(config):
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
             fail_prob=config['FAIL_PROB']
         )
-        env = TerminalInfoWrapper(env) # adds the terminal state to info. also adds goal information.
+        env = TerminalInfoWrapper(env)
         env = ContinuingWrapper(env)
+        
+    elif config['ENV_NAME'] == 'boyan':
+        # Create our lightweight mock primitives right here
+        env = MatrixMockEnv(size=20, use_visual_obs=config.get("USE_VISUAL_OBS", True))
+        env_params = BoyanParams(
+            fail_prob=0.0, 
+            max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
+        )
+        # We skip TerminalInfoWrapper/ContinuingWrapper since it's a pure matrix evaluator,
+        # but it will safely pick up the downstream wrappers (LogWrapper, etc.) via its properties!
 
     else:
         env, env_params = gymnax.make(config["ENV_NAME"])
@@ -48,17 +62,16 @@ def make_env(config):
     print('Env:', config['ENV_NAME'])
     print('Default Obs Shape:', env.observation_space(env_params).shape)
     
-    
     env = LogWrapper(env)
     
     if isinstance(env.action_space(env_params), spaces.Box):
-        env = ClipAction(env) # Ensures sampled actions are within [low, high]
+        env = ClipAction(env)
     
     if config["NETWORK_TYPE"] == "mlp":
         env = FlattenObservationWrapper(env)
     if config["NETWORK_TYPE"] == "cnn":
         if len(env.observation_space(env_params).shape) < 3:
-            env = AddChannelWrapper(env) # add an empty channel to the end if 2d input
+            env = AddChannelWrapper(env)
     if config["NORMALIZE_OBS"]:
         env = NormalizeObservationWrapper(env) 
     
