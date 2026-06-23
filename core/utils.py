@@ -98,7 +98,7 @@ def save_results(data, config, env_name, env_dir):
 
     return env_dir
 
-def save_plot(env_dir, env_name, steps_per_pi, episodic_return, title):
+def save_plot(env_dir, env_name, steps_per_pi, episodic_return, title, logscale=False):
     y = jnp.asarray(episodic_return)
     if y.ndim == 0:
         y = y[None]
@@ -112,6 +112,8 @@ def save_plot(env_dir, env_name, steps_per_pi, episodic_return, title):
     plt.figure()
     x = [i * steps_per_pi for i in range(int(y.shape[0]))]
     plt.plot(x, y, 'o-', label=title)
+    if logscale:
+        plt.yscale('log') # Sets the scale for the active plot    
     plt.xlabel("Env. Step")
     plt.ylabel(f"{title}")
     plt.title(env_name)
@@ -274,7 +276,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "vic_loss_cov": "vic_loss_cov",
         "vic_loss_var": "vic_loss_var",
         "v_loss": "v_loss",
-        "E": "E",
+        # "E": "E",
         "alignment_condition": "Alignment Condition",
         "alignment": "Alignment (cosine similarity)",
         "alignment_condition_sign": "alignment_condition_sign",
@@ -284,6 +286,16 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "norm_k": "norm_k",
         "entropy": "entropy"
     }
+    data = get_metric('E', 1)
+    # a few log plots:
+    save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', True)
+    try:
+        data = get_metric('alignment_condition', 1)
+        save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', True)
+    except:
+        data = get_metric('alignment_condition', 1)
+        save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', False)
+        
 
     for m_key, save_name in standard_plots.items():
         data = get_metric(m_key, 1)
