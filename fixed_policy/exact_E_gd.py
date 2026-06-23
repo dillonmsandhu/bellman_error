@@ -9,7 +9,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_td_exact"
+SAVE_DIR = "fixed_E_gd_exact"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -17,46 +17,41 @@ def make_train(config):
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
     config['NUM_ENVS'] = 1
     config['NUM_STEPS'] = 1
-    config['NUM_EPOCHS'] = 1
     
     env, env_params = helpers.make_env(config)
     evaluator = helpers.initialize_evaluator(config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
-    S = evaluator.obs_stack
-    n_states = len(evaluator.obs_stack) # also 
     
     # Policy to be evaluated
-    def get_random_policy_matrix(obs_stack=None) -> jax.Array:
-        """
-        Produces a uniform random policy matrix PI of shape (num_total_states, n_actions).
-        
-        Args:
-            n_states: The number of active states in the environment.
-            n_actions: The total number of available actions.
-        """
-        # 1. Create uniform distribution for active states (1/N probability per action)
-        pi_active = jnp.ones((n_states, n_actions)) / n_actions
-        
-        # 2. Create uniform distribution for the single terminal state
-        pi_terminal = jnp.ones((1, n_actions)) / n_actions
-        
-        # 3. Stack them to match your evaluator's S+1 state requirement
-        pi = jnp.vstack([pi_active, pi_terminal])
-        
+    # model saved under ./results/{alg}/{sub_dir}
+    model_dir = 'ppo/' + config['MODEL_LOAD_DIR']
+    _, out = utils.load_run_data(model_dir, 'FourRooms-misc', 'results') 
+    policy_train_state = out['runner_state'][0]
+    policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
+    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)[0]
+    def get_policy_matrix():
+        "produces pi(.|S) where S is all states"
+        pi_dist, _ = policy_train_state.apply_fn(policy_params, evaluator.obs_stack)
+        pi = pi_dist.probs
+        terminal_policy = jnp.ones( [1,n_actions], dtype=pi.dtype) / n_actions
+        pi = jnp.vstack([pi, terminal_policy])
         return pi
     
-    Pi = get_random_policy_matrix()
+    Pi = get_policy_matrix()
     
     # Get the Markov Chain
-    
+
+    ALL_STATES = evaluator.obs_stack
+    I = jnp.eye(evaluator.num_total_states)
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", Pi, P)
-    R_π_s = jnp.einsum("sa,sa->s", Pi, evaluator.R)
-    # Gymnax awards the reward on the transition *INTO* s'
-    R_π = P_π @ R_π_s
-    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :]) # uses the continuing version, where S_T -> S_0
     mu = jnp.append(mu, 0.0)
+    D = jnp.diag(mu)
+    A = D @ (I - config['GAMMA'] * P_π)
+    S = 0.5 * (A + A.T)
+    V = evaluator.compute_true_values_raw(Pi)
     
     def train(rng):
         k = config.get('k', 32)
@@ -78,12 +73,9 @@ def make_train(config):
         
         def td_loss(params):
             # each update step looks at all observations and produces v_theta(S)            
-            print(S.shape)
-            v = network.apply(params, S) # 104 states, no terminal
+            v = network.apply(params, ALL_STATES) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            TD_targets = R_π + config['GAMMA'] * P_π @ v
-            td_errors = v - jax.lax.stop_gradient(TD_targets)
-            loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
+            loss = 0.5 * (V-v).T @ S @ (V-v)
             return loss
         
         td_grad = jax.value_and_grad(td_loss)
@@ -100,7 +92,7 @@ def make_train(config):
             train_state, loss = jax.lax.scan(td_step, train_state, None, config["NUM_EPOCHS"])
             # 2. Get value metrics and logging
             metric = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=True, 
+                evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy
             )
             metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
             runner_state = (train_state, idx + 1)
