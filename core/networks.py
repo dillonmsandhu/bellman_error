@@ -6,8 +6,8 @@ from flax.training.train_state import TrainState
 
 
 class PQN_CNN(nn.Module):
-    norm_type: str = "layer_norm"
-    final_hidden_dim: int = 128
+    norm_type: str
+    final_hidden_dim: int 
 
     @nn.compact
     def __call__(self, x: jnp.ndarray):
@@ -26,7 +26,6 @@ class PQN_CNN(nn.Module):
 
         if x.ndim == 3:
             x = x[None, ...]
-            
         x = nn.Conv(
             features=16,
             kernel_size=(3, 3),
