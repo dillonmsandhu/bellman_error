@@ -31,11 +31,17 @@ def LSTD_Exact(D, Φ, P_π, R_π, γ):
     return V_lstd, w_lstd
 
 def LeastSquaresValue(D,Φ,V_true):
-    reg = ε * jnp.eye(Φ.shape[-1])
-    w_vr = jnp.linalg.pinv(Φ.T @ D @ Φ + reg) @ Φ.T @ D @ V_true
+    # reg = ε * jnp.eye(Φ.shape[-1])
+    # reg_matrix = reg_matrix.at[-1, -1].set(0.0)  # Do NOT regularize the bias column
+    # w_vr = jnp.linalg.pinv(Φ.T @ D @ Φ + reg) @ Φ.T @ D @ V_true
     # w_vr = jnp.linalg.solve(Φ.T @ D @ Φ + reg, Φ.T @ D @ V_true)
+    
+    D_sqrt = jnp.sqrt(D)
+    w_vr, _, _, _ = jnp.linalg.lstsq(D_sqrt @ Φ, D_sqrt @ V_true)
     V_vr = Φ @ w_vr
     return V_vr, w_vr
+    # D_sqrt = jnp.sqrt(D)
+    # w_vr, _, _, _ = jnp.linalg.lstsq(D_sqrt @ Φ, D_sqrt @ V_true)
 
 def get_error_vectors(V, v_pred, D, R_π, P_π, γ, Φ):
     Π_φ = Φ @ jnp.linalg.pinv(Φ.T @ D @ Φ) @ Φ.T @ D # projection matrix
