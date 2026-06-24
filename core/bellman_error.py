@@ -278,7 +278,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     alignment_condition = term_1 + term_2 # If > 0, TD update decreases E
     alignment_condition_sign = alignment_condition > 0 # If > 0, TD update decreases E
 
-    e_norm = e/= jnp.linalg.norm(e)
+    e_norm = e/jnp.linalg.norm(e)
     alignment_condition_normalized = jnp.dot(e_norm, S_sq @ e_norm) + 0.5 * jnp.dot(e_norm, SK_KS @ e_norm)
 
     # Compute the weighted value error E
