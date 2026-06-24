@@ -278,6 +278,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "v_loss": "v_loss",
         # "E": "E",
         "alignment_condition": "Alignment Condition",
+        "alignment_condition_normalized": "Alignment Condition (Normalized e)",
         "alignment": "Alignment (cosine similarity)",
         "alignment_condition_sign": "alignment_condition_sign",
         "SA_min_eigenvalue": "Min. Eigenvalue of SA",
