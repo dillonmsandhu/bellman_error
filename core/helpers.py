@@ -6,6 +6,8 @@ from gymnax.wrappers.purerl import FlattenObservationWrapper
 from envs.log_wrapper import LogWrapper
 from envs.wrappers import NormalizeObservationWrapper, NormalizeRewardWrapper, AddChannelWrapper, ClipAction, NormalizeRewardEnvState, NormalizeObsEnvState, TerminalInfoWrapper
 from envs.boyan_chain import MatrixMockEnv, BoyanParams
+from envs.whirlpool import WhirlpoolExactValue
+from envs.whirlpool_env import Whirlpool
 from gymnax.environments import spaces
 from flax.core import unfreeze, freeze
 
@@ -20,10 +22,12 @@ def initialize_evaluator(config, env, env_params):
     evaluator = None
     if config['ENV_NAME'] == 'FourRooms-misc':
         evaluator = FourRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob,gamma=config['GAMMA']) 
-    if config['ENV_NAME'] == 'FourRooms-cont':
+    elif config['ENV_NAME'] == 'FourRooms-cont':
         evaluator = ContinuingFourRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
-    if config['ENV_NAME'] == 'boyan':
+    elif config['ENV_NAME'] == 'boyan':
         evaluator = ContinuingBoyanRing(gamma=config['GAMMA'], use_visual_obs=True)
+    elif config['ENV_NAME'] == 'Whirlpool':
+        evaluator = WhirlpoolExactValue(gamma = config['GAMMA'], fail_prob=env_params.fail_prob)
     return evaluator 
 
 def make_env(config):
@@ -53,6 +57,11 @@ def make_env(config):
             fail_prob=0.0, 
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
         )
+    elif config['ENV_NAME'] == 'Whirlpool':
+        from envs.whirlpool_env import EnvParams
+        env = Whirlpool(size = 13, use_visual_obs=True)
+        env_params = EnvParams(fail_prob = config['FAIL_PROB'])
+        env = TerminalInfoWrapper(env)
         # We skip TerminalInfoWrapper/ContinuingWrapper since it's a pure matrix evaluator,
         # but it will safely pick up the downstream wrappers (LogWrapper, etc.) via its properties!
 
