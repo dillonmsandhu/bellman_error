@@ -168,6 +168,31 @@ def v_loss_fn(params, network, traj_batch, gae, targets, config):
     total_loss = config["VF_COEF"] * value_loss
     return total_loss
 
+def v_loss_fn_laplacian_smoothing(params, network, traj_batch, targets, config):
+    gamma = config["GAMMA"]
+    c = config["VF_CLIP"]
+    # 1. Current State Predictions & Errors (e_i)
+    value_pred = network.apply(params, traj_batch.obs, method=network.value)
+    value_pred_clipped = traj_batch.value + (
+        value_pred - traj_batch.value).clip(-c,c)
+    e_i = targets - value_pred_clipped 
+    base_ve_loss = 0.5 * jnp.mean(e_i ** 2)
+    # 2. Next State Predictions & Errors (e_j)
+    # Requires traj_batch to contain the adjacent (s, G) pairs
+    next_value_pred = network.apply(params, traj_batch.next_obs, method=network.value)
+    next_v_fixed = jax.lax.stop_gradient(next_value_pred)
+    next_value_pred_clipped = next_v_fixed + (
+        next_value_pred - next_v_fixed).clip(-c,c)
+    e_j = traj_batch.next_target - next_value_pred_clipped
+    valid_mask = 1.0 - traj_batch.done
+    n_valid = jnp.maximum(jnp.sum(valid_mask), 1.0)
+    laplacian_loss = 0.5 * jnp.sum(valid_mask * (e_i - e_j) ** 2) / n_valid
+    # Combine using the exact Dirichlet expansion weights
+    weight_laplacian = gamma * config['LAPLACE_SMOOTHING_COEFF']
+    dirichlet_value_loss = (1 - weight_laplacian) * base_ve_loss + weight_laplacian * laplacian_loss
+    total_loss = config["VF_COEF"] * dirichlet_value_loss
+    return total_loss, {"base_ve_loss": base_ve_loss, "laplacian_loss": laplacian_loss, "total_loss": total_loss}
+
 def no_w_v_loss_fn(params, network, traj_batch, gae, targets, config):
     # ---------------------------------------------------------
     # Firewalled Parameters
