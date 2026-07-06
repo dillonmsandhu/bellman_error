@@ -285,7 +285,12 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "is_SA_positive_definite": "Is SA Positive Definite",
         "norm_s": "norm_s",
         "norm_k": "norm_k",
-        "entropy": "entropy"
+        "entropy": "entropy",
+        "non_normality": "non_normality",
+        "projected_non_normality": "projected_non_normality",
+        "max_C_eigenvalue": "max_C_eigenvalue",
+        "projection_error_t": "projection_error_t",
+        "Ke": "Ke"
     }
     data = get_metric('E', 1)
     # a few log plots:

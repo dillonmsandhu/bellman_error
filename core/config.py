@@ -1,9 +1,11 @@
 config = {
         "N_SEEDS": 1,
-        "ENV_NAME": "FourRooms-misc",
-        "FAIL_PROB": 0.001, 
+        "ENV_NAME": "Whirlpool",
+        # "ENV_NAME": "FourRooms-misc",
+        # "FAIL_PROB": 0.05, 
+        "FAIL_PROB": 0.9, 
         "GAMMA": 0.99,
-        "k": 8,
+        "k": 16,
         "MAX_STEPS_IN_EPISODE": 1e6,
         "LAYER_NORM": True,
 
@@ -14,11 +16,16 @@ config = {
         "NUM_STEPS": 256,
         "TOTAL_TIMESTEPS": 5e5,
         "NUM_EPOCHS": 4,
-        "MINIBATCH_SIZE": 128,
-        "GAMMA": 0.99, 
+        "MINIBATCH_SIZE": 512,
+        # "NUM_ENVS": 1,
+        # "NUM_STEPS": 1,
+        # "TOTAL_TIMESTEPS": 1000,
+        # "NUM_EPOCHS": 1,
+        # "MINIBATCH_SIZE": 1,
         "VALUE_LAMBDA": 0.0,
         "POLICY_LAMBDA": 0.6,
         "GAE_LAMBDA": 0.0,
+        "LAPLACE_SMOOTHING_COEFF": 0.9,
         "CLIP_EPS": 0.5,
         "VF_CLIP": 0.5,
         "ENT_COEF": 0.00,
@@ -35,5 +42,6 @@ config = {
         "V_LOSS_SHARED": True, # whether the TD / MC can update the final weights w.
 
         # For the fixed:
-        'MODEL_LOAD_DIR': "cont",
+        # 'MODEL_LOAD_DIR': "cont",
+        'MODEL_LOAD_DIR': "short_run",
         }
