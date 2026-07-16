@@ -283,6 +283,16 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
     # Compute the weighted value error E
     E = 0.5 * jnp.dot(e, A @ e)
+    
+    non_normality = jnp.linalg.norm(S@K-K@S)
+    K_Phi = Φ.T @ K @ Φ
+    S_Phi = Φ.T @ S @ Φ
+    projected_C = S_Phi@K_Phi-K_Phi@S_Phi
+    projected_non_normality = jnp.linalg.norm(projected_C)
+
+    max_C_eigenvalue = jnp.max(jnp.linalg.eigvalsh(projected_C))
+
+    Ke = jnp.linalg.norm(K @ e) # Degree to which TD is not SGD.
 
     # 2. Initialize base metrics
     metrics = {
@@ -299,7 +309,12 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "E": E,
         "norm_s": norm_s,
         "norm_k": norm_k,
-        "alignment_condition_sign": alignment_condition_sign
+        "alignment_condition_sign": alignment_condition_sign,
+        "non_normality": non_normality,
+        "projected_non_normality": projected_non_normality,
+        "max_C_eigenvalue": max_C_eigenvalue,
+        "projection_error_t": norm_nn_ortho,
+        "Ke": Ke
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
