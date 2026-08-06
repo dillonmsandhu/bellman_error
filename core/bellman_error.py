@@ -284,6 +284,9 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     # Compute the weighted value error E
     E = 0.5 * jnp.dot(e, A @ e)
 
+    mask = (mu > 1e-3).astype(float)
+    E_local = 0.5 * jnp.sum(mask * (e * (A @ e)))
+
     # 2. Initialize base metrics
     metrics = {
         "effective_rank": effective_rank,
@@ -297,6 +300,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "alignment_condition": alignment_condition, # if zero, decreases E.
         "alignment_condition_normalized": alignment_condition_normalized, # if zero, decreases E.
         "E": E,
+        "E_local": E_local,
         "norm_s": norm_s,
         "norm_k": norm_k,
         "alignment_condition_sign": alignment_condition_sign

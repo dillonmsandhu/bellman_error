@@ -293,13 +293,17 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "Ke": "Ke"
     }
     data = get_metric('E', 1)
+    E_local = get_metric('E_local', 1)
     # a few log plots:
     save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', True)
+    save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, E_local, 'E_local', True)
     try:
         data = get_metric('alignment_condition', 1)
+        save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, E_local, 'E_local', True)
         save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', True)
     except:
         data = get_metric('alignment_condition', 1)
+        save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, E_local, 'E_local', False)
         save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', False)
         
 
