@@ -1,5 +1,4 @@
-# REINFORCE / GRPO-style policy gradient (for intrinsic value)
-# uses a timestep dependent variant, based on batch index i.
+# Samples a set of states without replacement, and performs Partially Fitted Q iteration on them  
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -9,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_td_exact"
+SAVE_DIR = "random_pfqi_subset"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -74,40 +73,80 @@ def make_train(config):
                 ),
         )
         train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
-        runner_state = (train_state, 1)
+        rng, loop_rng = jax.random.split(rng)
+        runner_state = (train_state, loop_rng, 1)
         
-        def td_loss(params):
-            # each update step looks at all observations and produces v_theta(S)            
-            print(S.shape)
-            v = network.apply(params, S) # 104 states, no terminal
-            v = jnp.append(v, 0.0)
-            TD_targets = R_π + config['GAMMA'] * P_π @ v
-            td_errors = v - jax.lax.stop_gradient(TD_targets)
-            loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
-            return loss
-        
-        td_grad = jax.value_and_grad(td_loss)
-    
-        def td_step(train_state, unused):
-            loss, grads = td_grad(train_state.params)
-            train_state = train_state.apply_gradients(grads=grads)
-            return train_state, loss
-        
-        # Main Loop
         def _update_step(runner_state, unused):
-            train_state, idx = runner_state
-            # 1.  Apply expected update NUM_EPOCHS times
-            train_state, loss = jax.lax.scan(td_step, train_state, None, config["NUM_EPOCHS"])
-            # 2. Get value metrics and logging
+            train_state, current_rng, idx = runner_state
+            
+            # --- 1. SAMPLE BATCH ---
+            rng_sample, next_rng = jax.random.split(current_rng)
+            
+            # mu[:-1] contains probabilities for active states. Normalize to sum to 1.
+            p_mu = mu[:-1] / jnp.sum(mu[:-1]) 
+            batch_size = config.get('BATCH_SIZE', 32)
+            batch_idx = jax.random.choice(
+                rng_sample, 
+                jnp.arange(n_states), 
+                shape=(batch_size,), 
+                replace=False 
+            )
+            
+            batch_S = S[batch_idx]
+            
+            # Extract the true mu probabilities for these specific states
+            batch_mu = mu[batch_idx]
+            
+            # Calculate the unbiased weight scaling factor: |S| / b
+            weight_scale = n_states / batch_size
+            
+            # --- 2. COMPUTE FIXED TARGETS (PFQI Style) ---
+            v_all = network.apply(train_state.params, S) 
+            v_all = jnp.append(v_all, 0.0) 
+            
+            # Calculate full targets BEFORE the inner loop, then slice for the batch
+            TD_targets_all = R_π + config['GAMMA'] * P_π @ v_all
+            fixed_batch_targets = jax.lax.stop_gradient(TD_targets_all[batch_idx])
+            
+            # --- 3. INNER LOOP: E EPOCHS ON FIXED TARGETS ---
+            def inner_td_loss(params):
+                v_batch = network.apply(params, batch_S)
+                td_errors = v_batch - fixed_batch_targets
+                
+                # Apply the Horvitz-Thompson unbiased weights
+                unbiased_weights = batch_mu * weight_scale
+                loss = 0.5 * jnp.sum(unbiased_weights * (td_errors ** 2))
+                
+                return loss
+            
+            inner_td_grad = jax.value_and_grad(inner_td_loss)
+            
+            def inner_td_step(current_train_state, unused):
+                loss, grads = inner_td_grad(current_train_state.params)
+                current_train_state = current_train_state.apply_gradients(grads=grads)
+                return current_train_state, loss
+
+            # Scan applies the gradient update NUM_EPOCHS times using the closed-over fixed targets
+            train_state, losses = jax.lax.scan(
+                inner_td_step, 
+                train_state, 
+                None, 
+                length=config["NUM_EPOCHS"]
+            )
+            
+            # --- 4. METRICS & LOGGING ---
             metric = bellman_error.value_metrics(
                 evaluator, network, train_state.params, random_policy=True, 
             )
-            metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
-            runner_state = (train_state, idx + 1)
+            metric.update({"total_loss": losses.mean(), "value_loss": losses.mean()})
+            
+            runner_state = (train_state, next_rng, idx + 1)
             return runner_state, metric
             
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
-        return {"runner_state": runner_state, "metrics": metrics}
+        
+        final_train_state, _, final_idx = runner_state
+        return {"runner_state": (final_train_state, final_idx), "metrics": metrics}
 
     return train
 

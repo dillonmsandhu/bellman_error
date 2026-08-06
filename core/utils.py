@@ -277,20 +277,12 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "vic_loss_var": "vic_loss_var",
         "v_loss": "v_loss",
         # "E": "E",
-        "alignment_condition": "Alignment Condition",
         "alignment_condition_normalized": "Alignment Condition (Normalized e)",
         "alignment": "Alignment (cosine similarity)",
-        "alignment_condition_sign": "alignment_condition_sign",
         "SA_min_eigenvalue": "Min. Eigenvalue of SA",
-        "is_SA_positive_definite": "Is SA Positive Definite",
-        "norm_s": "norm_s",
-        "norm_k": "norm_k",
         "entropy": "entropy",
-        "non_normality": "non_normality",
-        "projected_non_normality": "projected_non_normality",
-        "max_C_eigenvalue": "max_C_eigenvalue",
         "projection_error_t": "projection_error_t",
-        "Ke": "Ke"
+        "ent_rank": "ent_rank"
     }
     data = get_metric('E', 1)
     # a few log plots:

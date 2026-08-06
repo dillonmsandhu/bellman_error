@@ -111,7 +111,6 @@ def make_train(config):
             value_metrics = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=False)
             metric.update(value_metrics)
 
-
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric
 

@@ -216,16 +216,19 @@ class WhirlpoolExactValue:
         return self.get_value_grid(V_pi)
 
     def compute_stationary_distribution_raw(self, pi: jax.Array) -> jax.Array:
-        "Returns vector"
+        """Returns vector"""
         P_env = self.P_cont[:self.num_states, :, :self.num_states]
         P_pi = jnp.einsum("sa,sam->sm", pi, P_env)
+        
         A = P_pi.T - jnp.eye(self.num_states)
         A = A.at[-1, :].set(1.0)
-        b = jnp.zeros(self.num_states)
-        b = b.at[-1].set(1.0)
+        
+        # Can be written directly:
+        b = jnp.zeros(self.num_states).at[-1].set(1.0)
+        
         mu = jnp.linalg.solve(A, b)
         mu = jnp.clip(mu, a_min=0.0)
-        return mu / mu.sum()
+        return mu / mu.sum(), P_pi
 
     def compute_stationary_distribution(self, pi: jax.Array) -> jax.Array:
         "Returns grid"

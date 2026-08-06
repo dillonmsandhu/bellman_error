@@ -136,7 +136,7 @@ def get_lstd_weights(evaluator, network, params, random_policy, target_policy_fn
     Φ = jnp.concatenate([Φ, bias_col], axis=-1)
 
     # Compute stationary dist (no terminal state)
-    mu = evaluator.compute_stationary_distribution_raw(pi[:-1, :])
+    mu, _ = evaluator.compute_stationary_distribution_raw(pi[:-1, :])
     mu = jnp.append(mu, 0.0)
     D = jnp.diag(mu) 
 
@@ -182,7 +182,9 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     # Compute the true value:
     V_pi = evaluator.compute_true_values_raw(pi) 
     # Compute stationary dist (no terminal state)
-    mu = evaluator.compute_stationary_distribution_raw(pi[:-1, :])
+    mu, P_pi_cont = evaluator.compute_stationary_distribution_raw(pi[:-1, :])
+    # stationary dist error:
+    stat_dist_error = jnp.mean( jnp.abs ( mu.T @ P_pi_cont - mu.T )) 
     mu = jnp.append(mu, 0.0)
     D = jnp.diag(mu) 
 
@@ -199,6 +201,10 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     _, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
     sig_level = (1-γ) / 10.0
     effective_rank = jnp.sum(S > sig_level)
+
+    # Feature Quality (effective rank and PCA).
+    p = S / jnp.sum(S)
+    ent_rank = jnp.exp(-jnp.sum(jnp.where(p > 0, p * jnp.log(p), 0.0)))
     # pca_phi = weighted_PCA(I, Φ)
 
     # Fits: Value Error, MSPBE
@@ -259,18 +265,22 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     SA = S @ A 
     
     # 4. Check global positive definiteness of SA 
-    # (If min eigenvalue > 0, SA is positive definite and E will globally decrease)
-    # Using jnp.real to handle potential complex eigenvalues from numerical imprecision
     
-    # 1. Extract the symmetric part of SA
     SA_symmetric = 0.5 * (SA + SA.T)
     
-    # 2. Use 'eigvalsh' (the 'h' stands for Hermitian/Symmetric), which works perfectly on GPUs
-    eigenvalues_SA = jnp.linalg.eigvalsh(SA_symmetric)
+    # 2. Use 'eigh' to get BOTH eigenvalues and eigenvectors
+    eigenvalues_SA, eigenvectors_SA = jnp.linalg.eigh(SA_symmetric)
     
-    # 3. Minimum eigenvalue
-    min_eig_SA = jnp.min(eigenvalues_SA) # No jnp.real needed; symmetric eigenvalues are strictly real
-    is_SA_pos_def = min_eig_SA > 0
+    # 3. Always find the index of the absolute minimum eigenvalue
+    # This is JAX-safe because argmin always returns a single scalar index.
+    min_eig_idx = jnp.argmin(eigenvalues_SA)
+    
+    # 4. Extract the minimum eigenvalue and its corresponding eigenvector
+    min_eigenvalue = eigenvalues_SA[min_eig_idx]
+    min_eigenvector = eigenvectors_SA[:, min_eig_idx]
+    
+    # 5. Determine positive semi-definiteness
+    is_SA_pos_def = min_eigenvalue >= 0.0
 
     e = V_nn - V_pi
     term_1 = jnp.dot(e, S_sq @ e)
@@ -292,7 +302,13 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
     max_C_eigenvalue = jnp.max(jnp.linalg.eigvalsh(projected_C))
 
-    Ke = jnp.linalg.norm(K @ e) # Degree to which TD is not SGD.
+    Ke = jnp.linalg.norm(K @ e) # Degree to which TD is not SGD.    
+
+    #     # Map to the N x N grid
+    stat_dist = evaluator.get_value_grid(mu)
+    # Extract the corresponding eigenvector (column vector)
+    min_eigenvector_grid = evaluator.get_value_grid(min_eigenvector)
+    
 
     # 2. Initialize base metrics
     metrics = {
@@ -302,7 +318,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "negative_alignment": negative_alignment,
         "alignment": alignment, # cosine similarity
         "value_grid": evaluator.get_value_grid(V_pi),
-        "SA_min_eigenvalue": min_eig_SA,
+        "SA_min_eigenvalue": min_eigenvalue,
         "is_SA_positive_definite": is_SA_pos_def,
         "alignment_condition": alignment_condition, # if zero, decreases E.
         "alignment_condition_normalized": alignment_condition_normalized, # if zero, decreases E.
@@ -314,7 +330,11 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "projected_non_normality": projected_non_normality,
         "max_C_eigenvalue": max_C_eigenvalue,
         "projection_error_t": norm_nn_ortho,
-        "Ke": Ke
+        "Ke": Ke,
+        "stat_dist_error": stat_dist_error,
+        "stat_dist": stat_dist,
+        "min_eigenvector_grid": min_eigenvector_grid,
+        "ent_rank": ent_rank,
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
