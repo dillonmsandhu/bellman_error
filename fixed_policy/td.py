@@ -25,7 +25,7 @@ def make_train(config):
     # Load the fixed policy we will evaluate:
     # model saved under ./results/{alg}/{sub_dir}
     model_dir = 'ppo/' + config['MODEL_LOAD_DIR']
-    _, out = utils.load_run_data(model_dir, 'FourRooms-misc', 'results') 
+    _, out = utils.load_run_data(model_dir, config['ENV_NAME'], 'results') 
     policy_train_state = out['runner_state'][0]
     
     # The saved train state is batched over N_SEEDS (which is 1 by default).

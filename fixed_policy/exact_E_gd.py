@@ -26,7 +26,7 @@ def make_train(config):
     # Policy to be evaluated
     # model saved under ./results/{alg}/{sub_dir}
     model_dir = 'ppo/' + config['MODEL_LOAD_DIR']
-    _, out = utils.load_run_data(model_dir, 'FourRooms-misc', 'results') 
+    _, out = utils.load_run_data(model_dir, config['ENV_NAME'], 'results') 
     policy_train_state = out['runner_state'][0]
     policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
     get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)[0]
@@ -75,7 +75,7 @@ def make_train(config):
             # each update step looks at all observations and produces v_theta(S)            
             v = network.apply(params, ALL_STATES) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            loss = 0.5 * (V-v).T @ S @ (V-v)
+            loss = (V-v).T @ S @ (V-v)
             return loss
         
         td_grad = jax.value_and_grad(td_loss)
