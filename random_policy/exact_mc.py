@@ -47,7 +47,7 @@ def make_train(config):
         return pi
     
     Pi = get_random_policy_matrix()
-    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
     V = evaluator.compute_true_values_raw(Pi)
     

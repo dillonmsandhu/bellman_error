@@ -9,7 +9,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_exact_E"
+SAVE_DIR = "random_td_exact_S_reg"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -23,6 +23,7 @@ def make_train(config):
     evaluator = helpers.initialize_evaluator(config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
+    all_obs = evaluator.obs_stack
     n_states = len(evaluator.obs_stack) # also 
     
     # Policy to be evaluated
@@ -47,16 +48,30 @@ def make_train(config):
     
     Pi = get_random_policy_matrix()
     
-    ALL_STATES = evaluator.obs_stack
-    I = jnp.eye(evaluator.num_total_states)
+    # Get the Markov Chain
+    
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", Pi, P)
-    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0] # uses the continuing version, where S_T -> S_0
+    R_π_s = jnp.einsum("sa,sa->s", Pi, evaluator.R)
+    # Gymnax awards the reward on the transition *INTO* s'
+    R_π = P_π @ R_π_s
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :]) # uses the continuing version, where S_T -> S_0
     mu = jnp.append(mu, 0.0)
     D = jnp.diag(mu)
+    I = jnp.eye(evaluator.num_total_states)
     A = D @ (I - config['GAMMA'] * P_π)
     S = 0.5 * (A + A.T)
+    K = 0.5 * (A - A.T)
     V = evaluator.compute_true_values_raw(Pi)
+
+    def get_phi(params, network):
+        Φ = network.apply(params, all_obs, method=network.value_features)
+        # terminal state
+        Φ = jnp.vstack([Φ, jnp.zeros((1, Φ.shape[-1]))]) 
+        # (add bias, but keep terminal state strictly zero):
+        bias_col = jnp.ones((Φ.shape[0], 1)).at[-1].set(0.0)
+        Φ = jnp.concatenate([Φ, bias_col], axis=-1)
+        return Φ 
     
     def train(rng):
         k = config.get('k', 32)
@@ -75,13 +90,22 @@ def make_train(config):
         )
         train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
         runner_state = (train_state, 1)
-
+        
         def td_loss(params):
             # each update step looks at all observations and produces v_theta(S)            
-            v = network.apply(params, ALL_STATES) # 104 states, no terminal
+            v = network.apply(params, all_obs) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            loss = (V-v).T @ S @ (V-v)
-            return loss
+            TD_targets = R_π + config['GAMMA'] * P_π @ v
+            td_errors = v - jax.lax.stop_gradient(TD_targets)
+            loss = 0.5 * jnp.sum(mu * (td_errors ** 2)) # what if we weight by A? Ae = D delta...
+
+            # Φ = get_phi(params,network)
+            # S_phi = Φ.T @ S @ Φ
+            # K_phi = Φ.T @ K @ Φ
+            # projected_C = S_phi@K_phi-K_phi@S_phi
+            # projected_non_normality = jnp.linalg.norm(projected_C)
+            # return loss + 0.1 * jnp.linalg.norm(S @ td_errors)
+            return loss + 0.01 * td_errors.T @ S.T @ S @ td_errors
         
         td_grad = jax.value_and_grad(td_loss)
     
