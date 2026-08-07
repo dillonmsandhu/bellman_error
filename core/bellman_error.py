@@ -5,6 +5,7 @@
 # Feature Space Quality: Effective Dim, Value Projection Angle, Value PCA
 from core.imports import *
 import distrax
+from core.ntk import compute_eNTK
 # from sklearn.decomposition import PCA
 
 ε =  0.0
@@ -313,6 +314,16 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     mask = (mu > 1e-3).astype(float)
     E_local = 0.5 * jnp.sum(mask * (e * (A @ e)))
 
+    # NTK
+    eNTK = compute_eNTK(params, evaluator.obs_stack, network)
+    
+    # Use eigvalsh for symmetric matrices (returns eigenvalues in ascending order)
+    eigenvalues = jnp.linalg.eigvalsh(eNTK)
+    
+    # Use a relative threshold (e.g., 0.01% of the max eigenvalue)
+    threshold = 1e-4 * jnp.max(eigenvalues)
+    eNTK_effective_rank = jnp.sum(eigenvalues > threshold)
+
     # 2. Initialize base metrics
     metrics = {
         "effective_rank": effective_rank,
@@ -339,6 +350,8 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "stat_dist": stat_dist,
         "min_eigenvector_grid": min_eigenvector_grid,
         "ent_rank": ent_rank,
+        "NTK_rank": eNTK_effective_rank,
+        "eNTK": eNTK # stores the entire 133 x 133 matrix.
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically

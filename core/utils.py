@@ -282,7 +282,8 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "SA_min_eigenvalue": "Min. Eigenvalue of SA",
         "entropy": "entropy",
         "projection_error_t": "projection_error_t",
-        "ent_rank": "ent_rank"
+        "ent_rank": "ent_rank",
+        "NTK_rank": "NTK_rank"
     }
     data = get_metric('E', 1)
     E_local = get_metric('E_local', 1)
