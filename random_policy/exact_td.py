@@ -6,6 +6,7 @@ import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
+from core.feature_metrics import feature_metrics
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -58,19 +59,29 @@ def make_train(config):
     mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
     
-    def train(rng):
+    def train(rng, hparams=None):
+        if hparams is None:
+            hparams = {}
+
+        lr = hparams.get('LR', config['LR'])
+        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
+        weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
+        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-5))
+        max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
+        gamma = hparams.get('GAMMA', config['GAMMA'])
+
         k = config.get('k', 32)
         # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
         total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(config["LR"], config["LR_END"], total_grad_steps)
+        lr_scheduler = optax.linear_schedule(lr, lr_end, total_grad_steps)
         tx = optax.chain(
-                optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+                optax.clip_by_global_norm(max_grad_norm),
                 optax.adamw(lr_scheduler, 
-                weight_decay = config.get('WEIGHT_DECAY', 1e-2),
-                eps=config.get('ADAM_EPS', 1e-5)
+                weight_decay=weight_decay,
+                eps=adam_eps
                 ),
         )
         train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
@@ -81,7 +92,7 @@ def make_train(config):
             print(S.shape)
             v = network.apply(params, S) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            TD_targets = R_π + config['GAMMA'] * P_π @ v
+            TD_targets = R_π + gamma * P_π @ v
             td_errors = v - jax.lax.stop_gradient(TD_targets)
             loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
             return loss
@@ -102,6 +113,10 @@ def make_train(config):
             metric = bellman_error.value_metrics(
                 evaluator, network, train_state.params, random_policy=True, 
             )
+            if config["LOG_FEATURE_METRICS"]:
+                metric.update(feature_metrics(
+                    evaluator, network, train_state.params, random_policy=True,)
+                )
             metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
             runner_state = (train_state, idx + 1)
             return runner_state, metric
@@ -112,5 +127,5 @@ def make_train(config):
     return train
 
 if __name__ == "__main__":
-    from core.utils import run_experiment_main
+    from core.runner import run_experiment_main
     run_experiment_main(make_train, SAVE_DIR)

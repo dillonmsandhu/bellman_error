@@ -5,6 +5,7 @@ import core.helpers as helpers
 import core.networks as networks
 import distrax
 import core.bellman_error as bellman_error
+from core.feature_metrics import feature_metrics
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -134,5 +135,5 @@ def make_train(config):
     return train
 
 if __name__ == "__main__":
-    from core.utils import run_experiment_main
+    from core.runner import run_experiment_main
     run_experiment_main(make_train, SAVE_DIR)

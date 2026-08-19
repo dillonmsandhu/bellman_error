@@ -6,6 +6,7 @@ import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
+from core.feature_metrics import feature_metrics
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -51,14 +52,19 @@ def make_train(config):
     mu = jnp.append(mu, 0.0)
     V = evaluator.compute_true_values_raw(Pi)
     
-    def train(rng):
+    def train(rng, hparams=None):
+        if hparams is None:
+            hparams = {}
+
+        lr = hparams.get('LR', config['LR'])
         k = config.get('k', 32)
+
         # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
         total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(config["LR"], config["LR_END"], total_grad_steps)
+        lr_scheduler = optax.linear_schedule(lr, config["LR_END"], total_grad_steps)
         tx = optax.chain(
                 optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
                 optax.adamw(lr_scheduler, 
@@ -92,6 +98,10 @@ def make_train(config):
             metric = bellman_error.value_metrics(
                 evaluator, network, train_state.params, random_policy=True, 
             )
+            if config["LOG_FEATURE_METRICS"]:
+                metric.update(feature_metrics(
+                    evaluator, network, train_state.params, random_policy=True,)
+                )
             metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
             runner_state = (train_state, idx + 1)
             return runner_state, metric
@@ -102,5 +112,5 @@ def make_train(config):
     return train
 
 if __name__ == "__main__":
-    from core.utils import run_experiment_main
+    from core.runner import run_experiment_main
     run_experiment_main(make_train, SAVE_DIR)
