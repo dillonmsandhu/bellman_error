@@ -64,9 +64,9 @@ def make_train(config):
             hparams = {}
 
         lr = hparams.get('LR', config['LR'])
-        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
+        lr_end = hparams.get('LR', config.get('LR_END', lr))
         weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
-        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-5))
+        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-4))
         max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
         gamma = hparams.get('GAMMA', config['GAMMA'])
 

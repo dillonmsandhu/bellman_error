@@ -5,7 +5,7 @@
 # Feature Space Quality: Effective Dim, Value Projection Angle, Value PCA
 from core.imports import *
 import distrax
-from core.ntk import compute_eNTK, compute_feature_jacobian
+from core.ntk import compute_eNTK, compute_feature_jacobian, compute_centered_eNTK
 # from sklearn.decomposition import PCA
 
 ε =  0.0
@@ -104,12 +104,15 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
     # Uj shape is (N, D). Slice to (N, 5), then transpose to (5, N)
     top_u_vectors = Uj[:, :num_components].T 
     heatmaps_stack = get_grids_fn(top_u_vectors)
+
+    gradient_covariance_matrix = compute_centered_eNTK(params, evaluator.obs_stack, network)
     
     # 2. Initialize base metrics
     metrics = {
         "effective_rank": effective_rank,
         "NTK_rank": eNTK_effective_rank,
         "eNTK": eNTK, # stores the entire 133 x 133 matrix.
+        "gradient_covariance_matrix": gradient_covariance_matrix,
         "feature_singular_values": feature_singular_values,
         "feature_top_singular_vectors": feature_top_singular_vectors,
         "Jacobian_top_singular_vectors": heatmaps_stack,

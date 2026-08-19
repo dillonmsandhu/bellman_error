@@ -10,13 +10,13 @@ config = {
         "LAYER_NORM": False,
 
         "LR": 0.003,
-        "LR_END": 0.003,
+        "LR_END": 0.0,
         
-        "NUM_ENVS": 32,
-        "NUM_STEPS": 256,
-        "TOTAL_TIMESTEPS": 3000,
+        "NUM_ENVS": 1,
+        "NUM_STEPS": 1,
+        "TOTAL_TIMESTEPS": 1000,
         "NUM_EPOCHS": 1,
-        "MINIBATCH_SIZE": 512,
+        "MINIBATCH_SIZE": 1,
         # "NUM_ENVS": 1,
         # "NUM_STEPS": 1,
         # "TOTAL_TIMESTEPS": 1000,
