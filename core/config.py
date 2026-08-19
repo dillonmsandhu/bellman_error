@@ -5,7 +5,7 @@ config = {
         "FAIL_PROB": 0.15, 
         # "FAIL_PROB": 0.9, 
         "GAMMA": 0.99,
-        "k": 32,
+        "k": 16,
         "MAX_STEPS_IN_EPISODE": 1e6,
         "LAYER_NORM": False,
 
@@ -14,8 +14,8 @@ config = {
         
         "NUM_ENVS": 32,
         "NUM_STEPS": 256,
-        "TOTAL_TIMESTEPS": 2.5e5,
-        "NUM_EPOCHS": 4,
+        "TOTAL_TIMESTEPS": 1000,
+        "NUM_EPOCHS": 1,
         "MINIBATCH_SIZE": 512,
         # "NUM_ENVS": 1,
         # "NUM_STEPS": 1,
@@ -40,7 +40,7 @@ config = {
         "DONE_COEFF": 0.0,  
         "POLICY_COEFF": 1.0,
         "V_LOSS_SHARED": True, # whether the TD / MC can update the final weights w.
-
+        "BATCH_SIZE": 64,
         # For the fixed:
         # 'MODEL_LOAD_DIR': "cont",
         'MODEL_LOAD_DIR': "short_run",

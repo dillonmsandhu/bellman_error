@@ -9,7 +9,7 @@ from core.networks import nn
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_policy_linear_model_mc_feats"
+SAVE_DIR = "random/policy_linear_model_mc_feats"
 
 
 class IVActorCritic(nn.Module):

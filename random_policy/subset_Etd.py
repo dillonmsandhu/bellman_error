@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random/subset/td"
+SAVE_DIR = "random/subset/E_td"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -56,7 +56,14 @@ def make_train(config):
     R_π = P_π @ R_π_s
     mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
-    
+    # construct weighting / laplace matrix
+    D = jnp.diag(mu)
+    I = jnp.eye(evaluator.num_total_states)
+    A = D @ (I - config['GAMMA'] * P_π)
+    S_mat = 0.5 * (A + A.T) 
+    V = evaluator.compute_true_values_raw(Pi)
+
+
     def train(rng):
         k = config.get('k', 32)
         # Initialize Network
@@ -98,33 +105,52 @@ def make_train(config):
             # Extract the true mu probabilities for these specific states
             batch_mu = mu[batch_idx]
             weight_scale = n_states / batch_size
-            
-            # --- 2. INNER LOOP: E EPOCHS, MOVING TARGETS ---
-            def inner_td_loss(params):
+
+            def joint_td_E_loss(params):
+                # --- TD Loss ---
                 v_all = network.apply(params, S) 
                 v_all = jnp.append(v_all, 0.0) 
-                
                 TD_targets_all = R_π + config['GAMMA'] * P_π @ v_all
                 batch_targets = jax.lax.stop_gradient(TD_targets_all[batch_idx])
                 
-                v_batch = network.apply(params, batch_S)
+                v_batch = v_all[batch_idx]
                 td_errors = v_batch - batch_targets
+                td_loss = 0.5 * jnp.sum(batch_mu * weight_scale * (td_errors ** 2))
+
+                # --- Exact Sampled E Loss ---
+                e_all = V - v_all
+                e_batch = e_all[batch_idx]
                 
-                # Apply the Horvitz-Thompson unbiased weights
-                unbiased_weights = batch_mu * weight_scale
-                loss = 0.5 * jnp.sum(unbiased_weights * (td_errors ** 2))
+                # Get the transition probabilities for just the sampled states
+                # Shape: (batch_size, n_states)
+                P_batch = P_π[batch_idx, :] 
                 
-                return loss
+                # Compute the squared differences between the batch errors and ALL errors
+                # Broadcasting: (batch_size, 1) - (1, n_states) -> (batch_size, n_states)
+                e_diff_sq = (e_batch[:, None] - e_all[None, :]) ** 2
+                
+                # Compute the Laplacian term (weighted average over possible next states)
+                # Shape: (batch_size,)
+                laplacian_term = 0.5 * config['GAMMA'] * jnp.sum(P_batch * e_diff_sq, axis=1)
+                
+                # Compute the magnitude term
+                # Shape: (batch_size,)
+                magnitude_term = (1.0 - config['GAMMA']) * (e_batch ** 2)
+                
+                # Combine and sum over the batch
+                E_loss = jnp.sum(batch_mu * weight_scale * (magnitude_term + laplacian_term))
+
+                return td_loss + 0.5 * E_loss
             
-            inner_td_grad = jax.value_and_grad(inner_td_loss)
+            td_grad = jax.value_and_grad(joint_td_E_loss)
             
-            def inner_td_step(current_train_state, unused):
-                loss, grads = inner_td_grad(current_train_state.params)
+            def td_step(current_train_state, unused):
+                loss, grads = td_grad(current_train_state.params)
                 current_train_state = current_train_state.apply_gradients(grads=grads)
                 return current_train_state, loss
 
             train_state, losses = jax.lax.scan(
-                inner_td_step, 
+                td_step, 
                 train_state, 
                 None, 
                 length=config["NUM_EPOCHS"]

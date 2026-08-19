@@ -1,5 +1,4 @@
-# REINFORCE / GRPO-style policy gradient (for intrinsic value)
-# uses a timestep dependent variant, based on batch index i.
+# Samples a set of states without replacement, and performs TD learning on them. 
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -9,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random/td_exact_S_reg"
+SAVE_DIR = "random/subset/E"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -23,7 +22,7 @@ def make_train(config):
     evaluator = helpers.initialize_evaluator(config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
-    all_obs = evaluator.obs_stack
+    S = evaluator.obs_stack
     n_states = len(evaluator.obs_stack) # also 
     
     # Policy to be evaluated
@@ -55,24 +54,16 @@ def make_train(config):
     R_π_s = jnp.einsum("sa,sa->s", Pi, evaluator.R)
     # Gymnax awards the reward on the transition *INTO* s'
     R_π = P_π @ R_π_s
-    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :]) # uses the continuing version, where S_T -> S_0
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
+    # construct weighting / laplace matrix
     D = jnp.diag(mu)
     I = jnp.eye(evaluator.num_total_states)
     A = D @ (I - config['GAMMA'] * P_π)
-    S = 0.5 * (A + A.T)
-    K = 0.5 * (A - A.T)
+    S_mat = 0.5 * (A + A.T) 
     V = evaluator.compute_true_values_raw(Pi)
 
-    def get_phi(params, network):
-        Φ = network.apply(params, all_obs, method=network.value_features)
-        # terminal state
-        Φ = jnp.vstack([Φ, jnp.zeros((1, Φ.shape[-1]))]) 
-        # (add bias, but keep terminal state strictly zero):
-        bias_col = jnp.ones((Φ.shape[0], 1)).at[-1].set(0.0)
-        Φ = jnp.concatenate([Φ, bias_col], axis=-1)
-        return Φ 
-    
+
     def train(rng):
         k = config.get('k', 32)
         # Initialize Network
@@ -89,46 +80,85 @@ def make_train(config):
                 ),
         )
         train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
-        runner_state = (train_state, 1)
         
-        def td_loss(params):
-            # each update step looks at all observations and produces v_theta(S)            
-            v = network.apply(params, all_obs) # 104 states, no terminal
-            v = jnp.append(v, 0.0)
-            TD_targets = R_π + config['GAMMA'] * P_π @ v
-            td_errors = v - jax.lax.stop_gradient(TD_targets)
-            loss = 0.5 * jnp.sum(mu * (td_errors ** 2)) # what if we weight by A? Ae = D delta...
-
-            # Φ = get_phi(params,network)
-            # S_phi = Φ.T @ S @ Φ
-            # K_phi = Φ.T @ K @ Φ
-            # projected_C = S_phi@K_phi-K_phi@S_phi
-            # projected_non_normality = jnp.linalg.norm(projected_C)
-            # return loss + 0.1 * jnp.linalg.norm(S @ td_errors)
-            return loss + 0.01 * td_errors.T @ S.T @ S @ td_errors
+        rng, loop_rng = jax.random.split(rng)
+        runner_state = (train_state, loop_rng, 1)
         
-        td_grad = jax.value_and_grad(td_loss)
-    
-        def td_step(train_state, unused):
-            loss, grads = td_grad(train_state.params)
-            train_state = train_state.apply_gradients(grads=grads)
-            return train_state, loss
-        
-        # Main Loop
         def _update_step(runner_state, unused):
-            train_state, idx = runner_state
-            # 1.  Apply expected update NUM_EPOCHS times
-            train_state, loss = jax.lax.scan(td_step, train_state, None, config["NUM_EPOCHS"])
-            # 2. Get value metrics and logging
+            train_state, current_rng, idx = runner_state
+            
+            # --- 1. SAMPLE DISTINCT STATES (UNIFORM WoR) ---
+            rng_sample, next_rng = jax.random.split(current_rng)
+            
+            batch_size = config.get('BATCH_SIZE', 32)
+            
+            # Sample `BATCH_SIZE` distinct states
+            batch_idx = jax.random.choice(
+                rng_sample, 
+                jnp.arange(n_states), 
+                shape=(batch_size,), 
+                replace=False 
+            )
+                        
+            # Extract the true mu probabilities for these specific states
+            batch_mu = mu[batch_idx]
+            weight_scale = n_states / batch_size
+
+            def E_loss(params):
+                # --- Exact Sampled E Loss ---
+                v_all = network.apply(params, S) 
+                v_all = jnp.append(v_all, 0.0) 
+                e_all = V - v_all
+                e_batch = e_all[batch_idx]
+                
+                # Get the transition probabilities for just the sampled states
+                # Shape: (batch_size, n_states)
+                P_batch = P_π[batch_idx, :] 
+                
+                # Compute the squared differences between the batch errors and ALL errors
+                # Broadcasting: (batch_size, 1) - (1, n_states) -> (batch_size, n_states)
+                e_diff_sq = (e_batch[:, None] - e_all[None, :]) ** 2
+                
+                # Compute the Laplacian term (weighted average over possible next states)
+                # Shape: (batch_size,)
+                laplacian_term = 0.5 * config['GAMMA'] * jnp.sum(P_batch * e_diff_sq, axis=1)
+                
+                # Compute the magnitude term
+                # Shape: (batch_size,)
+                magnitude_term = (1.0 - config['GAMMA']) * (e_batch ** 2)
+                
+                # Combine and sum over the batch
+                E_loss = jnp.sum(batch_mu * weight_scale * (magnitude_term + laplacian_term))
+
+                return E_loss
+            
+            td_grad = jax.value_and_grad(E_loss)
+            
+            def td_step(current_train_state, unused):
+                loss, grads = td_grad(current_train_state.params)
+                current_train_state = current_train_state.apply_gradients(grads=grads)
+                return current_train_state, loss
+
+            train_state, losses = jax.lax.scan(
+                td_step, 
+                train_state, 
+                None, 
+                length=config["NUM_EPOCHS"]
+            )
+            
+            # --- 3. METRICS & LOGGING ---
             metric = bellman_error.value_metrics(
                 evaluator, network, train_state.params, random_policy=True, 
             )
-            metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
-            runner_state = (train_state, idx + 1)
+            metric.update({"total_loss": losses.mean(), "value_loss": losses.mean()})
+            
+            runner_state = (train_state, next_rng, idx + 1)
             return runner_state, metric
             
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
-        return {"runner_state": runner_state, "metrics": metrics}
+        
+        final_train_state, _, final_idx = runner_state
+        return {"runner_state": (final_train_state, final_idx), "metrics": metrics}
 
     return train
 

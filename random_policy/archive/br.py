@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_br"
+SAVE_DIR = "random/br"
 
 class Transition(NamedTuple):
     done: jnp.ndarray

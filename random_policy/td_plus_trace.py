@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_td_trace"
+SAVE_DIR = "random/td_trace"
 
 def calculate_traces(traj_batch, features, γ, λ, is_continuing: bool):
     """
