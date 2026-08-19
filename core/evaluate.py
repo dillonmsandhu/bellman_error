@@ -1,3 +1,4 @@
+# This file is responsible for running a single training run, called by runner.py 
 from core.utils import save_results, save_plot, save_multi_plot, save_feature_spectra, save_heatmap, save_heatmap_stack
 import os
 import jax
@@ -24,7 +25,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
     # Create the full name (e.g., DeepSea-bsuite-45)
     full_env_name = f"{base_env_name}-{env_size}" if env_size else base_env_name
     
-    run_dir = os.path.join("results", f"{SAVE_DIR}/{args.run_suffix}")
+    run_dir = os.path.join(f"{SAVE_DIR}/{args.run_suffix}")
     env_dir = os.path.join(run_dir, full_env_name)
     
     os.makedirs(env_dir, exist_ok=True)
@@ -134,20 +135,6 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
 
 # 1. Add the ylabel string to each configuration tuple
     plot_configs = [
-        (
-            "(Uniform Weighted) Value Errors",
-            "MSVE (equal state weighting)",      # <--- New Y-Label
-            {
-                "LSTD_VE": "LSTD (on-policy) VE",
-                "VR_VE": "VR (on-policy) VE",
-                "nn_VE": "NN (on-policy) VE",
-                "LSTD_uniform_VE": "LSTD (uniform) VE",
-                "VR_uniform_VE": "VR (uniform) VE",
-                "BR_uniform_VE": "BR (uniform) VE",
-                # "BR_VE": "BR VE"
-            },
-            True,
-        ),
         (
             "Weighted Value Errors",
             "MSVE (mu-weighted)",      # <--- New Y-Label

@@ -5,6 +5,7 @@ import core.helpers as helpers
 import core.networks as networks
 import distrax
 import core.bellman_error as bellman_error
+from core.feature_metrics import feature_metrics
 
 # jax.config.update("jax_enable_x64", True)
 

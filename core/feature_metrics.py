@@ -60,7 +60,7 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
     stat_dist_error = jnp.mean( jnp.abs ( mu.T @ P_pi_cont - mu.T )) 
     mu = jnp.append(mu, 0.0)
     D = jnp.diag(mu) 
-
+    
     # Get the exact formulation of the MDP
     γ = evaluator.gamma
     P = evaluator.P # 3d tensor S x A x S'
@@ -69,6 +69,7 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
     # Gymnax awards the reward on the transition *INTO* s'
     R_π = P_π @ R_π_s
     I = jnp.eye(D.shape[-1])
+    A = D @ (jnp.eye(D.shape[0]) - γ * P_π)
 
     # Feature Quality (effective rank and PCA).
     U, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
@@ -83,44 +84,7 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
 
     # heatmaps_stack will have shape (5, H, W)
     feature_top_singular_vectors = get_grids_fn(top_u_vectors)
-
-    # Feature Quality (effective rank and PCA).
-    p = S / jnp.sum(S)
-    ent_rank = jnp.exp(-jnp.sum(jnp.where(p > 0, p * jnp.log(p), 0.0)))
     
-    # Consider the symmetry of the key matrix.
-    # 1. Key Matrix A (State Space)
-    A = D @ (jnp.eye(D.shape[0]) - γ * P_π)
-    
-    # 2. Symmetric and Skew-Symmetric components
-    S = 0.5 * (A + A.T)
-    K = 0.5 * (A - A.T)
-    norm_s = jnp.linalg.norm(S, ord='fro')
-    norm_k = jnp.linalg.norm(K, ord='fro')
-    
-    # 3. Precompute matrices for the alignment condition
-    S_sq = S @ S
-    SK_KS = (S @ K) - (K @ S)
-    SA = S @ A 
-    
-    # 4. Check global positive definiteness of SA 
-    
-    SA_symmetric = 0.5 * (SA + SA.T)
-    
-    # 2. Use 'eigh' to get BOTH eigenvalues and eigenvectors
-    eigenvalues_SA, eigenvectors_SA = jnp.linalg.eigh(SA_symmetric)
-    
-    # 3. Always find the index of the absolute minimum eigenvalue
-    # This is JAX-safe because argmin always returns a single scalar index.
-    min_eig_idx = jnp.argmin(eigenvalues_SA)
-    
-    # 4. Extract the minimum eigenvalue and its corresponding eigenvector
-    min_eigenvalue = eigenvalues_SA[min_eig_idx]
-    min_eigenvector = eigenvectors_SA[:, min_eig_idx]
-    
-    # 5. Determine positive semi-definiteness
-    is_SA_pos_def = min_eigenvalue >= 0.0
-
     # NTK
     eNTK = compute_eNTK(params, evaluator.obs_stack, network)
     
@@ -144,9 +108,6 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
     # 2. Initialize base metrics
     metrics = {
         "effective_rank": effective_rank,
-        "SA_min_eigenvalue": min_eigenvalue,
-        "is_SA_positive_definite": is_SA_pos_def,
-        "ent_rank": ent_rank,
         "NTK_rank": eNTK_effective_rank,
         "eNTK": eNTK, # stores the entire 133 x 133 matrix.
         "feature_singular_values": feature_singular_values,

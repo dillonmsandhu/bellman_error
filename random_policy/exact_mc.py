@@ -6,6 +6,7 @@ import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
+from core.feature_metrics import feature_metrics
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -98,6 +99,10 @@ def make_train(config):
             metric = bellman_error.value_metrics(
                 evaluator, network, train_state.params, random_policy=True, 
             )
+            if config["LOG_FEATURE_METRICS"]:
+                metric.update(feature_metrics(
+                    evaluator, network, train_state.params, random_policy=True,)
+                )
             metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
             runner_state = (train_state, idx + 1)
             return runner_state, metric

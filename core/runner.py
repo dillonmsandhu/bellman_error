@@ -55,7 +55,7 @@ def run_experiment_main(make_train, SAVE_DIR):
         try:
             if args.sweep:
                 if args.sweep == 'default':
-                    param_grid = {"LR": [1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]}
+                    param_grid = {"LR": [1e-4, 3e-4, 1e-3, 3e-3, 5e-3, 1e-2,]}
                 else:
                     import json
                     with open(args.sweep, 'r') as f:
@@ -63,7 +63,7 @@ def run_experiment_main(make_train, SAVE_DIR):
                 tune(make_train, run_config, param_grid, save_dir=f"results/{SAVE_DIR}/tuning")
             else:
                 # Note: make_train and evaluate should be defined in your scope
-                evaluate(run_config, make_train, SAVE_DIR, args, rng)
+                evaluate(run_config, make_train, f"results/{SAVE_DIR}/", args, rng)
         except Exception as e:
             print(f"!!! CRITICAL ERROR running {env_name} !!!")
             traceback.print_exc()

@@ -4,8 +4,7 @@ import datetime
 import jax
 import jax.numpy as jnp
 import pandas as pd
-from core.utils import save_multi_plot
-
+from core.utils import save_multi_plot, save_results
 def tune(
     make_train,
     base_config,
@@ -14,6 +13,8 @@ def tune(
     save_dir="results/tuning",
     rng_seed=42,
     log_scale=True,
+    save_checkpoint = False,
+    save_metrics = True,
 ):
     """Parallel hyperparameter tuning using nested jax.vmap."""
     keys = list(param_grid.keys())
@@ -22,7 +23,7 @@ def tune(
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     env_name = base_config.get("ENV_NAME", "unnamed_env")
-    out_dir = os.path.join(save_dir, f"{env_name}_{timestamp}")
+    out_dir = os.path.join(save_dir, f"{timestamp}/{env_name}")
     os.makedirs(out_dir, exist_ok=True)
 
     n_seeds = base_config.get("N_SEEDS", 1)
@@ -71,7 +72,7 @@ def tune(
         mean_val = float(curve.mean())
         min_val = float(curve.min())
 
-        row = {**current_params}
+        row = {"config_idx": idx, **current_params}
         row[f"final_{metric_key}"] = final_val
         row[f"mean_{metric_key}"] = mean_val
         row[f"min_{metric_key}"] = min_val
@@ -86,7 +87,14 @@ def tune(
     print(f"\nTuning summary saved to {csv_path}")
     print("\nTop configurations:")
     print(summary_df.head())
-
+    
+    if save_checkpoint:
+        save_results(out, base_config, env_name, out_dir)
+    elif save_metrics:
+        save_results(metrics, base_config, env_name, out_dir)
+    else: # save config only
+        save_results(base_config, base_config, env_name, out_dir)
+    
     steps_per_pi = base_config.get("NUM_ENVS", 1) * base_config.get("NUM_STEPS", 1)
     save_multi_plot(
         env_dir=out_dir,

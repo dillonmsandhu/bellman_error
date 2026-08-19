@@ -9,12 +9,12 @@ config = {
         "MAX_STEPS_IN_EPISODE": 1e6,
         "LAYER_NORM": False,
 
-        "LR": 5e-4,
-        "LR_END": 5e-4,
+        "LR": 0.003,
+        "LR_END": 0.003,
         
         "NUM_ENVS": 32,
         "NUM_STEPS": 256,
-        "TOTAL_TIMESTEPS": 1000,
+        "TOTAL_TIMESTEPS": 3000,
         "NUM_EPOCHS": 1,
         "MINIBATCH_SIZE": 512,
         # "NUM_ENVS": 1,
@@ -44,4 +44,5 @@ config = {
         # For the fixed:
         # 'MODEL_LOAD_DIR': "cont",
         'MODEL_LOAD_DIR': "short_run",
+        "LOG_FEATURE_METRICS": False,
         }
