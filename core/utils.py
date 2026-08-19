@@ -177,6 +177,110 @@ def save_multi_plot(env_dir, env_name, steps_per_pi, metrics_dict, title="Value_
     plt.close()
     print(f"Plot saved to {plot_path}")
 
+def save_heatmap(env_dir, env_name, quantity, title):
+    plt.figure()
+    plt.matshow(quantity, label=title, cmap = "RdBu_r")
+    plt.xlabel("Env. Step")
+    plt.ylabel(f"{title}")
+    plt.title(env_name)
+    plt.colorbar()
+    plt.legend()
+
+    # Save plot as a .png file in the environment directory
+    plot_path = os.path.join(env_dir, f"{title}.png")
+    plt.savefig(plot_path)
+    plt.close()
+    print(f"Plot saved to {plot_path}")
+
+def save_heatmap_stack(env_dir, env_name, heatmap_stack, title):
+    import numpy as np
+    """
+    Plots a 1x5 grid of the top Jacobian singular vectors.
+    
+    Args:
+        env_dir: Directory to save the plot.
+        env_name: Name of the environment.
+        heatmap_stack: array-like of shape (5, H, W).
+    """
+    # Create a 1x5 subplot layout
+    fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+    fig.suptitle(f"{env_name} - Top 5 Jacobian Singular Vectors", fontsize=16)
+
+    for i in range(5):
+        grid = heatmap_stack[i]
+        
+        # 1. Symmetric Scaling: Find the max absolute value so 0 is perfectly centered
+        max_abs = np.max(np.abs(grid))
+        if max_abs == 0:  # Prevent divide-by-zero if a component is totally flat
+            max_abs = 1.0 
+
+        ax = axes[i]
+        
+        # 2. Diverging Colormap: 'RdBu_r' makes positive red, negative blue, and zero white
+        im = ax.matshow(grid, cmap='RdBu_r', vmin=-max_abs, vmax=max_abs)
+        
+        ax.set_title(f"Component {i+1}")
+        
+        # 3. Clean up spatial visualization by removing axis ticks
+        ax.set_xticks([])  
+        ax.set_yticks([])
+        
+        # Add individual colorbars since the scale of each singular vector will decay
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    
+    # Ensure directory exists and save
+    os.makedirs(env_dir, exist_ok=True)
+    save_path = os.path.join(env_dir, f"jacobian_singular_vectors.png")
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
+import numpy as np
+
+def save_feature_spectra(env_dir, env_name, sv_start, sv_end, title):
+    """
+    Plots the singular value spectrum of the feature matrix at the start and end of training.
+    
+    Args:
+        env_dir: Directory to save the plot.
+        env_name: Name of the environment.
+        sv_start: 1D array of singular values at initialization.
+        sv_end: 1D array of singular values at the end of training.
+    """
+    plt.figure(figsize=(8, 6))
+    
+    # Convert JAX arrays to NumPy arrays
+    S_start_np = np.array(sv_start)
+    S_end_np = np.array(sv_end)
+    
+    indices_start = np.arange(1, len(S_start_np) + 1)
+    indices_end = np.arange(1, len(S_end_np) + 1)
+    
+    # Plot Start (using a neutral/lighter color like gray or dashed lines)
+    plt.plot(indices_start, S_start_np, marker='o', markersize=4, color='gray', 
+             linestyle='--', alpha=0.7, label='Start (Initialization)')
+    
+    # Plot End (using a bold color)
+    plt.plot(indices_end, S_end_np, marker='o', markersize=4, color='blue', 
+             label='End (Trained)')
+    
+    # Log scale is critical to visualize the rank cutoff
+    plt.yscale('log')
+    plt.xlabel("Singular Value Index")
+    plt.ylabel("Singular Value Magnitude (Log Scale)")
+    plt.title(f"{title}")
+    
+    # Grid lines and legend
+    plt.grid(True, which="both", ls="--", alpha=0.5)
+    plt.legend()
+    
+    # Save the figure
+    os.makedirs(env_dir, exist_ok=True)
+    save_path = os.path.join(env_dir, f"{title}.png")
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
 def load_run_data(run_folder_name, env_name, results_base_path="../results"):
     """
     Load the configuration and output data for a run given the run folder and environment.
@@ -268,7 +372,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "returned_episode_returns": "returned_episode_returns",
         "returned_discounted_episode_returns": "returned_discounted_episode_returns",
         "effective_rank": "effective_rank",
-        "capacity_angle": "capacity_angle",
+        # "capacity_angle": "capacity_angle",
         "nn_lstd_diff": "nn_lstd_diff",
         "forward_loss": "forward_loss",
         "done_loss": "done_loss",
@@ -276,14 +380,15 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "vic_loss_cov": "vic_loss_cov",
         "vic_loss_var": "vic_loss_var",
         "v_loss": "v_loss",
-        # "E": "E",
-        "alignment_condition_normalized": "Alignment Condition (Normalized e)",
-        "alignment": "Alignment (cosine similarity)",
-        "SA_min_eigenvalue": "Min. Eigenvalue of SA",
-        "entropy": "entropy",
-        "projection_error_t": "projection_error_t",
-        "ent_rank": "ent_rank",
-        "NTK_rank": "NTK_rank"
+        "E": "E",
+        # "alignment_condition_normalized": "Alignment Condition (Normalized e)",
+        # "alignment": "Alignment (cosine similarity)",
+        # "SA_min_eigenvalue": "Min. Eigenvalue of SA",
+        # "entropy": "entropy",
+        # "projection_error_t": "projection_error_t",
+        # "ent_rank": "ent_rank",
+        "NTK_rank": "NTK_rank",
+        "Direlechet_energy": "Direlechet_energy"
     }
     data = get_metric('E', 1)
     E_local = get_metric('E_local', 1)
@@ -298,7 +403,40 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         data = get_metric('alignment_condition', 1)
         save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, E_local, 'E_local', False)
         save_plot(env_dir, run_config['ENV_NAME'], steps_per_pi, data, 'E', False)
-        
+    try:
+        save_heatmap(env_dir, run_config['ENV_NAME'], metrics['eNTK'][0,-1], 'ntk')
+    except Exception as e:
+        print("failed to save ntk", e)
+    
+    try: 
+        save_heatmap_stack(env_dir,
+             run_config['ENV_NAME'],
+             metrics['Jacobian_top_singular_vectors'][0][-1],
+             "J Top Singular Vs")
+        save_heatmap_stack(env_dir,
+             run_config['ENV_NAME'],
+             metrics['feature_top_singular_vectors'][0][-1],
+             "Feature Top Singular Vs")
+    
+    except Exception as e:
+        print("failed to save top five jacovian left singular vectors", e)
+    
+    try: 
+        save_feature_spectra(env_dir, 
+            run_config['ENV_NAME'], 
+            metrics['feature_singular_values'][0][0], 
+            metrics['feature_singular_values'][0][-1],
+            "Feature Singuar Vals"
+        )
+
+        save_feature_spectra(env_dir, 
+            run_config['ENV_NAME'], 
+            metrics['jacobian_singular_values'][0][0], 
+            metrics['jacobian_singular_values'][0][-1],
+            "J Singular Vals"
+        )
+    except Exception as e:
+        print("failed to plot singular value spectrum", e)
 
     for m_key, save_name in standard_plots.items():
         data = get_metric(m_key, 1)
@@ -310,20 +448,6 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
 
 # 1. Add the ylabel string to each configuration tuple
     plot_configs = [
-        (
-            "Value Learning Greedy Accuracy (All)", 
-            "Greedy Accuracy",    # <--- New Y-Label
-            {
-                "LSTD_greedy_correct": "LSTD Greedy Acc.",
-                "nn_greedy_correct": "Network Greedy Acc.",
-                "VR_greedy_correct": "VR Greedy Acc.",
-                "BR_greedy_correct": "BR Greedy Acc.",
-                "BR_uniform_greedy_correct": "BR uniform Greedy Acc.",
-                "LSTD_uniform_greedy_correct": "LSTD uniform Greedy Acc.",
-                "VR_uniform_greedy_correct": "VR uniform Greedy Acc.",
-            }, 
-            False,
-        ),
         (
             "(Uniform Weighted) Value Errors",
             "MSVE (equal state weighting)",      # <--- New Y-Label
@@ -350,7 +474,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
             True
         ),
         (
-            "Value Learning Greedy Accuracy (On-Policy estimators)", 
+            "Value Learning Greedy Accuracy", 
             "Greedy Accuracy",    # <--- New Y-Label
             {
                 "LSTD_greedy_correct": "LSTD Greedy Acc.",
@@ -360,29 +484,28 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
             }, 
             False,
         ),
-        (
-            "Weighted Projected Bellman Error",
-            "MSVE (mu-weighted)",      # <--- New Y-Label
-            {
-                "LSTD_weighted_PBE": "LSTD (on-policy) PBE",
-                "VR_weighted_PBE": "VR (on-policy) PBE",
-                "nn_weighted_PBE": "NN (on-policy) PBE",
-                "BR_weighted_PBE": "BR (on-policy) PBE"
-            },
-            True
-        ),
-        (
-            "Weighted Bellman Residual",
-            "MSBE (mu-weighted)",      # <--- New Y-Label
-            {
-                "LSTD_weighted_BE": "LSTD (on-policy) BE",
-                "VR_weighted_BE": "VR (on-policy) BE",
-                "nn_weighted_BE": "NN (on-policy) BE",
-                "BR_weighted_BE": "BR (on-policy) BE"
-            },
-            True
-        ),
-        
+        # (
+        #     "Weighted Projected Bellman Error",
+        #     "MSVE (mu-weighted)",      # <--- New Y-Label
+        #     {
+        #         "LSTD_weighted_PBE": "LSTD (on-policy) PBE",
+        #         "VR_weighted_PBE": "VR (on-policy) PBE",
+        #         "nn_weighted_PBE": "NN (on-policy) PBE",
+        #         "BR_weighted_PBE": "BR (on-policy) PBE"
+        #     },
+        #     True
+        # ),
+        # (
+        #     "Weighted Bellman Residual",
+        #     "MSBE (mu-weighted)",      # <--- New Y-Label
+        #     {
+        #         "LSTD_weighted_BE": "LSTD (on-policy) BE",
+        #         "VR_weighted_BE": "VR (on-policy) BE",
+        #         "nn_weighted_BE": "NN (on-policy) BE",
+        #         "BR_weighted_BE": "BR (on-policy) BE"
+        #     },
+        #     True
+        # ),
     ]
 
     # 2. Unpack title, ylabel, and metric_keys

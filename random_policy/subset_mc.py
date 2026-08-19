@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random/subset/td"
+SAVE_DIR = "random/subset/mc"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -16,6 +16,7 @@ def make_train(config):
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
     config['NUM_ENVS'] = 1
     config['NUM_STEPS'] = 1
+    config['NUM_EPOCHS'] = 1
     
     env, env_params = helpers.make_env(config)
     evaluator = helpers.initialize_evaluator(config, env, env_params)
@@ -55,7 +56,13 @@ def make_train(config):
     R_π = P_π @ R_π_s
     mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
-    
+    # construct weighting / laplace matrix
+    D = jnp.diag(mu)
+    I = jnp.eye(evaluator.num_total_states)
+    A = D @ (I - config['GAMMA'] * P_π)
+    S_mat = 0.5 * (A + A.T) 
+    V = evaluator.compute_true_values_raw(Pi)
+
     def train(rng):
         k = config.get('k', 32)
         # Initialize Network
@@ -95,35 +102,25 @@ def make_train(config):
             batch_S = S[batch_idx]
             
             # Extract the true mu probabilities for these specific states
-            batch_mu = mu[batch_idx]
             weight_scale = n_states / batch_size
-            
-            # --- 2. INNER LOOP: E EPOCHS, MOVING TARGETS ---
-            def inner_td_loss(params):
-                v_all = network.apply(params, S) 
-                v_all = jnp.append(v_all, 0.0) 
-                
-                TD_targets_all = R_π + config['GAMMA'] * P_π @ v_all
-                batch_targets = jax.lax.stop_gradient(TD_targets_all[batch_idx])
-                
-                v_batch = network.apply(params, batch_S)
-                td_errors = v_batch - batch_targets
-                
-                # Apply the Horvitz-Thompson unbiased weights
-                unbiased_weights = batch_mu * weight_scale
-                loss = 0.5 * jnp.sum(unbiased_weights * (td_errors ** 2))
-                
+            batch_mu = mu[batch_idx]
+
+            def supervised_loss(params):
+                v_subset = network.apply(params, batch_S) 
+                V_subset = V[batch_idx]
+                e = (V_subset - v_subset)
+                loss = jnp.sum(batch_mu * weight_scale * e**2)
                 return loss
             
-            inner_td_grad = jax.value_and_grad(inner_td_loss)
+            td_grad = jax.value_and_grad(supervised_loss)
             
-            def inner_td_step(current_train_state, unused):
-                loss, grads = inner_td_grad(current_train_state.params)
+            def td_step(current_train_state, unused):
+                loss, grads = td_grad(current_train_state.params)
                 current_train_state = current_train_state.apply_gradients(grads=grads)
                 return current_train_state, loss
 
             train_state, losses = jax.lax.scan(
-                inner_td_step, 
+                td_step, 
                 train_state, 
                 None, 
                 length=config["NUM_EPOCHS"]

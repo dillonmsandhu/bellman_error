@@ -9,7 +9,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_td_exact"
+SAVE_DIR = "random/td_exact"
 
 def make_train(config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).

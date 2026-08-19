@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_linear_td"
+SAVE_DIR = "random/linear_td"
 
 def v_loss_fn_no_grad(params, network, traj_batch, gae, targets, config):
     

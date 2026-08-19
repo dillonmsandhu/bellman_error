@@ -5,11 +5,11 @@
 # Feature Space Quality: Effective Dim, Value Projection Angle, Value PCA
 from core.imports import *
 import distrax
-from core.ntk import compute_eNTK
+from core.ntk import compute_eNTK, compute_feature_jacobian
 # from sklearn.decomposition import PCA
 
 ε =  0.0
-
+num_components = 5
 # Four Rooms has 104 states + an "invisible" terminal state.
 
 def Bellman_Residual_Exact(D,Φ,P_π, R_π, γ):
@@ -32,17 +32,10 @@ def LSTD_Exact(D, Φ, P_π, R_π, γ):
     return V_lstd, w_lstd
 
 def LeastSquaresValue(D,Φ,V_true):
-    # reg = ε * jnp.eye(Φ.shape[-1])
-    # reg_matrix = reg_matrix.at[-1, -1].set(0.0)  # Do NOT regularize the bias column
-    # w_vr = jnp.linalg.pinv(Φ.T @ D @ Φ + reg) @ Φ.T @ D @ V_true
-    # w_vr = jnp.linalg.solve(Φ.T @ D @ Φ + reg, Φ.T @ D @ V_true)
-    
     D_sqrt = jnp.sqrt(D)
     w_vr, _, _, _ = jnp.linalg.lstsq(D_sqrt @ Φ, D_sqrt @ V_true)
     V_vr = Φ @ w_vr
     return V_vr, w_vr
-    # D_sqrt = jnp.sqrt(D)
-    # w_vr, _, _, _ = jnp.linalg.lstsq(D_sqrt @ Φ, D_sqrt @ V_true)
 
 def get_error_vectors(V, v_pred, D, R_π, P_π, γ, Φ):
     Π_φ = Φ @ jnp.linalg.pinv(Φ.T @ D @ Φ) @ Φ.T @ D # projection matrix
@@ -65,14 +58,6 @@ def compute_greedy_policy(P, R_π_s, γ, v):
     expected_v = jnp.einsum("sam,m->sa", P, v)
     Qs = R_shifted + γ * expected_v
     return jnp.argmax(Qs, axis=-1)
-
-# def weighted_PCA(D, Φ):
-    # sqrt_d_weights = jnp.sqrt(jnp.diag(D))
-    # Weighted_Phi = sqrt_d_weights[:, None] * Φ
-    # pca = PCA(n_components=2)
-    # # Ignore terminal state
-    # phi_2d = pca.fit_transform(Weighted_Phi[:-1, :])
-    # return phi_2d # N x 2
 
 def weighted_PCA(D, Φ):
     # 1. Weight the features
@@ -199,9 +184,18 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     I = jnp.eye(D.shape[-1])
 
     # Feature Quality (effective rank and PCA).
-    _, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
+    U, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
     sig_level = (1-γ) / 10.0
     effective_rank = jnp.sum(S > sig_level)
+    feature_singular_values = S
+    top_u_vectors = U[:, :num_components].T 
+
+    # 3. Vectorize your grid function
+    # jax.vmap will apply get_value_grid to each row of top_u_vectors
+    get_grids_fn = jax.vmap(evaluator.get_value_grid)
+
+    # heatmaps_stack will have shape (5, H, W)
+    feature_top_singular_vectors = get_grids_fn(top_u_vectors)
 
     # Feature Quality (effective rank and PCA).
     p = S / jnp.sum(S)
@@ -310,7 +304,6 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     # Extract the corresponding eigenvector (column vector)
     min_eigenvector_grid = evaluator.get_value_grid(min_eigenvector)
     
-
     mask = (mu > 1e-3).astype(float)
     E_local = 0.5 * jnp.sum(mask * (e * (A @ e)))
 
@@ -324,6 +317,16 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     threshold = 1e-4 * jnp.max(eigenvalues)
     eNTK_effective_rank = jnp.sum(eigenvalues > threshold)
 
+    J = compute_feature_jacobian(params, evaluator.obs_stack, network)
+    Uj, Sj, Vt_j = jnp.linalg.svd(J, full_matrices=False)
+
+    Direlechet_energy = jnp.trace(Φ.T @ A @ Φ) # scalar
+    # 2. Slice the top N components (statically sized for JIT)
+    
+    # Uj shape is (N, D). Slice to (N, 5), then transpose to (5, N)
+    top_u_vectors = Uj[:, :num_components].T 
+    heatmaps_stack = get_grids_fn(top_u_vectors)
+    
     # 2. Initialize base metrics
     metrics = {
         "effective_rank": effective_rank,
@@ -351,7 +354,13 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "min_eigenvector_grid": min_eigenvector_grid,
         "ent_rank": ent_rank,
         "NTK_rank": eNTK_effective_rank,
-        "eNTK": eNTK # stores the entire 133 x 133 matrix.
+        "eNTK": eNTK, # stores the entire 133 x 133 matrix.
+        "feature_singular_values": feature_singular_values,
+        "feature_top_singular_vectors": feature_top_singular_vectors,
+        "Jacobian_top_singular_vectors": heatmaps_stack,
+        "jacobian_singular_values": Sj,
+        "Direlechet_energy": Direlechet_energy,
+
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically

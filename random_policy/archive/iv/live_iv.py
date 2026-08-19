@@ -8,7 +8,7 @@ from core.networks import nn
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_policy_live_z"
+SAVE_DIR = "random/policy_live_z"
 
 
 class IVActorCritic(nn.Module):

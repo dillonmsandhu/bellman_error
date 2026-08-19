@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 from core.networks import nn
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "random_policy_linear_z"
+SAVE_DIR = "random/policy_linear_z"
 
 class IVActorCritic(nn.Module):
     action_dim: int
