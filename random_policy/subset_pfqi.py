@@ -16,7 +16,6 @@ def make_train(config):
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
     config['NUM_ENVS'] = 1
     config['NUM_STEPS'] = 1
-    config['NUM_EPOCHS'] = 1
     
     env, env_params = helpers.make_env(config)
     evaluator = helpers.initialize_evaluator(config, env, env_params)

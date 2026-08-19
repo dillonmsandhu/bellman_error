@@ -71,7 +71,6 @@ def make_train(config):
         
         def loss(params):
             # each update step looks at all observations and produces v_theta(S)            
-            print(S.shape)
             v = network.apply(params, S) # 104 states, no terminal
             v = jnp.append(v, 0.0)
             loss = 0.5 * jnp.sum(mu * (V-v) ** 2)
