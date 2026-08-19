@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import pandas as pd
 from core.utils import save_multi_plot
 
-
 def tune(
     make_train,
     base_config,
@@ -30,16 +29,19 @@ def tune(
     rng = jax.random.PRNGKey(base_config.get("SEED", rng_seed))
     rngs = jax.random.split(rng, n_seeds)
 
+    # Create a PyTree of hyperparameters to vmap over
     hparams_tree = {
         k: jnp.array([combo[i] for combo in combinations])
         for i, k in enumerate(keys)
     }
 
-    train_single = make_train(base_config)
-    # vmap over seeds (axis 0 of rngs), then vmap over configurations (axis 0 of hparams PyTree)
+    train_fn = make_train(base_config)
+    
+    # Inner vmap over seeds (axis 0 of rngs, None for hparams)
+    # Outer vmap over configurations (None for rngs, axis 0 of hparams PyTree)
     parallel_train = jax.jit(
         jax.vmap(
-            jax.vmap(train_single, in_axes=(0, None)),
+            jax.vmap(train_fn, in_axes=(0, None)),
             in_axes=(None, 0)
         )
     )
@@ -51,7 +53,8 @@ def tune(
     if metric_key not in metrics:
         raise KeyError(f"Metric '{metric_key}' not found. Available keys: {list(metrics.keys())}")
 
-    metric_tensor = jnp.asarray(metrics[metric_key])  # shape: (n_combos, n_seeds, time_steps)
+    # metrics[metric_key] shape: (n_combos, n_seeds, time_steps)
+    metric_tensor = jnp.asarray(metrics[metric_key])
     mean_trajectories = metric_tensor.mean(axis=1)    # shape: (n_combos, time_steps)
 
     curves = {}

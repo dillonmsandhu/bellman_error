@@ -291,5 +291,5 @@ def make_train(config):
     return train
 
 if __name__ == "__main__":
-    from core.utils import run_experiment_main
+    from core.runner import run_experiment_main
     run_experiment_main(make_train, SAVE_DIR)

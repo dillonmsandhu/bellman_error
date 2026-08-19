@@ -65,7 +65,6 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "returned_episode_returns": "returned_episode_returns",
         "returned_discounted_episode_returns": "returned_discounted_episode_returns",
         "effective_rank": "effective_rank",
-        # "capacity_angle": "capacity_angle",
         "nn_lstd_diff": "nn_lstd_diff",
         "forward_loss": "forward_loss",
         "done_loss": "done_loss",
@@ -74,12 +73,6 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         "vic_loss_var": "vic_loss_var",
         "v_loss": "v_loss",
         "E": "E",
-        # "alignment_condition_normalized": "Alignment Condition (Normalized e)",
-        # "alignment": "Alignment (cosine similarity)",
-        # "SA_min_eigenvalue": "Min. Eigenvalue of SA",
-        # "entropy": "entropy",
-        # "projection_error_t": "projection_error_t",
-        # "ent_rank": "ent_rank",
         "NTK_rank": "NTK_rank",
         "Direlechet_energy": "Direlechet_energy"
     }
@@ -177,28 +170,6 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
             }, 
             False,
         ),
-        # (
-        #     "Weighted Projected Bellman Error",
-        #     "MSVE (mu-weighted)",      # <--- New Y-Label
-        #     {
-        #         "LSTD_weighted_PBE": "LSTD (on-policy) PBE",
-        #         "VR_weighted_PBE": "VR (on-policy) PBE",
-        #         "nn_weighted_PBE": "NN (on-policy) PBE",
-        #         "BR_weighted_PBE": "BR (on-policy) PBE"
-        #     },
-        #     True
-        # ),
-        # (
-        #     "Weighted Bellman Residual",
-        #     "MSBE (mu-weighted)",      # <--- New Y-Label
-        #     {
-        #         "LSTD_weighted_BE": "LSTD (on-policy) BE",
-        #         "VR_weighted_BE": "VR (on-policy) BE",
-        #         "nn_weighted_BE": "NN (on-policy) BE",
-        #         "BR_weighted_BE": "BR (on-policy) BE"
-        #     },
-        #     True
-        # ),
     ]
 
     # 2. Unpack title, ylabel, and metric_keys
