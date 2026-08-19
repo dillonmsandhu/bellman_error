@@ -183,46 +183,18 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     R_π = P_π @ R_π_s
     I = jnp.eye(D.shape[-1])
 
-    # Feature Quality (effective rank and PCA).
-    U, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
-    sig_level = (1-γ) / 10.0
-    effective_rank = jnp.sum(S > sig_level)
-    feature_singular_values = S
-    top_u_vectors = U[:, :num_components].T 
-
-    # 3. Vectorize your grid function
-    # jax.vmap will apply get_value_grid to each row of top_u_vectors
-    get_grids_fn = jax.vmap(evaluator.get_value_grid)
-
-    # heatmaps_stack will have shape (5, H, W)
-    feature_top_singular_vectors = get_grids_fn(top_u_vectors)
-
-    # Feature Quality (effective rank and PCA).
-    p = S / jnp.sum(S)
-    ent_rank = jnp.exp(-jnp.sum(jnp.where(p > 0, p * jnp.log(p), 0.0)))
-    # pca_phi = weighted_PCA(I, Φ)
-
     # Fits: Value Error, MSPBE
     V_nn = network.apply(params, evaluator.obs_stack, method=network.value)
     V_nn = jnp.append(V_nn, 0.0)
     
     V_lstd, w_lstd = LSTD_Exact(D, Φ, P_π, R_π, γ)
     V_vr, w_vr = LeastSquaresValue(D, Φ, V_pi)
-    V_br, w_br = Bellman_Residual_Exact(D, Φ, P_π, R_π, γ)
-    
-    V_lstd_u, w_lstd_u = LSTD_Exact(I, Φ, P_π, R_π, γ)
-    V_vr_u, w_vr_u = LeastSquaresValue(I, Φ, V_pi)
-    V_br_u, w_br_u = Bellman_Residual_Exact(I, Φ, P_π, R_π, γ)
 
     # 1. Define configurations: (V, weight_mat, w)
     # Pass None for the weights of the neural network
     val_configs = {
         "LSTD": (V_lstd, D, w_lstd),
         "VR": (V_vr, D, w_vr),
-        "BR": (V_br, D, w_br),
-        "LSTD_uniform": (V_lstd_u, I, w_lstd_u),
-        "VR_uniform": (V_vr_u, I, w_vr_u),
-        "BR_uniform": (V_br_u, I, w_br_u),
         "nn": (V_nn, D, None) 
     }
 
@@ -260,7 +232,6 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     SA = S @ A 
     
     # 4. Check global positive definiteness of SA 
-    
     SA_symmetric = 0.5 * (SA + SA.T)
     
     # 2. Use 'eigh' to get BOTH eigenvalues and eigenvectors
@@ -292,10 +263,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     non_normality = jnp.linalg.norm(S@K-K@S)
     K_Phi = Φ.T @ K @ Φ
     S_Phi = Φ.T @ S @ Φ
-    projected_C = S_Phi@K_Phi-K_Phi@S_Phi
-    projected_non_normality = jnp.linalg.norm(projected_C)
-
-    max_C_eigenvalue = jnp.max(jnp.linalg.eigvalsh(projected_C))
+    phi_space_non_normality = jnp.linalg.norm(S_Phi @ K_Phi - K_Phi - S_Phi)
 
     Ke = jnp.linalg.norm(K @ e) # Degree to which TD is not SGD.    
 
@@ -307,29 +275,8 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     mask = (mu > 1e-3).astype(float)
     E_local = 0.5 * jnp.sum(mask * (e * (A @ e)))
 
-    # NTK
-    eNTK = compute_eNTK(params, evaluator.obs_stack, network)
-    
-    # Use eigvalsh for symmetric matrices (returns eigenvalues in ascending order)
-    eigenvalues = jnp.linalg.eigvalsh(eNTK)
-    
-    # Use a relative threshold (e.g., 0.01% of the max eigenvalue)
-    threshold = 1e-4 * jnp.max(eigenvalues)
-    eNTK_effective_rank = jnp.sum(eigenvalues > threshold)
-
-    J = compute_feature_jacobian(params, evaluator.obs_stack, network)
-    Uj, Sj, Vt_j = jnp.linalg.svd(J, full_matrices=False)
-
-    Direlechet_energy = jnp.trace(Φ.T @ A @ Φ) # scalar
-    # 2. Slice the top N components (statically sized for JIT)
-    
-    # Uj shape is (N, D). Slice to (N, 5), then transpose to (5, N)
-    top_u_vectors = Uj[:, :num_components].T 
-    heatmaps_stack = get_grids_fn(top_u_vectors)
-    
     # 2. Initialize base metrics
     metrics = {
-        "effective_rank": effective_rank,
         "capacity_angle": jnp.mean(get_capacity_angle(V_pi, val_configs["VR"][0], D)),
         "nn_lstd_diff": jnp.mean((val_configs["LSTD"][0] - V_nn)**2),
         "negative_alignment": negative_alignment,
@@ -345,22 +292,12 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "norm_k": norm_k,
         "alignment_condition_sign": alignment_condition_sign,
         "non_normality": non_normality,
-        "projected_non_normality": projected_non_normality,
-        "max_C_eigenvalue": max_C_eigenvalue,
         "projection_error_t": norm_nn_ortho,
         "Ke": Ke,
         "stat_dist_error": stat_dist_error,
         "stat_dist": stat_dist,
         "min_eigenvector_grid": min_eigenvector_grid,
-        "ent_rank": ent_rank,
-        "NTK_rank": eNTK_effective_rank,
-        "eNTK": eNTK, # stores the entire 133 x 133 matrix.
-        "feature_singular_values": feature_singular_values,
-        "feature_top_singular_vectors": feature_top_singular_vectors,
-        "Jacobian_top_singular_vectors": heatmaps_stack,
-        "jacobian_singular_values": Sj,
-        "Direlechet_energy": Direlechet_energy,
-
+        "phi_space_non_normality": phi_space_non_normality
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
@@ -377,10 +314,6 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         # Compute error vectors
         errs = get_error_vectors(V_pi, V, weight_mat, R_π, P_π, γ, Φ)
 
-        # Compute unweighted MSEs
-        unweighted_mse = jax.tree.map(lambda x: jnp.mean(x**2), errs)
-        for k, v in unweighted_mse.items():
-            metrics[f"{prefix}_{k}"] = v
 
         # Compute weighted MSEs (Only for the primary D-weighted methods)
         if prefix in ["LSTD", "VR", "nn", "BR"]:
