@@ -192,7 +192,7 @@ def save_heatmap(env_dir, env_name, quantity, title):
     plt.close()
     print(f"Plot saved to {plot_path}")
 
-def save_jacobian_heatmaps(env_dir, env_name, jacobian_stack):
+def save_heatmap_stack(env_dir, env_name, heatmap_stack, title):
     import numpy as np
     """
     Plots a 1x5 grid of the top Jacobian singular vectors.
@@ -200,14 +200,14 @@ def save_jacobian_heatmaps(env_dir, env_name, jacobian_stack):
     Args:
         env_dir: Directory to save the plot.
         env_name: Name of the environment.
-        jacobian_stack: array-like of shape (5, H, W).
+        heatmap_stack: array-like of shape (5, H, W).
     """
     # Create a 1x5 subplot layout
     fig, axes = plt.subplots(1, 5, figsize=(20, 4))
     fig.suptitle(f"{env_name} - Top 5 Jacobian Singular Vectors", fontsize=16)
 
     for i in range(5):
-        grid = jacobian_stack[i]
+        grid = heatmap_stack[i]
         
         # 1. Symmetric Scaling: Find the max absolute value so 0 is perfectly centered
         max_abs = np.max(np.abs(grid))
@@ -238,7 +238,7 @@ def save_jacobian_heatmaps(env_dir, env_name, jacobian_stack):
 
 import numpy as np
 
-def save_feature_spectra(env_dir, env_name, sv_start, sv_end):
+def save_feature_spectra(env_dir, env_name, sv_start, sv_end, title):
     """
     Plots the singular value spectrum of the feature matrix at the start and end of training.
     
@@ -269,7 +269,7 @@ def save_feature_spectra(env_dir, env_name, sv_start, sv_end):
     plt.yscale('log')
     plt.xlabel("Singular Value Index")
     plt.ylabel("Singular Value Magnitude (Log Scale)")
-    plt.title(f"{env_name} - Feature Singular Value Spectrum (Start vs. End)")
+    plt.title(f"{title}")
     
     # Grid lines and legend
     plt.grid(True, which="both", ls="--", alpha=0.5)
@@ -277,7 +277,7 @@ def save_feature_spectra(env_dir, env_name, sv_start, sv_end):
     
     # Save the figure
     os.makedirs(env_dir, exist_ok=True)
-    save_path = os.path.join(env_dir, f"feature_spectrum_plot.png")
+    save_path = os.path.join(env_dir, f"{title}.png")
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
 
@@ -409,7 +409,15 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         print("failed to save ntk", e)
     
     try: 
-        save_jacobian_heatmaps(env_dir, run_config['ENV_NAME'], metrics['Jacobian_top_singular_vectors'][0][-1])
+        save_heatmap_stack(env_dir,
+             run_config['ENV_NAME'],
+             metrics['Jacobian_top_singular_vectors'][0][-1],
+             "J Top Singular Vs")
+        save_heatmap_stack(env_dir,
+             run_config['ENV_NAME'],
+             metrics['feature_top_singular_vectors'][0][-1],
+             "Feature Top Singular Vs")
+    
     except Exception as e:
         print("failed to save top five jacovian left singular vectors", e)
     
@@ -417,13 +425,15 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
         save_feature_spectra(env_dir, 
             run_config['ENV_NAME'], 
             metrics['feature_singular_values'][0][0], 
-            metrics['feature_singular_values'][0][-1]
+            metrics['feature_singular_values'][0][-1],
+            "Feature Singuar Vals"
         )
 
         save_feature_spectra(env_dir, 
             run_config['ENV_NAME'], 
             metrics['jacobian_singular_values'][0][0], 
-            metrics['jacobian_singular_values'][0][-1]
+            metrics['jacobian_singular_values'][0][-1],
+            "J Singular Vals"
         )
     except Exception as e:
         print("failed to plot singular value spectrum", e)
@@ -438,20 +448,6 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
 
 # 1. Add the ylabel string to each configuration tuple
     plot_configs = [
-        (
-            "Value Learning Greedy Accuracy (All)", 
-            "Greedy Accuracy",    # <--- New Y-Label
-            {
-                "LSTD_greedy_correct": "LSTD Greedy Acc.",
-                "nn_greedy_correct": "Network Greedy Acc.",
-                "VR_greedy_correct": "VR Greedy Acc.",
-                "BR_greedy_correct": "BR Greedy Acc.",
-                "BR_uniform_greedy_correct": "BR uniform Greedy Acc.",
-                "LSTD_uniform_greedy_correct": "LSTD uniform Greedy Acc.",
-                "VR_uniform_greedy_correct": "VR uniform Greedy Acc.",
-            }, 
-            False,
-        ),
         (
             "(Uniform Weighted) Value Errors",
             "MSVE (equal state weighting)",      # <--- New Y-Label
@@ -478,7 +474,7 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
             True
         ),
         (
-            "Value Learning Greedy Accuracy (On-Policy estimators)", 
+            "Value Learning Greedy Accuracy", 
             "Greedy Accuracy",    # <--- New Y-Label
             {
                 "LSTD_greedy_correct": "LSTD Greedy Acc.",
@@ -488,29 +484,28 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
             }, 
             False,
         ),
-        (
-            "Weighted Projected Bellman Error",
-            "MSVE (mu-weighted)",      # <--- New Y-Label
-            {
-                "LSTD_weighted_PBE": "LSTD (on-policy) PBE",
-                "VR_weighted_PBE": "VR (on-policy) PBE",
-                "nn_weighted_PBE": "NN (on-policy) PBE",
-                "BR_weighted_PBE": "BR (on-policy) PBE"
-            },
-            True
-        ),
-        (
-            "Weighted Bellman Residual",
-            "MSBE (mu-weighted)",      # <--- New Y-Label
-            {
-                "LSTD_weighted_BE": "LSTD (on-policy) BE",
-                "VR_weighted_BE": "VR (on-policy) BE",
-                "nn_weighted_BE": "NN (on-policy) BE",
-                "BR_weighted_BE": "BR (on-policy) BE"
-            },
-            True
-        ),
-        
+        # (
+        #     "Weighted Projected Bellman Error",
+        #     "MSVE (mu-weighted)",      # <--- New Y-Label
+        #     {
+        #         "LSTD_weighted_PBE": "LSTD (on-policy) PBE",
+        #         "VR_weighted_PBE": "VR (on-policy) PBE",
+        #         "nn_weighted_PBE": "NN (on-policy) PBE",
+        #         "BR_weighted_PBE": "BR (on-policy) PBE"
+        #     },
+        #     True
+        # ),
+        # (
+        #     "Weighted Bellman Residual",
+        #     "MSBE (mu-weighted)",      # <--- New Y-Label
+        #     {
+        #         "LSTD_weighted_BE": "LSTD (on-policy) BE",
+        #         "VR_weighted_BE": "VR (on-policy) BE",
+        #         "nn_weighted_BE": "NN (on-policy) BE",
+        #         "BR_weighted_BE": "BR (on-policy) BE"
+        #     },
+        #     True
+        # ),
     ]
 
     # 2. Unpack title, ylabel, and metric_keys

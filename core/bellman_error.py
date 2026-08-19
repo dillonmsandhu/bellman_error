@@ -9,7 +9,7 @@ from core.ntk import compute_eNTK, compute_feature_jacobian
 # from sklearn.decomposition import PCA
 
 ε =  0.0
-
+num_components = 5
 # Four Rooms has 104 states + an "invisible" terminal state.
 
 def Bellman_Residual_Exact(D,Φ,P_π, R_π, γ):
@@ -184,10 +184,18 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     I = jnp.eye(D.shape[-1])
 
     # Feature Quality (effective rank and PCA).
-    _, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
+    U, S, _ = jnp.linalg.svd(Φ, full_matrices=False)
     sig_level = (1-γ) / 10.0
     effective_rank = jnp.sum(S > sig_level)
     feature_singular_values = S
+    top_u_vectors = U[:, :num_components].T 
+
+    # 3. Vectorize your grid function
+    # jax.vmap will apply get_value_grid to each row of top_u_vectors
+    get_grids_fn = jax.vmap(evaluator.get_value_grid)
+
+    # heatmaps_stack will have shape (5, H, W)
+    feature_top_singular_vectors = get_grids_fn(top_u_vectors)
 
     # Feature Quality (effective rank and PCA).
     p = S / jnp.sum(S)
@@ -314,15 +322,9 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
     Direlechet_energy = jnp.trace(Φ.T @ A @ Φ) # scalar
     # 2. Slice the top N components (statically sized for JIT)
-    num_components = 5
+    
     # Uj shape is (N, D). Slice to (N, 5), then transpose to (5, N)
     top_u_vectors = Uj[:, :num_components].T 
-
-    # 3. Vectorize your grid function
-    # jax.vmap will apply get_value_grid to each row of top_u_vectors
-    get_grids_fn = jax.vmap(evaluator.get_value_grid)
-
-    # heatmaps_stack will have shape (5, H, W)
     heatmaps_stack = get_grids_fn(top_u_vectors)
     
     # 2. Initialize base metrics
@@ -354,9 +356,11 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "NTK_rank": eNTK_effective_rank,
         "eNTK": eNTK, # stores the entire 133 x 133 matrix.
         "feature_singular_values": feature_singular_values,
+        "feature_top_singular_vectors": feature_top_singular_vectors,
         "Jacobian_top_singular_vectors": heatmaps_stack,
         "jacobian_singular_values": Sj,
         "Direlechet_energy": Direlechet_energy,
+
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
