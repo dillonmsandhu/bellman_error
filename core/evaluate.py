@@ -75,7 +75,8 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "v_loss": "v_loss",
         "E": "E",
         "NTK_rank": "NTK_rank",
-        "Direlechet_energy": "Direlechet_energy"
+        "Direlechet_energy": "Direlechet_energy",
+        "V_start": "V_start",
     }
     data = get_metric('E', 1)
     E_local = get_metric('E_local', 1)
