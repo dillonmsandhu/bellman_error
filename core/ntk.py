@@ -8,7 +8,7 @@ def compute_feature_jacobian(params, S, network):
     # 1. Define a function that outputs the scalar value for a SINGLE state
     def get_single_v(p, single_s):
         # Add batch dim, apply, squeeze back to scalar
-        return network.apply(p, single_s).squeeze() # assumes apply returns a value only... TODO: make robust to PPO
+        return network.apply(p, single_s, method=network.value).squeeze()
 
     # 2. Get the Jacobian of the value with respect to the parameters
     jacobian_fn = jax.jacrev(get_single_v)
