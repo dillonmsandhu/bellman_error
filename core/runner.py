@@ -1,4 +1,5 @@
 # dispatcher for the CLI, redirects to either evaluate.py or sweep.py.
+import os
 from core.evaluate import evaluate
 from core.sweep import tune
 import jax
@@ -51,6 +52,7 @@ def run_experiment_main(make_train, SAVE_DIR):
         print(f"{'='*50}")
         
         rng = jax.random.PRNGKey(run_config.get('SEED', 42))
+        run_dir = os.path.join(f"results/{SAVE_DIR}/{args.run_suffix}")
         
         try:
             if args.sweep:
@@ -60,10 +62,10 @@ def run_experiment_main(make_train, SAVE_DIR):
                     import json
                     with open(args.sweep, 'r') as f:
                         param_grid = json.load(f)
-                tune(make_train, run_config, param_grid, save_dir=f"results/{SAVE_DIR}/tuning")
+                tune(make_train, run_config, param_grid, save_dir=f"{run_dir}/tuning")
             else:
                 # Note: make_train and evaluate should be defined in your scope
-                evaluate(run_config, make_train, f"results/{SAVE_DIR}/", args, rng)
+                evaluate(run_config, make_train, run_dir, args, rng)
         except Exception as e:
             print(f"!!! CRITICAL ERROR running {env_name} !!!")
             traceback.print_exc()

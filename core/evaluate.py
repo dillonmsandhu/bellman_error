@@ -4,7 +4,7 @@ import os
 import jax
 import jax.numpy as jnp
 
-def evaluate(run_config, make_train, SAVE_DIR, args, rng):
+def evaluate(run_config, make_train, run_dir, args, rng):
     # Setup specific to this run_config
     steps_per_pi = run_config["NUM_ENVS"] * run_config["NUM_STEPS"]
     
@@ -18,14 +18,14 @@ def evaluate(run_config, make_train, SAVE_DIR, args, rng):
     print(f"[{run_config['ENV_NAME']}] Mean return: {jnp.mean(ret):.4f}")
     print(f"[{run_config['ENV_NAME']}] Max return:  {jnp.max(ret):.4f}")
     
-    # Directory structure: results/SAVE_DIR/timestamp/EnvName-Size/
+    # Directory structure: results/run_dir/timestamp/EnvName-Size/
     base_env_name = run_config['ENV_NAME']
     env_size = run_config.get("ENV_SIZE")
     
     # Create the full name (e.g., DeepSea-bsuite-45)
     full_env_name = f"{base_env_name}-{env_size}" if env_size else base_env_name
     
-    run_dir = os.path.join(f"{SAVE_DIR}/{args.run_suffix}")
+    
     env_dir = os.path.join(run_dir, full_env_name)
     
     os.makedirs(env_dir, exist_ok=True)

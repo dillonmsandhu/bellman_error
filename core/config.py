@@ -10,7 +10,6 @@ config = {
         "LAYER_NORM": False,
 
         "LR": 0.003,
-        "LR_END": 0.0,
         
         "NUM_ENVS": 1,
         "NUM_STEPS": 1,
@@ -40,7 +39,7 @@ config = {
         "DONE_COEFF": 0.0,  
         "POLICY_COEFF": 1.0,
         "V_LOSS_SHARED": True, # whether the TD / MC can update the final weights w.
-        "BATCH_SIZE": 64,
+        "BATCH_SIZE": 104,
         # For the fixed:
         # 'MODEL_LOAD_DIR': "cont",
         'MODEL_LOAD_DIR': "short_run",
