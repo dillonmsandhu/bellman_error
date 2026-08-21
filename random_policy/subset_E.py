@@ -52,9 +52,7 @@ def make_train(config):
     
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", Pi, P)
-    R_π_s = jnp.einsum("sa,sa->s", Pi, evaluator.R)
-    # Gymnax awards the reward on the transition *INTO* s'
-    R_π = P_π @ R_π_s
+    R_π = jnp.einsum("sa,sam,sam->s", Pi, P, evaluator.R)
     mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
     # construct weighting / laplace matrix

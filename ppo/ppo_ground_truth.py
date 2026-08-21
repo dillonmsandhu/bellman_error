@@ -74,15 +74,8 @@ def make_train(config):
             V = evaluator.compute_true_values_raw(old_pi_full)
 
             # 2. Compute Advantages
-            # Shift the reward to the entry transition to match compute_true_values
-            # R(s,a) = E_{s' ~ P(s,a)} E_{a' ~ pi(s')} (R(s',a')), where next state is due to (s,a).
-            R_pi_delayed = jnp.einsum("sa,sa->s", old_pi_full, evaluator.R)
-
-            # 2. Add the discounted future value to get the full target of landing in s'
-            target_s_prime = R_pi_delayed + γ * V
-
-            # 3. Multiply by P(s' | s, a) to pull the target back to the current state-action
-            Q_sa = jnp.einsum("sam,m->sa", P[:-1], target_s_prime)
+            R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
+            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], V)
 
             # 4. Compute the Advantage
             A = Q_sa - V[:-1, None]
@@ -100,7 +93,7 @@ def make_train(config):
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
-                surr1 = ratio * A[:, None] # A across actions? Wait, A are state-action or state?
+                surr1 = ratio * A[:, None] 
 
                 pi_old = jnp.exp(old_log_pi)
     
@@ -131,7 +124,7 @@ def make_train(config):
                 metric.update(feature_metrics(
                     evaluator, network, train_state.params, random_policy=True,)
                 )
-            metric.update({"total_loss": total_loss.mean(), "V_start": V[evaluator.start_idx]})
+            metric.update({"total_loss": total_loss.mean()})
             runner_state = (train_state, idx + 1)
             return runner_state, metric
         # end update

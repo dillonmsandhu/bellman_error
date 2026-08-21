@@ -1,3 +1,4 @@
+# trains a policy network with PPO where the critic is learned to match the true value function at each iteration.
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -5,7 +6,7 @@ import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
 
-SAVE_DIR = "ppo/exact_td"
+SAVE_DIR = "ppo/exact_mc"
 
 def network_inference(params, network, S, n_actions):
     pi_dist, v = network.apply(params, S)
@@ -40,6 +41,7 @@ def make_train(config):
         γ = hparams.get('GAMMA', config['GAMMA'])
 
         k = config.get('k', 32)
+        # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
         )
@@ -62,30 +64,27 @@ def make_train(config):
             old_pi_full = jnp.vstack([old_pi, terminal_policy])
             old_log_pi = jnp.log(old_pi + 1e-8)
             
-            old_v_full = jnp.append(old_v, 0.0)
-
-            P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
-            R_pi = jnp.einsum("sa,sam,sam->s", old_pi_full, P, evaluator.R)
-            
             mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
             mu = jnp.append(mu, 0.0)
 
-            # 2. Compute Advantages
-            TD_targets = R_pi + γ * P_pi @ old_v_full
+            # True value function for the current policy (Ground Truth target)
+            V_true = evaluator.compute_true_values_raw(old_pi_full)
 
+            # 2. Compute Advantages using true values
             R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
-            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
+            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], V_true)
             
-            A = Q_sa - old_v[:, None]
+            A = Q_sa - V_true[:-1, None]
             A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
                 # A shape is (num_states, num_actions)
                 pi, v = network_inference(params, network, S, n_actions)
                 
-                # Value Loss
-                td_errors = v - TD_targets
-                value_loss = 0.5 * jnp.sum(mu * (td_errors ** 2)) * config.get("VF_COEF", 0.5)
+                # Value Loss: learn the true value function
+                # Note: v includes terminal state (0.0 appended), V_true also includes terminal state
+                value_errors = v - V_true
+                value_loss = 0.5 * jnp.sum(mu * (value_errors ** 2)) * config.get("VF_COEF", 0.5)
 
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
@@ -130,6 +129,7 @@ def make_train(config):
                 "value_loss": value_loss.mean(),
                 "actor_loss": actor_loss.mean(),
                 "entropy": entropy.mean(),
+                "V_start": V_true[evaluator.start_idx]
             })
             
             runner_state = (train_state, idx + 1)

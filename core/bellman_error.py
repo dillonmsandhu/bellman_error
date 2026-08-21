@@ -46,17 +46,17 @@ def get_error_vectors(V, v_pred, D, R_π, P_π, γ, Φ):
     Bellman_Orthogonal_Portion = T(v_pred) - Π_φ @ T(v_pred) # Tv - ΠTv
     return {'BE': BE, 'PBE': PBE, 'VE': VE, "Bellman_Orthogonal_Portion": Bellman_Orthogonal_Portion}
 
-def compute_greedy_policy(P, R_π_s, γ, v):
+def compute_greedy_policy(P, R_env, γ, v):
     """
     Compute the greedy policy according to the value estimate v.
     
     Args:
         P: Transition dynamics tensor of shape (S, A, S)
-        R: Extrinsic reward matrix of shape (S, A)
+        R_env: Extrinsic reward matrix of shape (S, A, S)
     """
-    R_shifted = jnp.einsum("sam,m->sa", P, R_π_s)
+    R_expected = jnp.einsum("sam,sam->sa", P, R_env)
     expected_v = jnp.einsum("sam,m->sa", P, v)
-    Qs = R_shifted + γ * expected_v
+    Qs = R_expected + γ * expected_v
     return jnp.argmax(Qs, axis=-1)
 
 def weighted_PCA(D, Φ):
@@ -130,9 +130,7 @@ def get_lstd_weights(evaluator, network, params, random_policy, target_policy_fn
     γ = evaluator.gamma
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", pi, P)
-    R_π_s = jnp.einsum("sa,sa->s", pi, evaluator.R)
-    # Gymnax awards the reward on the transition *INTO* s'
-    R_π = P_π @ R_π_s
+    R_π = jnp.einsum("sa,sam,sam->s", pi, P, evaluator.R)
     V_lstd, w_lstd = LSTD_Exact(D, Φ, P_π, R_π, γ)
     return w_lstd    
 
@@ -178,9 +176,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     γ = evaluator.gamma
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", pi, P)
-    R_π_s = jnp.einsum("sa,sa->s", pi, evaluator.R)
-    # Gymnax awards the reward on the transition *INTO* s'
-    R_π = P_π @ R_π_s
+    R_π = jnp.einsum("sa,sam,sam->s", pi, P, evaluator.R)
     I = jnp.eye(D.shape[-1])
 
     # Fits: Value Error, MSPBE
@@ -198,7 +194,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "nn": (V_nn, D, None) 
     }
 
-    true_greedy_policy = compute_greedy_policy(P, R_π_s, γ, V_pi)
+    true_greedy_policy = compute_greedy_policy(P, evaluator.R, γ, V_pi)
 
     # Get alignment:
     # Extract the correct keys from the dictionaries
@@ -297,7 +293,8 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "stat_dist_error": stat_dist_error,
         "stat_dist": stat_dist,
         "min_eigenvector_grid": min_eigenvector_grid,
-        "phi_space_non_normality": phi_space_non_normality
+        "phi_space_non_normality": phi_space_non_normality,
+        "V_start": V_pi[evaluator.start_idx]
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
@@ -322,7 +319,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
                 metrics[f"{prefix}_weighted_{k}"] = v
 
         # Compute Greedy Policy Accuracy
-        greedy_pol = compute_greedy_policy(P, R_π_s, γ, V)
+        greedy_pol = compute_greedy_policy(P, evaluator.R, γ, V)
         metrics[f"{prefix}_greedy_correct"] = jnp.mean(true_greedy_policy == greedy_pol)
 
     return metrics

@@ -52,9 +52,7 @@ def make_train(config):
     I = jnp.eye(evaluator.num_total_states)
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", Pi, P)
-    R_π_s = jnp.einsum("sa,sa->s", Pi, evaluator.R)
-    # Gymnax awards the reward on the transition *INTO* s'
-    R_π = P_π @ R_π_s
+    R_π = jnp.einsum("sa,sam,sam->s", Pi, P, evaluator.R)
     mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :]) # uses the continuing version, where S_T -> S_0
     mu = jnp.append(mu, 0.0)
     D = jnp.diag(mu)
