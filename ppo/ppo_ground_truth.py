@@ -118,11 +118,11 @@ def make_train(config):
             # Metrics
             total_loss, actor_loss, entropy = epoch_metrics
             metric = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=True, 
+                evaluator, network, train_state.params, random_policy=False, 
             )
             if config["LOG_FEATURE_METRICS"]:
                 metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=True,)
+                    evaluator, network, train_state.params, random_policy=False,)
                 )
             metric.update({"total_loss": total_loss.mean()})
             runner_state = (train_state, idx + 1)

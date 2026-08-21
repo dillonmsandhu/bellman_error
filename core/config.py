@@ -9,7 +9,8 @@ config = {
         "MAX_STEPS_IN_EPISODE": 1e6,
         "LAYER_NORM": False,
 
-        "LR": 0.003,
+        "LR": 0.001,
+        "LR_END": 0.00001,
         
         "NUM_ENVS": 1,
         "NUM_STEPS": 1,

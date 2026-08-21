@@ -71,8 +71,6 @@ def make_train(config):
             mu = jnp.append(mu, 0.0)
 
             # 2. Compute Advantages
-            TD_targets = R_pi + γ * P_pi @ old_v_full
-
             R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
             Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
             
@@ -82,16 +80,17 @@ def make_train(config):
             def loss_fn(params, network):
                 # A shape is (num_states, num_actions)
                 pi, v = network_inference(params, network, S, n_actions)
+                TD_targets = R_pi + γ * P_pi @ v
                 
                 # Value Loss
-                td_errors = v - TD_targets
+                td_errors = v - jax.lax.stop_gradient(TD_targets)
                 value_loss = 0.5 * jnp.sum(mu * (td_errors ** 2)) * config.get("VF_COEF", 0.5)
 
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
                 log_pi_sum = jnp.sum(pi[:-1, :] * log_pi, axis=-1)
-                # entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
-                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * 0.0
+                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
+                # entropy = -jnp.sum(mu[:-1] * log_pi_sum) * 0.0
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
@@ -103,7 +102,7 @@ def make_train(config):
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
                 total_loss = value_loss + actor_loss - entropy
-                return total_loss, (value_loss, actor_loss, entropy)
+                return total_loss, (value_loss, actor_loss, entropy, v)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
@@ -116,20 +115,21 @@ def make_train(config):
             train_state, epoch_metrics = jax.lax.scan(epoch_step, train_state, None, config["NUM_EPOCHS"])
             
             # Metrics
-            value_loss, actor_loss, entropy = epoch_metrics
+            value_loss, actor_loss, entropy, v_pred = epoch_metrics
             metric = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=True
+                evaluator, network, train_state.params, random_policy=False
             )
             if config.get("LOG_FEATURE_METRICS", False):
                 from core.feature_metrics import feature_metrics
                 metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=True,)
+                    evaluator, network, train_state.params, random_policy=False,)
                 )
             metric.update({
                 "total_loss": (value_loss + actor_loss - entropy).mean(),
                 "value_loss": value_loss.mean(),
                 "actor_loss": actor_loss.mean(),
                 "entropy": entropy.mean(),
+                "v_pred_start": v_pred[evaluator.start_idx]
             })
             
             runner_state = (train_state, idx + 1)
