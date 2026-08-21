@@ -1,13 +1,11 @@
-# trains a policy network with PPO where the critic is the true value function at each iteration.
-# provides a skyline on PPO with a specific policy net.
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
-from core.feature_metrics import feature_metrics
-SAVE_DIR = "ppo/ground_truth"
+
+SAVE_DIR = "ppo_exact"
 
 def network_inference(params, network, S, n_actions):
     pi_dist, v = network.apply(params, S)
@@ -30,30 +28,16 @@ def make_train(config):
     S = evaluator.obs_stack
     P = evaluator.P 
 
-    def train(rng, hparams=None):
-        if hparams is None:
-            hparams = {}
-
-        lr = hparams.get('LR', config['LR'])
-        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
-        weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
-        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-4))
-        max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
-        γ = hparams.get('GAMMA', config['GAMMA'])
-
+    def train(rng):
         k = config.get('k', 32)
-        # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
         )
         total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(lr, lr_end, total_grad_steps)
+        lr_scheduler = optax.linear_schedule(config["LR"], config["LR_END"], total_grad_steps)
         tx = optax.chain(
-                optax.clip_by_global_norm(max_grad_norm),
-                optax.adamw(lr_scheduler, 
-                weight_decay=weight_decay,
-                eps=adam_eps
-                ),
+            optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+            optax.adam(lr_scheduler, eps=1e-5),
         )
         train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
         runner_state = (train_state, 1)
@@ -62,41 +46,43 @@ def make_train(config):
             train_state, idx = runner_state
 
             # 1. Compute Exact Dynamics
-            old_pi_dist, _ = network.apply(train_state.params, S)
+            old_pi_dist, old_v = network.apply(train_state.params, S)
             old_pi = old_pi_dist.probs
             terminal_policy = jnp.ones([1, n_actions], dtype=old_pi.dtype) / n_actions
             old_pi_full = jnp.vstack([old_pi, terminal_policy])
             old_log_pi = jnp.log(old_pi + 1e-8)
+            
+            old_v_full = jnp.append(old_v, 0.0)
 
-            mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
+            P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
+            R_pi_s = jnp.einsum("sa,sa->s", old_pi_full, evaluator.R)
+            R_pi = P_pi @ R_pi_s
+            
+            mu = evaluator.compute_stationary_distribution_raw(old_pi)
             mu = jnp.append(mu, 0.0)
 
-            V = evaluator.compute_true_values_raw(old_pi_full)
-
             # 2. Compute Advantages
-            # Shift the reward to the entry transition to match compute_true_values
-            # R(s,a) = E_{s' ~ P(s,a)} E_{a' ~ pi(s')} (R(s',a')), where next state is due to (s,a).
-            R_pi_delayed = jnp.einsum("sa,sa->s", old_pi_full, evaluator.R)
+            TD_targets = R_pi + config['GAMMA'] * P_pi @ old_v_full
 
-            # 2. Add the discounted future value to get the full target of landing in s'
-            target_s_prime = R_pi_delayed + γ * V
+            Q_sa = evaluator.R[:-1] + config['GAMMA'] * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
+            A_sa = Q_sa - old_v[:, None]
 
-            # 3. Multiply by P(s' | s, a) to pull the target back to the current state-action
-            Q_sa = jnp.einsum("sam,m->sa", P[:-1], target_s_prime)
+            mean_A = jnp.sum(mu[:-1, None] * old_pi * A_sa)
+            std_A = jnp.sqrt(jnp.sum(mu[:-1, None] * old_pi * (A_sa - mean_A)**2) + 1e-8)
+            A_sa_norm = (A_sa - mean_A) / std_A
 
-            # 4. Compute the Advantage
-            A = Q_sa - V[:-1, None]
-            A = jax.lax.stop_gradient(A)
-
-            def loss_fn(params, network):
+            def loss_fn(params, network, A):
                 # A shape is (num_states, num_actions)
-                pi, _ = network_inference(params, network, S, n_actions)
+                pi, v = network_inference(params, network, S, n_actions)
+                
+                # Value Loss
+                td_errors = v - TD_targets
+                value_loss = 0.5 * jnp.sum(mu * (td_errors ** 2)) * config.get("VF_COEF", 0.5)
 
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
                 log_pi_sum = jnp.sum(pi[:-1, :] * log_pi, axis=-1)
-                # entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
-                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * 0.0
+                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
@@ -104,37 +90,38 @@ def make_train(config):
 
                 pi_old = jnp.exp(old_log_pi)
     
-                surr1 = ratio * A
+                surr1 = ratio * A_sa
                 surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * A
                 
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
-                total_loss =  actor_loss - entropy
-                return total_loss, (total_loss, actor_loss, entropy)
+                total_loss = value_loss + actor_loss - entropy
+                return total_loss, (value_loss, actor_loss, entropy)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
             # 3. Apply expected update NUM_EPOCHS times
             def epoch_step(train_state, unused):
-                (total_loss, metrics), grads = grad_fn(train_state.params, network)
+                (total_loss, metrics), grads = grad_fn(train_state.params, network, S, jax.lax.stop_gradient(A_sa_norm))
                 train_state = train_state.apply_gradients(grads=grads)
                 return train_state, metrics
 
             train_state, epoch_metrics = jax.lax.scan(epoch_step, train_state, None, config["NUM_EPOCHS"])
             
             # Metrics
-            total_loss, actor_loss, entropy = epoch_metrics
+            value_loss, actor_loss, entropy = epoch_metrics
             metric = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=True, 
+                evaluator, network, train_state.params, random_policy=False
             )
-            if config["LOG_FEATURE_METRICS"]:
-                metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=True,)
-                )
-            metric.update({"total_loss": total_loss.mean(), "V_start": V[evaluator.start_idx]})
+            metric.update({
+                "total_loss": (value_loss + actor_loss - entropy).mean(),
+                "value_loss": value_loss.mean(),
+                "actor_loss": actor_loss.mean(),
+                "entropy": entropy.mean(),
+            })
+            
             runner_state = (train_state, idx + 1)
             return runner_state, metric
-        # end update
 
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}

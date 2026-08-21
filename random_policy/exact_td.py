@@ -89,7 +89,6 @@ def make_train(config):
         
         def td_loss(params):
             # each update step looks at all observations and produces v_theta(S)            
-            print(S.shape)
             v = network.apply(params, S) # 104 states, no terminal
             v = jnp.append(v, 0.0)
             TD_targets = R_π + gamma * P_π @ v
