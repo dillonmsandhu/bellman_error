@@ -65,9 +65,7 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
     γ = evaluator.gamma
     P = evaluator.P # 3d tensor S x A x S'
     P_π = jnp.einsum("sa,sam->sm", pi, P)
-    R_π_s = jnp.einsum("sa,sa->s", pi, evaluator.R)
-    # Gymnax awards the reward on the transition *INTO* s'
-    R_π = P_π @ R_π_s
+    R_π = jnp.einsum("sa,sam,sam->s", pi, P, evaluator.R)
     I = jnp.eye(D.shape[-1])
     A = D @ (jnp.eye(D.shape[0]) - γ * P_π)
 

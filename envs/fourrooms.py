@@ -168,7 +168,7 @@ xxxxxxxxxxxxx"""
            - P(wrong)    = fail_prob / 3
         """
         P = np.zeros((self.num_total_states, self.num_actions, self.num_total_states), dtype=np.float32)
-        R = np.zeros((self.num_total_states, self.num_actions), dtype=np.float32)
+        R = np.zeros((self.num_total_states, self.num_actions, self.num_total_states), dtype=np.float32)
 
         p_correct = 1.0 - self.fail_prob
         p_wrong = self.fail_prob / 3.0
@@ -181,11 +181,11 @@ xxxxxxxxxxxxx"""
                 if not continuing:
                     # Episodic: Goal -> Terminal
                     P[s_idx, :, self.terminal_idx] = 1.0
-                    R[s_idx, :] = 1.0  # Reward 1.0 on Exit
+                    R[s_idx, :, self.terminal_idx] = 1.0  # Reward 1.0 on Exit
                 else:
                     # Continuing: Goal -> Start
                     P[s_idx, :, self.start_idx] = 1.0
-                    R[s_idx, :] = 1.0
+                    R[s_idx, :, self.start_idx] = 1.0
                 continue
 
             # --- 2. STANDARD STATES ---
@@ -202,15 +202,14 @@ xxxxxxxxxxxxx"""
                     if hits_goal:
                         next_idx = self.goal_idx
                         P[s_idx, chosen_a, next_idx] += prob
-                        # Reward 0.0 on Entry (Value comes from next state)
-                        R[s_idx, chosen_a] += prob * 0.0
+                        R[s_idx, chosen_a, next_idx] = 0.0
                     else:
                         next_idx = self._coord_to_idx(next_pos)
                         P[s_idx, chosen_a, next_idx] += prob
-                        # Standard step reward is 0
 
         # Terminal state dynamics
         P[self.terminal_idx, :, self.terminal_idx] = 1.0
+        R[self.terminal_idx, :, self.terminal_idx] = 0.0
         
         return jnp.asarray(P), jnp.asarray(R)
 
@@ -224,15 +223,12 @@ xxxxxxxxxxxxx"""
         # 1. Get the state-to-state transition matrix under the policy
         P_pi = jnp.einsum("sa,sam->sm", pi, P_env)
         
-        # 2. Get the original state-dependent reward (1.0 only at goal state)
-        R_pi_delayed = jnp.einsum("sa,sa->s", pi, R_env)
+        # 2. Expected reward under policy
+        R_pi = jnp.einsum("sa,sam,sam->s", pi, P_env, R_env)
         
-        # 3. Shift the reward to the entry transition!
-        R_pi_shifted = P_pi @ R_pi_delayed
-        
-        # 4. Solve the standard linear system using the shifted rewards
+        # 3. Solve the standard linear system
         A = jnp.eye(self.num_total_states) - self.gamma * P_pi
-        return jnp.linalg.solve(A, R_pi_shifted)
+        return jnp.linalg.solve(A, R_pi)
 
     # def get_value_grid(self, values: jax.Array) -> jax.Array:
     #         """
