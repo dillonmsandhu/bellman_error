@@ -50,34 +50,35 @@ class PQN_CNN(nn.Module):
         
         return x
 
-# class PQN_CNN(nn.Module):
-#     norm_type: str = "layer_norm"
-#     final_hidden_dim: int = 128
+class MLP(nn.Module):
+    norm_type: str
+    final_hidden_dim: int 
 
-#     @nn.compact
-#     def __call__(self, x: jnp.ndarray):
-#         if self.norm_type == "layer_norm":
-#             normalize = lambda x: nn.LayerNorm()(x)
-#         else:
-#             normalize = lambda x: x
-#         assert x.ndim in (3,4), f"Input shape to channel-wise CNN should be (H, W, C) or (B, H, W, C), got shape {x.shape}"
-#         if x.ndim == 3:  # Shape (H, W, C) -> Add batch dimension
-#             x = x[None, ...]  # Shape becomes (1, H, W, C)
-#         batch_conv = nn.vmap(nn.Conv, in_axes=0, out_axes=0, variable_axes={'params': None}, split_rngs={'params': None})
-#         x = batch_conv(
-#             16,
-#             kernel_size=(3, 3),
-#             strides=1,
-#             padding="VALID",
-#             kernel_init=nn.initializers.he_normal(),
-#         )(x)
-#         x = normalize(x)
-#         x = nn.relu(x)
-#         x = x.reshape((x.shape[0], -1))
-#         x = nn.Dense(self.final_hidden_dim, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
-#         x = normalize(x)
-#         x = nn.relu(x)
-#         return x
+    @nn.compact
+    def __call__(self, x: jnp.ndarray):
+        if self.norm_type == "layer_norm":
+            normalize = lambda tensor: nn.LayerNorm()(tensor)
+        else:
+            normalize = lambda tensor: tensor
+
+        # Generic MLP torso
+        x = nn.Dense(
+            self.final_hidden_dim, 
+            kernel_init=orthogonal(jnp.sqrt(2)), 
+            bias_init=constant(0.0)
+        )(x)
+        x = normalize(x)
+        x = nn.relu(x)
+
+        x = nn.Dense(
+            self.final_hidden_dim, 
+            kernel_init=orthogonal(jnp.sqrt(2)), 
+            bias_init=constant(0.0)
+        )(x)
+        x = normalize(x)
+        x = nn.relu(x)
+        
+        return x
 
 class PQN(nn.Module):
     action_dim: int
@@ -175,7 +176,75 @@ class PQN_Critic(nn.Module):
     def value(self, x: jnp.ndarray):
         """Returns V(s)"""
         return self.value_from_features(self.value_features(x))
+
+class MLP_AC(nn.Module):
+    """Actor critic with seperate small MLPs for the actor and critic"""
+    action_dim: int
+    final_hidden_dim: int
+    norm_type: str = "none"
+    is_continuous: bool = False
     
+    def setup(self):
+        self.actor_mlp = MLP(norm_type=self.norm_type, final_hidden_dim = self.final_hidden_dim)
+        self.critic_mlp = MLP(norm_type=self.norm_type, final_hidden_dim = self.final_hidden_dim)
+        self.actor_head = PolicyHead(self.action_dim, self.is_continuous)
+        self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init = constant(0.0))
+
+    def __call__(self, x: jnp.ndarray):
+        """Returns (pi(s), piV(s))"""
+        v = self.value(x)
+        pi = self.policy(x)
+        return pi, v
+    
+    def policy(self, x: jnp.ndarray):
+        """Returns pi(s)"""
+        actor_features = self.actor_mlp(x)
+        return self.actor_head(actor_features)
+
+    def value_features(self, x: jnp.ndarray):
+        """Returns features for V(s)"""
+        critic_features = self.critic_mlp(x)
+        return critic_features
+    
+    def value_from_features(self, phi):
+        return self.critic_head(phi).squeeze(-1)
+
+    def value(self, x: jnp.ndarray):
+        """Returns V(s)"""
+        critic_features = self.value_features(x)
+        return self.value_from_features(critic_features)
+    
+    def act(self, x: jnp.ndarray, key: jax.random.PRNGKey):
+        """Samples an action from the policy."""
+        policy = self.policy(x)
+        action = policy.sample(seed=key)
+        return action.squeeze()
+
+class MLP_Critic(nn.Module):
+    """Critic only with a small MLP"""
+    action_dim: int
+    final_hidden_dim: int
+    norm_type: str = "none"
+    
+    def setup(self):
+        self.critic_mlp = MLP(norm_type=self.norm_type, final_hidden_dim = self.final_hidden_dim)
+        self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init = constant(0.0))
+
+    def __call__(self, x: jnp.ndarray):
+        """Returns V(s)"""
+        v = self.value(x)
+        return v
+    
+    def value_features(self, x: jnp.ndarray):
+        critic_features = self.critic_mlp(x)
+        return critic_features
+    
+    def value_from_features(self, phi):
+        return self.critic_head(phi).squeeze(-1)
+
+    def value(self, x: jnp.ndarray):
+        """Returns V(s)"""
+        return self.value_from_features(self.value_features(x))
 
 def initialize_flax_train_state(config, network, params):
     # --- PPO Agent Scheduler & Optimizer ---
@@ -246,10 +315,18 @@ def initialize_network(rng, obs_shape, env, env_params, k, n_heads: int, layer_n
         action_dim = env.action_space(env_params).shape[0]
     
     norm_type = 'layer_norm' if layer_norm else 'None'
+    use_mlp = len(obs_shape) < 3
+
     if n_heads == 2:
-        model = PQN_AC(action_dim=action_dim, is_continuous=is_continuous, final_hidden_dim=k, norm_type= norm_type)
+        if use_mlp:
+            model = MLP_AC(action_dim=action_dim, is_continuous=is_continuous, final_hidden_dim=k, norm_type=norm_type)
+        else:
+            model = PQN_AC(action_dim=action_dim, is_continuous=is_continuous, final_hidden_dim=k, norm_type=norm_type)
     elif n_heads == 1:
-        model = PQN_Critic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
+        if use_mlp:
+            model = MLP_Critic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
+        else:
+            model = PQN_Critic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
 
     rng, init_rng = jax.random.split(rng)
     params = model.init(init_rng, jnp.zeros(obs_shape))

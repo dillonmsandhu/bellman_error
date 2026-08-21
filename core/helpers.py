@@ -16,6 +16,7 @@ def initialize_evaluator(config, env, env_params):
     from envs.fourrooms import FourRoomsExactValue
     from envs.fourrooms_continuing import ContinuingFourRooms
     from envs.boyan_chain import ContinuingBoyanRing
+    from envs.mountaincar_exact import MountainCarExactValue
     if not config.get("CALC_TRUE_VALUES", False):
         return None
     
@@ -28,11 +29,20 @@ def initialize_evaluator(config, env, env_params):
         evaluator = ContinuingBoyanRing(gamma=config['GAMMA'], use_visual_obs=True)
     elif config['ENV_NAME'] == 'Whirlpool':
         evaluator = WhirlpoolExactValue(gamma = config['GAMMA'], fail_prob=env_params.fail_prob)
+    elif config['ENV_NAME'] == 'MountainCar-v0':
+        evaluator = MountainCarExactValue(gamma=config['GAMMA'])
     return evaluator 
 
 def make_env(config):
 
-    if config['ENV_NAME'] == 'FourRooms-misc':
+    if config['ENV_NAME'] == 'MountainCar-v0':
+        env, env_params = gymnax.make(config["ENV_NAME"])
+        env_params = env_params.replace(
+            max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
+        )
+        env = TerminalInfoWrapper(env)
+
+    elif config['ENV_NAME'] == 'FourRooms-misc':
         env, env_params = gymnax.make(config["ENV_NAME"], use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
         env_params = env_params.replace(
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
