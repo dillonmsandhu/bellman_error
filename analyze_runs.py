@@ -300,3 +300,35 @@ def plot_multi_spectra(metrics_dict, env_name="Environment", show_start=True):
         plt.show()
     else:
         plt.close()
+
+def save_3d_value_surface(env_dir, env_name, value_grid, title, algorithm_name):
+    """
+    Plots the value function as a 3D surface to reveal local jaggedness/smoothness.
+    """
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Create coordinate matrices
+    y = np.arange(value_grid.shape[0])
+    x = np.arange(value_grid.shape[1])
+    X, Y = np.meshgrid(x, y)
+    
+    # Plot the surface
+    # 'viridis' is good for values, and 'antialiased=False' makes jaggedness more obvious
+    surf = ax.plot_surface(X, Y, value_grid, cmap='viridis', 
+                           linewidth=0.1, edgecolor='k', antialiased=False, alpha=0.9)
+    
+    ax.set_title(f"{env_name} - {algorithm_name} Value Surface\n({title})")
+    ax.set_xlabel("X Coordinate")
+    ax.set_ylabel("Y Coordinate")
+    ax.set_zlabel("Estimated Value")
+    
+    # Adjust viewing angle to highlight the cliffs
+    ax.view_init(elev=30, azim=45)
+    
+    fig.colorbar(surf, shrink=0.5, aspect=10)
+    
+    os.makedirs(env_dir, exist_ok=True)
+    save_path = os.path.join(env_dir, f"{env_name}_{algorithm_name}_3d_surface.png")
+    plt.savefig(save_path, bbox_inches='tight', dpi=150)
+    plt.close()
