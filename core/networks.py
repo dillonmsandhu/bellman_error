@@ -60,8 +60,14 @@ class MLP(nn.Module):
             normalize = lambda tensor: nn.LayerNorm()(tensor)
         else:
             normalize = lambda tensor: tensor
+        
+        assert x.ndim in (1, 2, 3), f"Input shape should be (D) or (B, D) or (L, B, D) got {x.shape}"
+        
+        batch_dims = (x.shape[0],) if x.ndim == 2 else (1,)
 
-        # Generic MLP torso
+        if x.ndim == 1: # add a batch dim.
+            x = x[None, ...]
+
         x = nn.Dense(
             self.final_hidden_dim, 
             kernel_init=orthogonal(jnp.sqrt(2)), 
@@ -316,6 +322,8 @@ def initialize_network(rng, obs_shape, env, env_params, k, n_heads: int, layer_n
     
     norm_type = 'layer_norm' if layer_norm else 'None'
     use_mlp = len(obs_shape) < 3
+    
+    print('- obs shape for initialization is ', obs_shape)
 
     if n_heads == 2:
         if use_mlp:

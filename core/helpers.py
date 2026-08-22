@@ -4,7 +4,7 @@ from core.imports import *
 import gymnax
 from gymnax.wrappers.purerl import FlattenObservationWrapper
 from envs.log_wrapper import LogWrapper
-from envs.wrappers import NormalizeObservationWrapper, NormalizeRewardWrapper, AddChannelWrapper, ClipAction, NormalizeRewardEnvState, NormalizeObsEnvState, TerminalInfoWrapper
+from envs.wrappers import NormalizeObservationWrapper, NormalizeRewardWrapper, AddChannelWrapper, ClipAction, NormalizeRewardEnvState, NormalizeObsEnvState, TerminalInfoWrapper, MountainCarNormalizeWrapper
 from envs.boyan_chain import MatrixMockEnv, BoyanParams
 from envs.whirlpool import WhirlpoolExactValue
 from envs.whirlpool_env import Whirlpool
@@ -41,6 +41,8 @@ def make_env(config):
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
         )
         env = TerminalInfoWrapper(env)
+        env = MountainCarNormalizeWrapper(env)
+        config["NETWORK_TYPE"] = 'mlp'
 
     elif config['ENV_NAME'] == 'FourRooms-misc':
         env, env_params = gymnax.make(config["ENV_NAME"], use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
@@ -87,7 +89,8 @@ def make_env(config):
         env = ClipAction(env)
     
     if config["NETWORK_TYPE"] == "mlp":
-        env = FlattenObservationWrapper(env)
+        if len(env.observation_space(env_params).shape) > 1:
+            env = FlattenObservationWrapper(env)
     if config["NETWORK_TYPE"] == "cnn":
         if len(env.observation_space(env_params).shape) < 3:
             env = AddChannelWrapper(env)

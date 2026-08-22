@@ -234,3 +234,19 @@ class ContinuingWrapper(GymnaxWrapper):
         masked_done = jnp.logical_and(done, is_timeout)
 
         return obs, env_state, reward, masked_done, info
+
+class MountainCarNormalizeWrapper(UniversalObservationWrapper):
+    """Normalize MountainCar-v0 observations to [-1, 1]."""
+    def __init__(self, env):
+        super().__init__(env)
+        # Constants from MountainCar-v0
+        self.min_position = -1.2
+        self.max_position = 0.6
+        self.max_speed = 0.07
+
+    def observation(self, obs, env_state, params):
+        # Scale position to [-1, 1]
+        pos = 2.0 * (obs[..., 0] - self.min_position) / (self.max_position - self.min_position) - 1.0
+        # Scale velocity to [-1, 1]
+        vel = 2.0 * (obs[..., 1] - (-self.max_speed)) / (2 * self.max_speed) - 1.0
+        return jnp.stack([pos, vel], axis=-1)

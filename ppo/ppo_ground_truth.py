@@ -28,6 +28,7 @@ def make_train(config):
     n_actions = env.action_space(env_params).n
     
     S = evaluator.obs_stack
+    print(S.shape)
     P = evaluator.P 
 
     def train(rng, hparams=None):
