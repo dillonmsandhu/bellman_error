@@ -28,7 +28,7 @@ config = {
         "LAPLACE_SMOOTHING_COEFF": 0.9,
         "CLIP_EPS": 0.5,
         "VF_CLIP": 0.5,
-        "ENT_COEF": 0.00,
+        "ENT_COEF": 0.001,
         "VF_COEF": 0.5,
         "MAX_GRAD_NORM": 1.0,
         "NETWORK_TYPE": 'cnn',

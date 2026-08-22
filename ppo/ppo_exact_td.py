@@ -129,7 +129,8 @@ def make_train(config):
                 "value_loss": value_loss.mean(),
                 "actor_loss": actor_loss.mean(),
                 "entropy": entropy.mean(),
-                "v_pred_start": v_pred[evaluator.start_idx]
+                "v_pred_start": v_pred.squeeze()[evaluator.start_idx],
+                "Mean_A": A.mean(),
             })
             
             runner_state = (train_state, idx + 1)
