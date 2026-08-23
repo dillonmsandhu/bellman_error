@@ -75,7 +75,7 @@ def make_train(base_config):
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
                 log_pi_sum = jnp.sum(pi[:-1, :] * log_pi, axis=-1)
-                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
+                entropy = -jnp.sum(mu[:-1] * log_pi_sum)
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
@@ -88,7 +88,7 @@ def make_train(base_config):
                 
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
-                total_loss =  actor_loss - entropy
+                total_loss =  actor_loss - entropy * config.get("ENT_COEF", 0.01)
                 return total_loss, (total_loss, actor_loss, entropy)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)

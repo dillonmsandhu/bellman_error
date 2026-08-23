@@ -16,13 +16,13 @@ def network_inference(params, network, S, n_actions):
     v = jnp.append(v, 0.0)
     return pi, v
 
-def make_train(config):
-    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
-    config['NUM_ENVS'] = 1
-    config['NUM_STEPS'] = 1
+def make_train(base_config):
+    base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"]
+    base_config['NUM_ENVS'] = 1
+    base_config['NUM_STEPS'] = 1
     
-    env, env_params = helpers.make_env(config)
-    evaluator = helpers.initialize_evaluator(config, env, env_params)
+    env, env_params = helpers.make_env(base_config)
+    evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
     
@@ -31,28 +31,15 @@ def make_train(config):
     I = jnp.eye(evaluator.num_total_states)
 
     def train(rng, hparams=None):
-        if hparams is None:
-            hparams = {}
-
-        lr = hparams.get('LR', config['LR'])
-        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
-        weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
-        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-4))
-        max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
-        γ = hparams.get('GAMMA', config['GAMMA'])
-
+        config = utils.merge_hparams(base_config, hparams) # Used for tuning: overwrite any config with the same key in hparams
+        γ = config['GAMMA']
         k = config.get('k', 32)
+
         # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
         )
-        total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(lr, lr_end, total_grad_steps)
-        tx = optax.chain(
-            optax.clip_by_global_norm(max_grad_norm),
-            optax.adamw(lr_scheduler, weight_decay=weight_decay, eps=adam_eps),
-        )
-        train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
+        train_state = networks.initialize_flax_train_state(config, network, network_params)
         runner_state = (train_state, 1)
 
         def _update_step(runner_state, unused):
@@ -81,8 +68,10 @@ def make_train(config):
             R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
             Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], V_true)
             
-            A_adv = Q_sa - V_true[:-1, None]
-            A_adv = jax.lax.stop_gradient(A_adv)
+            A = Q_sa - V_true[:-1, None]
+            A -= A.mean()
+            A/= A.std() + 1e-8
+            A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
                 # pi shape (num_states+1, n_actions), v shape (num_states+1,)
@@ -91,23 +80,24 @@ def make_train(config):
                 # E-Loss (Bellman error gradient descent loss)
                 # (V_true - v)^T @ S @ (V_true - v)
                 diff = V_true - v
-                value_loss = (diff.T @ S_mat @ diff) * config.get("VF_COEF", 0.5)
+                value_loss = (diff.T @ S_mat @ diff)
 
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
                 log_pi_sum = jnp.sum(pi[:-1, :] * log_pi, axis=-1)
-                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * 0.0
+                entropy = -jnp.sum(mu[:-1] * log_pi_sum) 
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
                 pi_old = jnp.exp(old_log_pi)
     
-                surr1 = ratio * A_adv
-                surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * A_adv
+                surr1 = ratio * A
+                surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * A
                 
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
-                total_loss = value_loss + actor_loss - entropy
+                total_loss = config.get("VF_COEF", 0.5) * value_loss + actor_loss - entropy * config.get("ENT_COEF", 0.01)
+
                 return total_loss, (value_loss, actor_loss, entropy)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)

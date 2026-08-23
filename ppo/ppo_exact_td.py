@@ -64,6 +64,8 @@ def make_train(base_config):
             Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
             
             A = Q_sa - old_v[:, None]
+            A -= A.mean()
+            A/= A.std() + 1e-8
             A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
@@ -73,12 +75,12 @@ def make_train(base_config):
                 
                 # Value Loss
                 td_errors = v - jax.lax.stop_gradient(TD_targets)
-                value_loss = 0.5 * jnp.sum(mu * (td_errors ** 2)) * config.get("VF_COEF", 0.5)
+                value_loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
 
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
                 log_pi_sum = jnp.sum(pi[:-1, :] * log_pi, axis=-1)
-                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
+                entropy = -jnp.sum(mu[:-1] * log_pi_sum)
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
@@ -89,7 +91,7 @@ def make_train(base_config):
                 
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
-                total_loss = value_loss + actor_loss - entropy
+                total_loss = config.get("VF_COEF", 0.5) * value_loss + actor_loss - entropy * config.get("ENT_COEF", 0.01)
                 return total_loss, (value_loss, actor_loss, entropy, v)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
