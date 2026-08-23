@@ -73,7 +73,7 @@ def make_train(base_config):
             # each update step looks at all observations and produces v_theta(S)            
             v = network.apply(params, S) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            TD_targets = R_π + gamma * P_π @ v
+            TD_targets = R_π + γ * P_π @ v
             td_errors = v - jax.lax.stop_gradient(TD_targets)
             loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
             return loss

@@ -53,7 +53,7 @@ def make_train(base_config):
     V = evaluator.compute_true_values_raw(Pi)
     
     def train(rng, hparams=None):
-        config = utils.merge_hparams(config, hparams) # Used for tuning: overwrite any config with the same key in hparams
+        config = utils.merge_hparams(base_config, hparams) # Used for tuning: overwrite any config with the same key in hparams
         k = config.get('k', 32)
 
         # Initialize Network

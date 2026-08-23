@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 from typing import Tuple, Any
 
+
 class MountainCarExactValue:
     """
     Exact policy evaluation for a discretized Mountain Car environment.
@@ -49,7 +50,7 @@ class MountainCarExactValue:
         # Build coordinate arrays
         # coords[s_idx] = [pos, vel]
         self.num_states = self.n_pos * self.n_vel
-        
+
         # We will add a singular terminal state (goal states are just regular bins meeting the criteria)
         self.terminal_idx = self.num_states
         self.num_total_states = self.num_states + 1
@@ -66,7 +67,7 @@ class MountainCarExactValue:
         start_pos_idx = np.argmin(np.abs(self.pos_bins - (-0.5)))
         start_vel_idx = np.argmin(np.abs(self.vel_bins - 0.0))
         self.start_idx = start_pos_idx * self.n_vel + start_vel_idx
-        
+
         # Build Observations
         self.obs_stack = self._build_obs_stack()
 
@@ -92,13 +93,13 @@ class MountainCarExactValue:
         # action: 0 (left), 1 (idle), 2 (right)
         new_vel = vel + (action - 1) * self.force - np.cos(3 * pos) * self.gravity
         new_vel = np.clip(new_vel, -self.max_speed, self.max_speed)
-        
+
         new_pos = pos + new_vel
         new_pos = np.clip(new_pos, self.min_position, self.max_position)
-        
+
         if new_pos == self.min_position and new_vel < 0:
             new_vel = 0.0
-            
+
         is_goal = (new_pos >= self.goal_position) and (new_vel >= self.goal_velocity)
         return new_pos, new_vel, is_goal
 
@@ -109,8 +110,7 @@ class MountainCarExactValue:
         for s_idx in range(self.num_states):
             pos, vel = self.coords[s_idx]
             
-            # If the current discrete state naturally falls into the goal region, 
-            # we transition immediately to terminal_idx and yield reward 1.0.
+            # Goal region check
             if pos >= self.goal_position and vel >= self.goal_velocity:
                 if not continuing:
                     P[s_idx, :, self.terminal_idx] = 1.0
@@ -122,9 +122,12 @@ class MountainCarExactValue:
                 
             for a in range(self.num_actions):
                 next_pos, next_vel, _ = self._step_continuous(pos, vel, a)
-                next_idx = self._get_bin_idx(next_pos, next_vel)
-                P[s_idx, a, next_idx] = 1.0
-                R[s_idx, a, next_idx] = 0.0
+                
+                # Replace naive rounding with stochastic bilinear interpolation
+                transitions = self._get_interpolated_bins(next_pos, next_vel)
+                for next_idx, prob in transitions:
+                    P[s_idx, a, next_idx] += prob
+                    R[s_idx, a, next_idx] = 0.0
 
         # --- TERMINAL STATE ---
         P[self.terminal_idx, :, self.terminal_idx] = 1.0
@@ -135,10 +138,10 @@ class MountainCarExactValue:
     def solve_linear_system(self, pi: jax.Array, P_env: jax.Array, R_env: jax.Array) -> jax.Array:
         # 1. State-to-state transition matrix under policy
         P_pi = jnp.einsum("sa,sam->sm", pi, P_env)
-        
+
         # 2. Expected reward under policy
         R_pi = jnp.einsum("sa,sam,sam->s", pi, P_env, R_env)
-        
+
         # 3. Solve linear system
         A = jnp.eye(self.num_total_states) - self.gamma * P_pi
         return jnp.linalg.solve(A, R_pi)
@@ -149,7 +152,7 @@ class MountainCarExactValue:
         Grid index is [pos_idx, vel_idx].
         """
         if values.shape[0] == self.num_total_states:
-            values = values[:self.num_states]
+            values = values[: self.num_states]
 
         grid = jnp.zeros((self.n_pos, self.n_vel), dtype=values.dtype)
         # indices are simply mapped sequentially
@@ -158,20 +161,20 @@ class MountainCarExactValue:
     def compute_true_values_raw(self, pi: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
         V_pi = self.solve_linear_system(pi, self.P, self.R)
         return V_pi
-    
+
     def compute_true_values(self, pi: jax.Array) -> jax.Array:
         V_pi = self.compute_true_values_raw(pi)
         return self.get_value_grid(V_pi)
 
     def compute_stationary_distribution_raw(self, pi: jax.Array) -> jax.Array:
-        P_env = self.P_cont[:self.num_states, :, :self.num_states]
+        P_env = self.P_cont[: self.num_states, :, : self.num_states]
         P_pi = jnp.einsum("sa,sam->sm", pi, P_env)
-        
+
         A = P_pi.T - jnp.eye(self.num_states)
         A = A.at[-1, :].set(1.0)
-        
+
         b = jnp.zeros(self.num_states).at[-1].set(1.0)
-        
+
         mu = jnp.linalg.solve(A, b)
         mu = jnp.clip(mu, a_min=0.0)
         return mu / mu.sum(), P_pi
@@ -179,14 +182,14 @@ class MountainCarExactValue:
     def compute_stationary_distribution(self, pi: jax.Array) -> jax.Array:
         mu, _ = self.compute_stationary_distribution_raw(pi)
         return self.get_value_grid(mu)
-    
+
     def compute_v_error_on_d_pi(self, pi: jax.Array, v_pred: jax.Array, v_true: jax.Array):
         mu = self.compute_stationary_distribution(pi)
         # All states are valid in MountainCar
-        return jnp.sum(mu * (v_pred - v_true)**2)
-        
+        return jnp.sum(mu * (v_pred - v_true) ** 2)
+
     def compute_discounted_visitation_raw(self, pi: jax.Array) -> jax.Array:
-        P_env = self.P[:self.num_states, :, :self.num_states]
+        P_env = self.P[: self.num_states, :, : self.num_states]
         P_pi = jnp.einsum("sa,sam->sm", pi, P_env)
         rho_0 = jnp.zeros(self.num_states)
         rho_0 = rho_0.at[self.start_idx].set(1.0)
@@ -194,7 +197,45 @@ class MountainCarExactValue:
         d_gamma = jnp.linalg.solve(A, (1 - self.gamma) * rho_0)
         d_gamma_norm = d_gamma / jnp.sum(d_gamma)
         return d_gamma_norm
-    
+
     def compute_discounted_visitation(self, pi: jax.Array) -> jax.Array:
         mu = self.compute_discounted_visitation_raw(pi)
         return self.get_value_grid(mu)
+
+    def _get_interpolated_bins(self, pos: float, vel: float) -> list[Tuple[int, float]]:
+        """Distributes a continuous state into the 4 nearest discrete bins."""
+        # Clip to bounds
+        pos = np.clip(pos, self.min_position, self.max_position)
+        vel = np.clip(vel, -self.max_speed, self.max_speed)
+
+        # Calculate exact fractional indices
+        pos_idx_exact = (pos - self.min_position) / (self.max_position - self.min_position) * (self.n_pos - 1)
+        vel_idx_exact = (vel - (-self.max_speed)) / (2 * self.max_speed) * (self.n_vel - 1)
+
+        # Identify bounding grid coordinates
+        p0 = int(np.floor(pos_idx_exact))
+        p1 = min(p0 + 1, self.n_pos - 1)
+        v0 = int(np.floor(vel_idx_exact))
+        v1 = min(v0 + 1, self.n_vel - 1)
+
+        # Calculate distances from the lower bounds
+        dp = pos_idx_exact - p0
+        dv = vel_idx_exact - v0
+
+        # Bilinear weights (probabilities)
+        w_p0_v0 = (1 - dp) * (1 - dv)
+        w_p1_v0 = dp * (1 - dv)
+        w_p0_v1 = (1 - dp) * dv
+        w_p1_v1 = dp * dv
+
+        transitions = []
+        if w_p0_v0 > 0:
+            transitions.append((p0 * self.n_vel + v0, w_p0_v0))
+        if w_p1_v0 > 0:
+            transitions.append((p1 * self.n_vel + v0, w_p1_v0))
+        if w_p0_v1 > 0:
+            transitions.append((p0 * self.n_vel + v1, w_p0_v1))
+        if w_p1_v1 > 0:
+            transitions.append((p1 * self.n_vel + v1, w_p1_v1))
+
+        return transitions

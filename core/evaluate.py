@@ -108,9 +108,7 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         print("failed to save gradient_covariance_matrix", e)
 
     try:
-        save_heatmap(
-            env_dir, run_config["ENV_NAME"], metrics["V_grid"][0, -1], "V_grid"
-        )
+        save_heatmap(env_dir, run_config["ENV_NAME"], metrics["V_grid"][0, -1], "V_grid")
     except Exception as e:
         print("failed to save value grid", e)
 
@@ -178,17 +176,33 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         ),
     ]
 
-    # 2. Unpack title, ylabel, and metric_keys
-    for title, ylabel, metric_keys, logscale in plot_configs:
+    # 2. Unpack title, ylabel, and metric_keys'
+    if metrics.get("nn_weighted_VE", None) is not None:
+        for title, ylabel, metric_keys, logscale in plot_configs:
 
-        plot_data = {legend: get_metric(m_key, 1) for m_key, legend in metric_keys.items()}
+            plot_data = {legend: get_metric(m_key, 1) for m_key, legend in metric_keys.items()}
 
-        save_multi_plot(
-            env_dir=env_dir,
-            env_name=run_config["ENV_NAME"],
-            steps_per_pi=steps_per_pi,
-            metrics_dict=plot_data,
-            title=title,
-            ylabel=ylabel,
-            log_scale=logscale,
-        )
+            save_multi_plot(
+                env_dir=env_dir,
+                env_name=run_config["ENV_NAME"],
+                steps_per_pi=steps_per_pi,
+                metrics_dict=plot_data,
+                title=title,
+                ylabel=ylabel,
+                log_scale=logscale,
+            )
+
+    if hasattr(args, "save_video") and args.save_video:
+        try:
+            # Extract the single-seed train state (seed 0)
+            train_state_seed0 = jax.tree_util.tree_map(lambda x: x[0], out["runner_state"][0])
+            from core.video import generate_policy_video
+            generate_policy_video(
+                run_config=run_config,
+                train_state=train_state_seed0,
+                env_dir=env_dir,
+                seed=run_config.get("SEED", 42),
+                save_name="policy.gif"
+            )
+        except Exception as e:
+            print("Failed to generate policy video:", e)

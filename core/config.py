@@ -10,7 +10,7 @@ config = {
     "LAYER_NORM": False,
     "LR": 0.05,
     "LR_END": 0.0001,
-    "ACTOR_LR": 0.0005,
+    "ACTOR_LR": 0.0001,
     "ACTOR_LR_END": 0.0001,
     "NUM_ENVS": 1,
     "NUM_STEPS": 1,

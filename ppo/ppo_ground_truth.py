@@ -58,6 +58,14 @@ def make_train(base_config):
             old_log_pi = jnp.log(old_pi + 1e-8)
 
             mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
+            has_nans = jnp.isnan(mu).any()
+            # jax.debug.print(
+            #     "Step {idx} | NaN in mu: {has_nans} | Max mu: {max_mu}", 
+            #     idx=idx, 
+            #     has_nans=has_nans,
+            #     max_mu=jnp.max(jnp.nan_to_num(mu))
+            # )
+            # # ----------
             mu = jnp.append(mu, 0.0)
 
             V = evaluator.compute_true_values_raw(old_pi_full)
@@ -68,6 +76,8 @@ def make_train(base_config):
 
             # 4. Compute the Advantage
             A = Q_sa - V[:-1, None]
+            A -= A.mean()
+            A /= A.std() + 1e-8
             A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
@@ -112,6 +122,7 @@ def make_train(base_config):
                 "V_mean": V.mean(),
                 "Value_Grid": evaluator.get_value_grid(V),
             }
+            print(idx)
             runner_state = (train_state, idx + 1)
             return runner_state, metric
 
