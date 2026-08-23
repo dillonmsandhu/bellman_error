@@ -1,3 +1,4 @@
+# oracle PPO.
 # trains a policy network with PPO where the critic is the true value function at each iteration.
 # provides a skyline on PPO with a specific policy net.
 from core.imports import *
@@ -10,6 +11,7 @@ from core.feature_metrics import feature_metrics
 SAVE_DIR = "ppo/ground_truth"
 
 def network_inference(params, network, S, n_actions):
+    "Maps from network to policy and value vectors in R^S"
     pi_dist, v = network.apply(params, S)
     pi = pi_dist.probs
     terminal_policy = jnp.ones([1, n_actions], dtype=pi.dtype) / n_actions
@@ -17,13 +19,13 @@ def network_inference(params, network, S, n_actions):
     v = jnp.append(v, 0.0)
     return pi, v
 
-def make_train(config):
-    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
-    config['NUM_ENVS'] = 1
-    config['NUM_STEPS'] = 1
+def make_train(base_config):
+    base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"]
+    base_config['NUM_ENVS'] = 1
+    base_config['NUM_STEPS'] = 1
     
-    env, env_params = helpers.make_env(config)
-    evaluator = helpers.initialize_evaluator(config, env, env_params)
+    env, env_params = helpers.make_env(base_config)
+    evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
     
@@ -32,31 +34,15 @@ def make_train(config):
     P = evaluator.P 
 
     def train(rng, hparams=None):
-        if hparams is None:
-            hparams = {}
-
-        lr = hparams.get('LR', config['LR'])
-        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
-        weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
-        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-4))
-        max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
-        γ = hparams.get('GAMMA', config['GAMMA'])
-
+        config = utils.merge_hparams(base_config, hparams) # Used for tuning: overwrite any config with the same key in hparams
+        γ = config['GAMMA']
         k = config.get('k', 32)
+
         # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
         )
-        total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(lr, lr_end, total_grad_steps)
-        tx = optax.chain(
-                optax.clip_by_global_norm(max_grad_norm),
-                optax.adamw(lr_scheduler, 
-                weight_decay=weight_decay,
-                eps=adam_eps
-                ),
-        )
-        train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
+        train_state = networks.initialize_flax_train_state(config, network, network_params)
         runner_state = (train_state, 1)
 
         def _update_step(runner_state, unused):
@@ -89,8 +75,7 @@ def make_train(config):
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
                 log_pi_sum = jnp.sum(pi[:-1, :] * log_pi, axis=-1)
-                # entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
-                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * 0.0
+                entropy = -jnp.sum(mu[:-1] * log_pi_sum) * config.get("ENT_COEF", 0.01)
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)

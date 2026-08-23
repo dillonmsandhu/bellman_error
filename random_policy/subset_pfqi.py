@@ -55,32 +55,16 @@ def make_train(config):
     mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
     mu = jnp.append(mu, 0.0)
     
-    def train(rng):
-        if hparams is None:
-            hparams = {}
-        lr = hparams.get('LR', config['LR'])
-        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
-        weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
-        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-5))
-        max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
-        gamma = hparams.get('GAMMA', config['GAMMA'])
-
+    def train(rng, hparams=None):
+        config = utils.merge_hparams(config, hparams) # Used for tuning: overwrite any config with the same key in hparams
+        γ = config['GAMMA']
         k = config.get('k', 32)
+
         # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
-        total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(lr, lr_end, total_grad_steps)
-        tx = optax.chain(
-                optax.clip_by_global_norm(max_grad_norm),
-                optax.adamw(lr_scheduler, 
-                weight_decay=weight_decay,
-                eps=adam_eps
-                ),
-        )
-        
-        train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
+        train_state = networks.initialize_flax_train_state(config, network, network_params)
         rng, loop_rng = jax.random.split(rng)
         runner_state = (train_state, loop_rng, 1)
         

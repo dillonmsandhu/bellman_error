@@ -11,16 +11,16 @@ from core.feature_metrics import feature_metrics
 
 SAVE_DIR = "random/subset/mc"
 
-def make_train(config):    
+def make_train(base_config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
     # We need to extract the parameters for the first seed to remove this extra dimension.
-    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"]
-    config['NUM_ENVS'] = 1
-    config['NUM_STEPS'] = 1
-    config['NUM_EPOCHS'] = 1
+    base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"]
+    base_config['NUM_ENVS'] = 1
+    base_config['NUM_STEPS'] = 1
+    base_config['NUM_EPOCHS'] = 1
     
-    env, env_params = helpers.make_env(config)
-    evaluator = helpers.initialize_evaluator(config, env, env_params)
+    env, env_params = helpers.make_env(base_config)
+    evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
     S = evaluator.obs_stack
@@ -58,36 +58,20 @@ def make_train(config):
     # construct weighting / laplace matrix
     D = jnp.diag(mu)
     I = jnp.eye(evaluator.num_total_states)
-    A = D @ (I - config['GAMMA'] * P_π)
+    A = D @ (I - base_config['GAMMA'] * P_π)
     S_mat = 0.5 * (A + A.T) 
     V = evaluator.compute_true_values_raw(Pi)
 
-    def train(rng):
-        if hparams is None:
-            hparams = {}
-        lr = hparams.get('LR', config['LR'])
-        lr_end = hparams.get('LR_END', config.get('LR_END', lr))
-        weight_decay = hparams.get('WEIGHT_DECAY', config.get('WEIGHT_DECAY', 1e-2))
-        adam_eps = hparams.get('ADAM_EPS', config.get('ADAM_EPS', 1e-5))
-        max_grad_norm = hparams.get('MAX_GRAD_NORM', config.get('MAX_GRAD_NORM', 1.0))
-        gamma = hparams.get('GAMMA', config['GAMMA'])
-
+    def train(rng, hparams=None):
+        config = utils.merge_hparams(base_config, hparams) # Used for tuning: overwrite any config with the same key in hparams
+        γ = config['GAMMA']
         k = config.get('k', 32)
+
         # Initialize Network
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
-        total_grad_steps = config["NUM_UPDATES"] * config["NUM_EPOCHS"]
-        lr_scheduler = optax.linear_schedule(lr, lr_end, total_grad_steps)
-        tx = optax.chain(
-                optax.clip_by_global_norm(max_grad_norm),
-                optax.adamw(lr_scheduler, 
-                weight_decay=weight_decay,
-                eps=adam_eps
-                ),
-        )
-        
-        train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
+        train_state = networks.initialize_flax_train_state(config, network, network_params)
         
         rng, loop_rng = jax.random.split(rng)
         runner_state = (train_state, loop_rng, 1)

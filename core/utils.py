@@ -8,6 +8,20 @@ from core.networks import *
 import pandas as pd
 
 
+def merge_hparams(config, hparams):
+    """Merges a PyTree/dictionary of hyperparameters into the config."""
+    if hparams is None:
+        return config
+    merged = config.copy()
+    for k, v in hparams.items():
+        merged[k] = v
+        # Standard fallbacks for learning rate schedules
+        if k == 'LR' and 'LR_END' not in hparams:
+            merged['LR_END'] = v
+        if k == 'ACTOR_LR' and 'ACTOR_LR_END' not in hparams:
+            merged['ACTOR_LR_END'] = v
+    return merged
+
 def parse_config_override(config_str):
     """Parse config override from command line argument."""
     if config_str is None:

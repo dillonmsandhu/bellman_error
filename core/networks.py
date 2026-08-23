@@ -254,21 +254,46 @@ class MLP_Critic(nn.Module):
 
 def initialize_flax_train_state(config, network, params):
     # --- PPO Agent Scheduler & Optimizer ---
-    total_grad_steps = config["NUM_UPDATES"] * config["NUM_MINIBATCHES"] * config["NUM_EPOCHS"]
+    total_grad_steps = config["NUM_UPDATES"] * config.get("NUM_MINIBATCHES", 1) * config["NUM_EPOCHS"]
 
     if config.get('OPTIMIZER','AdamW')=='AdamW':
-        lr_scheduler = optax.linear_schedule(
-            init_value=config["LR"],
-            end_value=config["LR_END"],
-            transition_steps=total_grad_steps
+        # Separate learning rates for actor and critic
+        actor_lr = config["ACTOR_LR"]
+        critic_lr = config["LR"] # Let LR dictate the value net LR
+        actor_lr_end = config.get("ACTOR_LR_END", actor_lr)
+        critic_lr_end = config.get("LR_END", critic_lr)
+
+        actor_lr_scheduler = optax.linear_schedule(
+            init_value=actor_lr, end_value=actor_lr_end, transition_steps=total_grad_steps
         )
-        tx = optax.chain(
-                optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                optax.adamw(lr_scheduler, 
-                weight_decay = config.get('WEIGHT_DECAY', 1e-2),
-                eps=config.get('ADAM_EPS', 1e-5)
-                ),
+        critic_lr_scheduler = optax.linear_schedule(
+            init_value=critic_lr, end_value=critic_lr_end, transition_steps=total_grad_steps
         )
+
+        actor_tx = optax.chain(
+            optax.clip_by_global_norm(config.get("MAX_GRAD_NORM", 1.0)),
+            optax.adamw(actor_lr_scheduler, 
+                        weight_decay=config.get('WEIGHT_DECAY', 1e-2),
+                        eps=config.get('ADAM_EPS', 1e-5)),
+        )
+        critic_tx = optax.chain(
+            optax.clip_by_global_norm(config.get("MAX_GRAD_NORM", 1.0)),
+            optax.adamw(critic_lr_scheduler, 
+                        weight_decay=config.get('WEIGHT_DECAY', 1e-2),
+                        eps=config.get('ADAM_EPS', 1e-5)),
+        )
+
+        def param_labels(path, val):
+            # The actor gets separated out, and the critic gets the rest.
+            # Assuming standard naming in your single flax class like 'actor_cnn', 'actor_head', 'actor_mlp'
+            is_actor = any('actor' in getattr(p, 'key', '') or 'actor' in str(p) for p in path)
+            return 'actor' if is_actor else 'critic'
+
+        tx = optax.multi_transform(
+            {'actor': actor_tx, 'critic': critic_tx},
+            jax.tree_util.tree_map_with_path(param_labels, params)
+        )
+
     train_state = TrainState.create(
         apply_fn=network.apply,
         params=params,
