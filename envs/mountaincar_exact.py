@@ -12,8 +12,8 @@ class MountainCarExactValue:
 
     def __init__(
         self,
-        n_pos: int = 100,
-        n_vel: int = 20,
+        n_pos: int = 32,
+        n_vel: int = 32,
         gamma: float = 0.99,
         episodic: bool = True,
         scale_obs: bool = True,

@@ -53,6 +53,7 @@ class PQN_CNN(nn.Module):
 class MLP(nn.Module):
     norm_type: str
     final_hidden_dim: int 
+    hidden_dim: int = 64
 
     @nn.compact
     def __call__(self, x: jnp.ndarray):
@@ -69,7 +70,7 @@ class MLP(nn.Module):
             x = x[None, ...]
 
         x = nn.Dense(
-            self.final_hidden_dim, 
+            self.hidden_dim, 
             kernel_init=orthogonal(jnp.sqrt(2)), 
             bias_init=constant(0.0)
         )(x)

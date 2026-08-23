@@ -57,7 +57,7 @@ def run_experiment_main(make_train, SAVE_DIR):
         try:
             if args.sweep:
                 if args.sweep == 'default':
-                    param_grid = {"LR": [5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2,]}
+                    param_grid = {"ACTOR_LR": [5e-5, 5e-4, 5e-3, 5e-2], "CRITIC_LR": [5e-2, 5e-3, 5e-4]}
                 else:
                     import json
                     with open(args.sweep, 'r') as f:

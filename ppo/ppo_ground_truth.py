@@ -5,10 +5,9 @@ from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
 import core.utils as utils
-from flax.training.train_state import TrainState
-import core.bellman_error as bellman_error
-from core.feature_metrics import feature_metrics
+
 SAVE_DIR = "ppo/ground_truth"
+
 
 def network_inference(params, network, S, n_actions):
     "Maps from network to policy and value vectors in R^S"
@@ -19,28 +18,31 @@ def network_inference(params, network, S, n_actions):
     v = jnp.append(v, 0.0)
     return pi, v
 
+
 def make_train(base_config):
     base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"]
-    base_config['NUM_ENVS'] = 1
-    base_config['NUM_STEPS'] = 1
-    
+    base_config["NUM_ENVS"] = 1
+    base_config["NUM_STEPS"] = 1
+
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
-    
+
     S = evaluator.obs_stack
     print(S.shape)
-    P = evaluator.P 
+    P = evaluator.P
 
     def train(rng, hparams=None):
-        config = utils.merge_hparams(base_config, hparams) # Used for tuning: overwrite any config with the same key in hparams
-        γ = config['GAMMA']
-        k = config.get('k', 32)
+        config = utils.merge_hparams(
+            base_config, hparams
+        )  # Used for tuning: overwrite any config with the same key in hparams
+        γ = config["GAMMA"]
+        k = config.get("k", 32)
 
         # Initialize Network
         network, network_params = networks.initialize_network(
-            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
+            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config["LAYER_NORM"]
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
         runner_state = (train_state, 1)
@@ -79,16 +81,16 @@ def make_train(base_config):
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
-                surr1 = ratio * A[:, None] 
+                surr1 = ratio * A[:, None]
 
                 pi_old = jnp.exp(old_log_pi)
-    
+
                 surr1 = ratio * A
                 surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * A
-                
+
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
-                total_loss =  actor_loss - entropy * config.get("ENT_COEF", 0.01)
+                total_loss = actor_loss - entropy * config.get("ENT_COEF", 0.01)
                 return total_loss, (total_loss, actor_loss, entropy)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
@@ -100,19 +102,19 @@ def make_train(base_config):
                 return train_state, metrics
 
             train_state, epoch_metrics = jax.lax.scan(epoch_step, train_state, None, config["NUM_EPOCHS"])
-            
+
             # Metrics
             total_loss, actor_loss, entropy = epoch_metrics
-            metric = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=False, 
-            )
-            if config["LOG_FEATURE_METRICS"]:
-                metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=False,)
-                )
-            metric.update({"total_loss": total_loss.mean()})
+            metric = {
+                "total_loss": total_loss.mean(),
+                "entropy": entropy.mean(),
+                "V_start": V.squeeze()[evaluator.start_idx],
+                "V_mean": V.mean(),
+                "Value_Grid": evaluator.get_value_grid(V),
+            }
             runner_state = (train_state, idx + 1)
             return runner_state, metric
+
         # end update
 
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
@@ -120,6 +122,8 @@ def make_train(base_config):
 
     return train
 
+
 if __name__ == "__main__":
     from core.runner import run_experiment_main
+
     run_experiment_main(make_train, SAVE_DIR)
