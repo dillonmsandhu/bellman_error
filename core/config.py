@@ -8,7 +8,7 @@ config = {
     "k": 16,
     "MAX_STEPS_IN_EPISODE": 1e6,
     "LAYER_NORM": False,
-    "LR": 0.05,
+    "LR": 0.01,
     "LR_END": 0.0001,
     "ACTOR_LR": 0.0001,
     "ACTOR_LR_END": 0.0001,

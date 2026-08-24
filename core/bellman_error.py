@@ -294,7 +294,8 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "stat_dist": stat_dist,
         "min_eigenvector_grid": min_eigenvector_grid,
         "phi_space_non_normality": phi_space_non_normality,
-        "V_start": V_pi[evaluator.start_idx]
+        "V_start": V_pi[evaluator.start_idx],
+        "V": V_pi,
     }
 
     # 3. Iterate to compute Grids, Errors, Policies, MSEs, and Weights dynamically
