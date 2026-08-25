@@ -79,7 +79,8 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "Mean_A": "Mean_A",
         "entropy": "entropy",
         "V_mean": "V_mean",
-        "SA_min_eigenvalue": "SA_min_eigenvalue"
+        "SA_min_eigenvalue": "SA_min_eigenvalue",
+        "non_reversible_coeff": "non_reversible_coeff"
     }
     data = get_metric("E", 1)
     E_local = get_metric("E_local", 1)
