@@ -11,7 +11,7 @@
 
 import marimo
 
-__generated_with = "0.24.0"
+__generated_with = "0.23.9"
 app = marimo.App()
 
 
@@ -28,9 +28,10 @@ def _():
     from core.helpers import initialize_evaluator, make_env
     from core.utils import load_run_data
     import marimo as mo
+    from core.mail import email_pdf
 
-    td_config, td_metrics = load_run_data('random/td_exact/20260824_160232/', 'FourRooms-misc', 'results')
-    mc_config, mc_metrics = load_run_data('random/mc_exact/20260824_143558/', 'FourRooms-misc', 'results')
+    td_config, td_metrics = load_run_data('random/td_exact/tuned_saved_metrics/', 'FourRooms-misc', 'results')
+    mc_config, mc_metrics = load_run_data('random/mc_exact/tuned_saved_metrics/', 'FourRooms-misc', 'results')
 
     env, env_params = make_env(td_config)
     evaluator = initialize_evaluator(td_config, env, env_params)
@@ -41,6 +42,7 @@ def _():
 
 
     return (
+        email_pdf,
         evaluator,
         jax,
         jnp,
@@ -89,25 +91,23 @@ def _(jnp, plt):
         plt.axis("off")
         return plt.gca()
 
-    return (plot_grid,)
+    return
 
 
 @app.cell
-def _(evaluator, jax, jnp, plot_grid, random_policy):
+def _(evaluator, jax, jnp, random_policy):
     target_policy_probs = jax.vmap(random_policy)(evaluator.obs_stack)
     pi = jnp.vstack([target_policy_probs, target_policy_probs[0]])
     V_pi = evaluator.compute_true_values_raw(pi)
     mu_vector, _ = evaluator.compute_stationary_distribution_raw(target_policy_probs)
     mu_grid = evaluator.get_value_grid(mu_vector)
-
-    plot_grid(mu_grid, evaluator, "Stationary Distribution ($\mu$)", cmap="magma")
     return V_pi, target_policy_probs
 
 
 @app.cell
-def _(V_pi, evaluator, plot_grid):
+def _(V_pi, evaluator):
     v_grid = evaluator.get_value_grid(V_pi[:-1])
-    plot_grid(v_grid, evaluator, "True Value Function ($V^\pi$)", cmap="viridis")
+    # plot_grid(v_grid, evaluator, "True Value Function ($V^\pi$)", cmap="viridis")
     return
 
 
@@ -178,34 +178,7 @@ def _(V_pi, evaluator, jnp, plt, target_policy_probs):
 
 
 @app.cell
-def _(evaluator, mc_metrics, td_metrics, v_g):
-    td_err = (evaluator.get_value_grid(td_metrics["V_nn"][0, -1]) - v_g) ** 2
-    mc_err = (evaluator.get_value_grid(mc_metrics["V_nn"][0, -1]) - v_g) ** 2
-    return mc_err, td_err
-
-
-@app.cell
-def _(evaluator, mc_err, plot_grid, plt, td_err):
-    def get_grid_plot(grid, title, log):
-        # We create a new figure for each plot to keep them distinct
-        plt.close("all")  # Clean up to avoid overlapping plots
-        plot_grid(grid, evaluator, title, cmap="Reds", logscale=log)
-        return plt.gcf()
-
-    fig_td = get_grid_plot(td_err, "TD Squared Error", True)
-    fig_mc = get_grid_plot(mc_err, "SVL Squared Error", True)
-    fig_mc
-    return (fig_td,)
-
-
-@app.cell
-def _(fig_td):
-    fig_td
-    return
-
-
-@app.cell
-def _(evaluator, jnp, mc_err, plt, td_err):
+def _(email_pdf, evaluator, jnp, mc_metrics, plt, td_metrics, v_g):
     def plot_combined_errs(
         grid1,
         grid2,
@@ -264,22 +237,21 @@ def _(evaluator, jnp, mc_err, plt, td_err):
         plt.tight_layout()
         return fig
 
-    plot_combined_errs(td_err, mc_err, evaluator, use_log=True)
+    mc_err = (evaluator.get_value_grid(mc_metrics["V_nn"][0, 1000]) - v_g) ** 2
+    td_err = (evaluator.get_value_grid(td_metrics["V_nn"][0, 1000]) - v_g) ** 2
+
+    fig = plot_combined_errs(td_err, mc_err, evaluator, title1 = 'TD', title2= 'Supervised', use_log=True)
+    fig.savefig('figures/td_vs_mc_value_errors.pdf', bbox_inches='tight')
+    email_pdf('figures/td_vs_mc_value_errors.pdf')
     return
 
 
 @app.cell
-def _(evaluator, plot_grid, td_metrics):
-    td_v_last = evaluator.get_value_grid(td_metrics['V_nn'][0,-1])
-    plot_grid(td_v_last, evaluator, "TD Learned Value Function")
-    return (td_v_last,)
+def _(evaluator, mc_metrics, td_metrics):
+    td_v_last = evaluator.get_value_grid(td_metrics['V_nn'][0,500])
+    mc_v_last = evaluator.get_value_grid(mc_metrics['V_nn'][0,500])
 
-
-@app.cell
-def _(evaluator, mc_metrics, plot_grid):
-    mc_v_last = evaluator.get_value_grid(mc_metrics['V_nn'][0,-1])
-    plot_grid(mc_v_last, evaluator, "MC Learned Value Function")
-    return (mc_v_last,)
+    return mc_v_last, td_v_last
 
 
 @app.cell
@@ -439,25 +411,25 @@ def _(evaluator, jnp, plt, td_metrics):
         # Extract the final epoch's top 5 singular vectors
         # Shape: (5, H, W)
         top_vectors = metrics["feature_top_singular_vectors"][-1]
-    
+
         fig, axes = plt.subplots(1, 5, figsize=(20, 4))
         mask = evaluator.occupied_map
-    
+
         for i in range(5):
             ax = axes[i]
             grid = top_vectors[i]
-        
+
             # Mask walls
             ax.imshow(mask, cmap="Greys", alpha=0.3)
             masked_grid = jnp.where(mask == 1, jnp.nan, grid)
-        
+
             # Plot feature activation
             im = ax.imshow(masked_grid, cmap="coolwarm")
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        
+
             ax.set_title(f"Component {i+1}")
             ax.axis("off")
-        
+
         fig.suptitle(f"{title_prefix} Top Feature Spatial Patterns", fontsize=16)
         plt.tight_layout()
         return fig
@@ -465,7 +437,6 @@ def _(evaluator, jnp, plt, td_metrics):
     # Plot both
     fig_td_feats = plot_features(td_metrics, "Temporal Difference (TD)")
     # fig_mc_feats = plot_features(mc_metrics, "Monte Carlo (MC)")
-
     return
 
 

@@ -72,7 +72,6 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "vic_loss_cov": "vic_loss_cov",
         "vic_loss_var": "vic_loss_var",
         "v_loss": "v_loss",
-        "E": "E",
         "NTK_rank": "NTK_rank",
         "Direlechet_energy": "Direlechet_energy",
         "V_start": "V_start",
@@ -80,6 +79,7 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "Mean_A": "Mean_A",
         "entropy": "entropy",
         "V_mean": "V_mean",
+        "SA_min_eigenvalue": "SA_min_eigenvalue"
     }
     data = get_metric("E", 1)
     E_local = get_metric("E_local", 1)
