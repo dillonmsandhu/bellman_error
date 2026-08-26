@@ -37,7 +37,16 @@ def make_train(base_config):
         terminal_policy = jnp.ones( [1,n_actions], dtype=pi.dtype) / n_actions
         pi = jnp.vstack([pi, terminal_policy])
         return pi
-    
+
+    Pi = get_policy_matrix()
+
+    # Get the Markov Chain
+    S = evaluator.obs_stack
+    P = evaluator.P # 3d tensor S x A x S'
+    P_π = jnp.einsum("sa,sam->sm", Pi, P)
+    R_π = jnp.einsum("sa,sam,sam->s", Pi, P, evaluator.R)
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
+    mu = jnp.append(mu, 0.0)
     
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams) # For tuning: overwrite config with hparams
@@ -50,16 +59,6 @@ def make_train(base_config):
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
         runner_state = (train_state, 1)
-
-        Pi = get_policy_matrix()
-    
-        # Get the Markov Chain
-        S = evaluator.obs_stack
-        P = evaluator.P # 3d tensor S x A x S'
-        P_π = jnp.einsum("sa,sam->sm", Pi, P)
-        R_π = jnp.einsum("sa,sam,sam->s", Pi, P, evaluator.R)
-        mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
-        mu = jnp.append(mu, 0.0)
         
         def td_loss(params):
             # each update step looks at all observations and produces v_theta(S)            

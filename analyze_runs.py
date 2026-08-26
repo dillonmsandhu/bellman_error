@@ -46,7 +46,7 @@ def plot_mean_std_curve(data_tensor, steps_per_pi=1, metric_name="Metric", ylabe
     """
     Plots a single run's mean trajectory with a standard deviation band (± 1 std) across seeds.
     """
-    plot_multi_mean_std_curves(
+    return plot_multi_mean_std_curves(
         {label_prefix: data_tensor},
         steps_per_pi=steps_per_pi,
         metric_name=metric_name,
@@ -68,7 +68,7 @@ def plot_multi_mean_std_curves(runs_dict, steps_per_pi=1, metric_name="Metric", 
         log_scale: Whether to use log scale on y-axis.
         tuning_summaries: Optional dict mapping run labels to tuning summary DataFrames.
     """
-    plt.figure(figsize=(10, 6))
+    fig = plt.figure(figsize=(10, 6))
 
     for label, data_tensor in runs_dict.items():
         arr = np.array(data_tensor)
@@ -130,6 +130,7 @@ def plot_multi_mean_std_curves(runs_dict, steps_per_pi=1, metric_name="Metric", 
     plt.legend(loc='lower right')
     plt.tight_layout()
     plt.show()
+    return fig
 
 def plot_generalization_heatmaps(metrics, env_name="Environment", show_start=True):
     """
@@ -237,12 +238,16 @@ def plot_multi_spectra(metrics_dict, env_name="Environment", show_start=True):
     """
     Plots spectra for Jacobian and Features comparing multiple runs (e.g. TD vs MC).
     metrics_dict: Dictionary mapping run labels (str) to metrics dictionaries.
+    Returns:
+        figs: A list of generated matplotlib figure objects [fig_jacobian, fig_features] (skips closed ones).
     """
     colors = plt.cm.tab10.colors
+    figs = []
     
-    # Jacobian
-    plt.figure(figsize=(8, 5))
+    # 1. Jacobian Spectrum
+    fig1, ax1 = plt.subplots(figsize=(8, 5))
     has_jacobian = False
+    
     for i, (label, metrics) in enumerate(metrics_dict.items()):
         if "jacobian_singular_values" in metrics:
             has_jacobian = True
@@ -256,24 +261,25 @@ def plot_multi_spectra(metrics_dict, env_name="Environment", show_start=True):
             if show_start and j_sv.ndim == 2:
                 # lighter version of the color for start
                 light_color = tuple(min(1.0, c + 0.5 * (1.0 - c)) for c in color[:3])
-                plt.plot(np.arange(1, len(start_sv)+1), start_sv, linestyle='--', color=light_color, alpha=0.7, label=f'{label} Start')
-            plt.plot(np.arange(1, len(end_sv)+1), end_sv, color=color, label=f'{label} End')
+                ax1.plot(np.arange(1, len(start_sv)+1), start_sv, linestyle='--', color=light_color, alpha=0.7, label=f'{label} Start')
+            ax1.plot(np.arange(1, len(end_sv)+1), end_sv, color=color, label=f'{label} End')
             
     if has_jacobian:
-        plt.yscale('log')
-        plt.xlabel("Singular Value Index")
-        plt.ylabel("Singular Value Magnitude (Log Scale)")
-        plt.title(f"{env_name} - Jacobian Singular Value Spectrum Comparison")
-        plt.grid(True, which="both", linestyle="--", alpha=0.5)
-        plt.legend(loc='upper right')
-        plt.tight_layout()
-        plt.show()
+        ax1.set_yscale('log')
+        ax1.set_xlabel("Singular Value Index")
+        ax1.set_ylabel("Singular Value Magnitude (Log Scale)")
+        ax1.set_title(f"{env_name} - Jacobian Singular Value Spectrum Comparison")
+        ax1.grid(True, which="both", linestyle="--", alpha=0.5)
+        ax1.legend(loc='upper right')
+        fig1.tight_layout()
+        figs.append(fig1)
     else:
-        plt.close()
+        plt.close(fig1)
 
-    # Features
-    plt.figure(figsize=(8, 5))
+    # 2. Features Spectrum
+    fig2, ax2 = plt.subplots(figsize=(8, 5))
     has_features = False
+    
     for i, (label, metrics) in enumerate(metrics_dict.items()):
         if "feature_singular_values" in metrics:
             has_features = True
@@ -286,20 +292,22 @@ def plot_multi_spectra(metrics_dict, env_name="Environment", show_start=True):
             
             if show_start and f_sv.ndim == 2:
                 light_color = tuple(min(1.0, c + 0.5 * (1.0 - c)) for c in color[:3])
-                plt.plot(np.arange(1, len(start_sv)+1), start_sv, linestyle='--', color=light_color, alpha=0.7, label=f'{label} Start')
-            plt.plot(np.arange(1, len(end_sv)+1), end_sv, color=color, label=f'{label} End')
+                ax2.plot(np.arange(1, len(start_sv)+1), start_sv, linestyle='--', color=light_color, alpha=0.7, label=f'{label} Start')
+            ax2.plot(np.arange(1, len(end_sv)+1), end_sv, color=color, label=f'{label} End')
 
     if has_features:
-        plt.yscale('log')
-        plt.xlabel("Singular Value Index")
-        plt.ylabel("Singular Value Magnitude (Log Scale)")
-        plt.title(f"{env_name} - Feature Singular Value Spectrum Comparison")
-        plt.grid(True, which="both", linestyle="--", alpha=0.5)
-        plt.legend(loc='upper right')
-        plt.tight_layout()
-        plt.show()
+        ax2.set_yscale('log')
+        ax2.set_xlabel("Singular Value Index")
+        ax2.set_ylabel("Singular Value Magnitude (Log Scale)")
+        ax2.set_title(f"{env_name} - Feature Singular Value Spectrum Comparison")
+        ax2.grid(True, which="both", linestyle="--", alpha=0.5)
+        ax2.legend(loc='upper right')
+        fig2.tight_layout()
+        figs.append(fig2)
     else:
-        plt.close()
+        plt.close(fig2)
+
+    return figs if len(figs) > 1 else (figs[0] if figs else None)
 
 def save_3d_value_surface(env_dir, env_name, value_grid, title, algorithm_name):
     """
@@ -332,3 +340,40 @@ def save_3d_value_surface(env_dir, env_name, value_grid, title, algorithm_name):
     save_path = os.path.join(env_dir, f"{env_name}_{algorithm_name}_3d_surface.png")
     plt.savefig(save_path, bbox_inches='tight', dpi=150)
     plt.close()
+
+def plot_jacobian_singular_vectors(metrics, env_name="Environment"):
+    """
+    Plots the top Jacobian singular vectors from the final training epoch 
+    and returns the matplotlib figure object.
+    """
+    j_svs = np.array(metrics["Jacobian_top_singular_vectors"])
+    
+    # If batched over combo/seed, extract the relevant dimension
+    while j_svs.ndim > 4:
+        j_svs = j_svs[0]
+        
+    # Extract the end of training: j_svs[-1]
+    stack = j_svs[-1] if j_svs.ndim == 4 else j_svs
+    n_components = min(5, len(stack))
+    
+    fig, axes = plt.subplots(1, n_components, figsize=(4 * n_components, 4))
+    fig.suptitle(f"{env_name} - Top {n_components} Jacobian Singular Vectors", fontsize=16)
+    
+    if n_components == 1:
+        axes = [axes]
+        
+    for i in range(n_components):
+        grid = stack[i]
+        max_abs = np.max(np.abs(grid))
+        if max_abs == 0:
+            max_abs = 1.0
+        
+        ax = axes[i]
+        im = ax.matshow(grid, cmap='RdBu_r', vmin=-max_abs, vmax=max_abs)
+        ax.set_title(f"Component {i+1}")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        
+    plt.tight_layout()
+    return fig
