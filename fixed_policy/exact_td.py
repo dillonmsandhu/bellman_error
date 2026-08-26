@@ -1,5 +1,4 @@
-# REINFORCE / GRPO-style policy gradient (for intrinsic value)
-# uses a timestep dependent variant, based on batch index i.
+# Exact TD for Evaluation of a pretrained policy
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks

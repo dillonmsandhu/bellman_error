@@ -1,12 +1,12 @@
-# trains a policy network with PPO where the critic is learned to match the true value function at each iteration.
+# oracle PPO.
+# trains a policy network with PPO where the critic is the true value function at each iteration.
+# provides a skyline on PPO with a specific policy net.
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
 import core.utils as utils
-from flax.training.train_state import TrainState
-import core.bellman_error as bellman_error
 
-SAVE_DIR = "ppo/exact_mc"
+SAVE_DIR = "ppo/ground_truth"
 
 
 def network_inference(params, network, S, n_actions):
@@ -17,7 +17,6 @@ def network_inference(params, network, S, n_actions):
     pi = jnp.vstack([pi, terminal_policy])
     v = jnp.append(v, 0.0)
     return pi, v
-
 
 def make_train(base_config):
     base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"]
@@ -50,36 +49,38 @@ def make_train(base_config):
             train_state, idx = runner_state
 
             # 1. Compute Exact Dynamics
-            old_pi_dist, old_v = network.apply(train_state.params, S)
-            old_v_full = jnp.append(old_v, 0.0)  # terminal/absorbing state has 0 value and is never observed.
+            old_pi_dist, _ = network.apply(train_state.params, S)
             old_pi = old_pi_dist.probs
             terminal_policy = jnp.ones([1, n_actions], dtype=old_pi.dtype) / n_actions
             old_pi_full = jnp.vstack([old_pi, terminal_policy])
             old_log_pi = jnp.log(old_pi + 1e-8)
 
             mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
+            has_nans = jnp.isnan(mu).any()
+            # jax.debug.print(
+            #     "Step {idx} | NaN in mu: {has_nans} | Max mu: {max_mu}", 
+            #     idx=idx, 
+            #     has_nans=has_nans,
+            #     max_mu=jnp.max(jnp.nan_to_num(mu))
+            # )
+            # # ----------
             mu = jnp.append(mu, 0.0)
 
-            # True value function as the value net target
-            V_true = evaluator.compute_true_values_raw(old_pi_full)
+            V = evaluator.compute_true_values_raw(old_pi_full)
 
-            # 2. Compute Advantages using ESTIMATED values
+            # 2. Compute Advantages
             R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
-            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
+            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], V)
 
-            A = Q_sa - old_v[:, None]
+            # 4. Compute the Advantage
+            A = Q_sa - V[:-1, None]
             A -= A.mean()
             A /= A.std() + 1e-8
             A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
                 # A shape is (num_states, num_actions)
-                pi, v = network_inference(params, network, S, n_actions)
-
-                # Value Loss: learn the true value function
-                # Note: v includes terminal state (0.0 appended), V_true also includes terminal state
-                value_errors = v - V_true
-                value_loss = 0.5 * jnp.sum(mu * (value_errors**2))
+                pi, _ = network_inference(params, network, S, n_actions)
 
                 # Policy Loss
                 log_pi = jnp.log(pi[:-1, :] + 1e-8)
@@ -88,6 +89,8 @@ def make_train(base_config):
 
                 # PPO clip loss
                 ratio = jnp.exp(log_pi - old_log_pi)
+                surr1 = ratio * A[:, None]
+
                 pi_old = jnp.exp(old_log_pi)
 
                 surr1 = ratio * A
@@ -95,10 +98,8 @@ def make_train(base_config):
 
                 actor_loss = -jnp.sum(mu[:-1, None] * pi_old * jnp.minimum(surr1, surr2))
 
-                total_loss = (
-                    config.get("VF_COEF", 0.5) * value_loss + actor_loss - entropy * config.get("ENT_COEF", 0.01)
-                )
-                return total_loss, (value_loss, actor_loss, entropy)
+                total_loss = actor_loss - entropy * config.get("ENT_COEF", 0.01)
+                return total_loss, (total_loss, actor_loss, entropy)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
@@ -111,31 +112,19 @@ def make_train(base_config):
             train_state, epoch_metrics = jax.lax.scan(epoch_step, train_state, None, config["NUM_EPOCHS"])
 
             # Metrics
-            value_loss, actor_loss, entropy = epoch_metrics
-            metric = bellman_error.value_metrics(evaluator, network, train_state.params, random_policy=True)
-            if config.get("LOG_FEATURE_METRICS", False):
-                from core.feature_metrics import feature_metrics
-
-                metric.update(
-                    feature_metrics(
-                        evaluator,
-                        network,
-                        train_state.params,
-                        random_policy=True,
-                    )
-                )
-            metric.update(
-                {
-                    "total_loss": (value_loss + actor_loss - entropy).mean(),
-                    "value_loss": value_loss.mean(),
-                    "actor_loss": actor_loss.mean(),
-                    "entropy": entropy.mean(),
-                    "V_start": V_true[evaluator.start_idx],
-                }
-            )
-
+            total_loss, actor_loss, entropy = epoch_metrics
+            metric = {
+                "total_loss": total_loss.mean(),
+                "entropy": entropy.mean(),
+                "V_start": V.squeeze()[evaluator.start_idx],
+                "V_mean": V.mean(),
+                "Value_Grid": evaluator.get_value_grid(V),
+            }
+            print(idx)
             runner_state = (train_state, idx + 1)
             return runner_state, metric
+
+        # end update
 
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}

@@ -1,4 +1,4 @@
-# Exact Monte Carlo for Evaluation of a pretrained policy
+# Exact TD Lambda for Evaluation of a pretrained policy
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -8,7 +8,7 @@ import core.bellman_error as bellman_error
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "fixed/mc_exact"
+SAVE_DIR = "fixed/td_lambda_exact"
 
 def make_train(base_config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -37,18 +37,24 @@ def make_train(base_config):
         pi = jnp.vstack([pi, terminal_policy])
         return pi
 
-        Pi = get_policy_matrix()
-        
-        # Get the Markov Chain
-        S = evaluator.obs_stack
-        mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
-        mu = jnp.append(mu, 0.0)
-        V = evaluator.compute_true_values_raw(Pi)
+    Pi = get_policy_matrix()
+
+    # Get the Markov Chain
+    S = evaluator.obs_stack # does not include terminal state.
+    P = evaluator.P # 3d tensor S x A x S' (does include terminal staet)
+    P_π = jnp.einsum("sa,sam->sm", Pi, P)
+    R_π = jnp.einsum("sa,sam,sam->s", Pi, P, evaluator.R)
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
+    mu = jnp.append(mu, 0.0)
     
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams) # For tuning: overwrite config with hparams
         γ = config['GAMMA']
         k = config.get('k', 32)
+        λ = config['VALUE_LAMBDA']
+        k = config.get('k', 32)
+        I = jnp.eye(len(S)+1) # terminal state.
+        L = jnp.linalg.inv(I - γ * λ * P_π)
 
         # Initialize Network
         network, network_params = networks.initialize_network(
@@ -57,13 +63,18 @@ def make_train(base_config):
         train_state = networks.initialize_flax_train_state(config, network, network_params)
         runner_state = (train_state, 1)
         
-        runner_state = (train_state, 1)
+        def T(v):
+            return R_π + γ * P_π @ v
+
+        def t_lambda(v):
+            return v + L @ (T(v) - v)
         
         def td_loss(params):
             # each update step looks at all observations and produces v_theta(S)            
             v = network.apply(params, S) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            loss = 0.5 * jnp.sum(mu * (V - v) ** 2)
+            td_errors = v - jax.lax.stop_gradient(t_lambda(v))
+            loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
             return loss
         
         td_grad = jax.value_and_grad(td_loss)

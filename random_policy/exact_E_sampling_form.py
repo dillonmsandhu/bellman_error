@@ -1,14 +1,16 @@
-# Exact Monte Carlo for Evaluation of a pretrained policy
+# Exact E-loss using the sampling form (Dirichlet / spectral decomposition)
+# for Evaluation of the Random Policy
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
+from core.feature_metrics import feature_metrics
 
 # jax.config.update("jax_enable_x64", True)
 
-SAVE_DIR = "fixed/mc_exact"
+SAVE_DIR = "random/exact_E_sampling_form"
 
 def make_train(base_config):    
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -16,37 +18,36 @@ def make_train(base_config):
     base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"]
     base_config['NUM_ENVS'] = 1
     base_config['NUM_STEPS'] = 1
+    base_config['NUM_EPOCHS'] = 1
     
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
+    n_states = len(evaluator.obs_stack) # also 
     
     # Policy to be evaluated
-    # model saved under ./results/{alg}/{sub_dir}
-    model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']
-    _, out = utils.load_run_data(model_dir, base_config['ENV_NAME'], 'results') 
-    policy_train_state = out['runner_state'][0]
-    policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
-    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)[0]
-    def get_policy_matrix():
-        "produces pi(.|S) where S is all states"
-        pi_dist, _ = policy_train_state.apply_fn(policy_params, evaluator.obs_stack)
-        pi = pi_dist.probs
-        terminal_policy = jnp.ones( [1,n_actions], dtype=pi.dtype) / n_actions
-        pi = jnp.vstack([pi, terminal_policy])
-        return pi
-
-        Pi = get_policy_matrix()
+    def get_random_policy_matrix(obs_stack=None) -> jax.Array:
+        """
+        Produces a uniform random policy matrix PI of shape (num_total_states, n_actions).
         
-        # Get the Markov Chain
-        S = evaluator.obs_stack
-        mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
-        mu = jnp.append(mu, 0.0)
-        V = evaluator.compute_true_values_raw(Pi)
+        Args:
+            n_states: The number of active states in the environment.
+            n_actions: The total number of available actions.
+        """
+        # 1. Create uniform distribution for active states (1/N probability per action)
+        pi_active = jnp.ones((n_states, n_actions)) / n_actions
+        
+        # 2. Create uniform distribution for the single terminal state
+        pi_terminal = jnp.ones((1, n_actions)) / n_actions
+        
+        # 3. Stack them to match your evaluator's S+1 state requirement
+        pi = jnp.vstack([pi_active, pi_terminal])
+        
+        return pi
     
     def train(rng, hparams=None):
-        config = utils.merge_hparams(base_config, hparams) # For tuning: overwrite config with hparams
+        config = utils.merge_hparams(base_config, hparams) # Used for tuning: overwrite any config with the same key in hparams
         γ = config['GAMMA']
         k = config.get('k', 32)
 
@@ -56,14 +57,26 @@ def make_train(base_config):
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
         runner_state = (train_state, 1)
+
+        Pi = get_random_policy_matrix()
         
-        runner_state = (train_state, 1)
-        
+        ALL_STATES = evaluator.obs_stack
+        P = evaluator.P # 3d tensor S x A x S'
+        P_π = jnp.einsum("sa,sam->sm", Pi, P)
+        mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0] # uses the continuing version, where S_T -> S_0
+        mu = jnp.append(mu, 0.0)
+        V = evaluator.compute_true_values_raw(Pi)
+
         def td_loss(params):
             # each update step looks at all observations and produces v_theta(S)            
-            v = network.apply(params, S) # 104 states, no terminal
+            v = network.apply(params, ALL_STATES) # 104 states, no terminal
             v = jnp.append(v, 0.0)
-            loss = 0.5 * jnp.sum(mu * (V - v) ** 2)
+            e = V - v
+            # Sampling form:
+            # E = (1 - γ) * ||e||_D^2 + (γ / 2) * sum_{ij} mu_i * p_{ij} * (e_i - e_j)^2
+            magnitude_term = (1.0 - γ) * (e ** 2)
+            laplacian_term = 0.5 * γ * jnp.sum(P_π * ((e[:, None] - e[None, :]) ** 2), axis=1)
+            loss = jnp.sum(mu * (magnitude_term + laplacian_term))
             return loss
         
         td_grad = jax.value_and_grad(td_loss)
@@ -80,12 +93,11 @@ def make_train(base_config):
             train_state, loss = jax.lax.scan(td_step, train_state, None, config["NUM_EPOCHS"])
             # 2. Get value metrics and logging
             metric = bellman_error.value_metrics_light(
-                evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy
+                evaluator, network, train_state.params, random_policy=True, 
             )
-            if config.get("LOG_FEATURE_METRICS", False):
-                from core.feature_metrics import feature_metrics
+            if config["LOG_FEATURE_METRICS"]:
                 metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy)
+                    evaluator, network, train_state.params, random_policy=True,)
                 )
             metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
             runner_state = (train_state, idx + 1)

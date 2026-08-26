@@ -106,7 +106,7 @@ def make_train(base_config):
             
             # Metrics
             value_loss, actor_loss, entropy, v_pred = epoch_metrics
-            metric = bellman_error.value_metrics(
+            metric = bellman_error.value_metrics_light(
                 evaluator, network, train_state.params, random_policy=False
             )
             if config.get("LOG_FEATURE_METRICS", False):
