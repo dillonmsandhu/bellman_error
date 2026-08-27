@@ -36,15 +36,14 @@ def make_train(base_config):
         terminal_policy = jnp.ones( [1,n_actions], dtype=pi.dtype) / n_actions
         pi = jnp.vstack([pi, terminal_policy])
         return pi
-
-        Pi = get_policy_matrix()
-        
-        # Get the Markov Chain
-        S = evaluator.obs_stack
-        mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
-        mu = jnp.append(mu, 0.0)
-        V = evaluator.compute_true_values_raw(Pi)
+    Pi = get_policy_matrix()
     
+    # Get the Markov Chain
+    S = evaluator.obs_stack
+    mu = evaluator.compute_stationary_distribution_raw(Pi[:-1, :])[0]
+    mu = jnp.append(mu, 0.0)
+    V = evaluator.compute_true_values_raw(Pi)
+
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams) # For tuning: overwrite config with hparams
         γ = config['GAMMA']
@@ -55,8 +54,6 @@ def make_train(base_config):
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
-        runner_state = (train_state, 1)
-        
         runner_state = (train_state, 1)
         
         def td_loss(params):
