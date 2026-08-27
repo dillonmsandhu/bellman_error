@@ -28,13 +28,12 @@ fi
 
 # Configuration
 N_SEEDS=5
-NUM_ENVS=32
-NUM_STEPS=256
-NUM_STEPS=256
-TOTAL_TIMESTEPS=100000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
 SAMPLED_ALGOS=("td" "sampled_E" "monte_carlo")
+
+# Base config overrides for sampled algorithms (NUM_ENVS, NUM_STEPS, TOTAL_TIMESTEPS, MINIBATCH_SIZE, etc.)
+CONFIG='{"NUM_ENVS": 32, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 100000, "MINIBATCH_SIZE": 8192}'
 
 # Common Learning Rate Grid to sweep over for TD, Sampled E, and Monte Carlo
 LR_GRID="0.001 0.0005 0.0001 0.00005 0.00001 0.000005"
@@ -57,7 +56,7 @@ echo "Environments: ${ENVS[*]}"
 echo "Policies: ${POLICIES[*]}"
 echo "Algorithms: ${SAMPLED_ALGOS[*]}"
 echo "LR Grid: $LR_GRID"
-echo "Seeds: $N_SEEDS | NUM_ENVS: $NUM_ENVS | NUM_STEPS: $NUM_STEPS | Timesteps: $TOTAL_TIMESTEPS"
+echo "Config Overrides: $CONFIG"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
@@ -79,10 +78,8 @@ for env in "${ENVS[@]}"; do
             --algos ${SAMPLED_ALGOS[*]} \
             --lr-grid $LR_GRID \
             --n-seeds $N_SEEDS \
-            --num-envs $NUM_ENVS \
-            --num-steps $NUM_STEPS \
-            --total-timesteps $TOTAL_TIMESTEPS \
-            --model-dir '$MODEL_DIR'"
+            --model-dir '$MODEL_DIR' \
+            --config '$CONFIG'"
 
         echo "Command: $CMD"
         eval "$CMD"
