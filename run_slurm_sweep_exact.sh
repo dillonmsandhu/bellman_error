@@ -31,10 +31,13 @@ ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
 EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda")
 
-# PLACEHOLDER for pretrained PPO evaluation policy directory.
-# Replace with your trained policy run directory (e.g. "ground_truth/20260821_164541" or "short_run"),
-# or leave as placeholder to automatically resolve the latest available checkpoint.
-FIXED_MODEL_DIR="PLACEHOLDER_PPO_MODEL_DIR"
+# Per-environment evaluation policy placeholders for fixed policy evaluation.
+# Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").
+# If left as PLACEHOLDER, the pipeline will auto-resolve to the latest available trained checkpoint for that environment.
+declare -A FIXED_MODEL_DIRS=(
+    ["FourRooms-misc"]="PLACEHOLDER_FOURROOMS_MODEL_DIR"
+    ["MountainCar-v0"]="PLACEHOLDER_MOUNTAINCAR_MODEL_DIR"
+)
 
 mkdir -p slurm
 
@@ -48,10 +51,16 @@ echo "Seeds: $N_SEEDS | Timesteps: $TOTAL_TIMESTEPS"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
+    # Get model directory for this specific environment
+    MODEL_DIR="${FIXED_MODEL_DIRS[$env]}"
+
     for policy in "${POLICIES[@]}"; do
         echo ""
         echo "======================================================================"
         echo "Running Sweep: Policy=$policy | Environment=$env"
+        if [ "$policy" = "fixed" ]; then
+            echo "Evaluation Policy Model Dir: $MODEL_DIR"
+        fi
         echo "======================================================================"
 
         CMD="$PYTHON sweep_pipeline.py \
@@ -60,7 +69,7 @@ for env in "${ENVS[@]}"; do
             --algos ${EXACT_ALGOS[*]} \
             --n-seeds $N_SEEDS \
             --total-timesteps $TOTAL_TIMESTEPS \
-            --model-dir '$FIXED_MODEL_DIR'"
+            --model-dir '$MODEL_DIR'"
 
         echo "Command: $CMD"
         eval "$CMD"

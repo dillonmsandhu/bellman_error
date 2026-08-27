@@ -84,8 +84,19 @@ def resolve_model_load_dir(model_load_dir, env_name, base_results_dir="results")
     """Finds a valid existing PPO model load directory containing runner_state for fixed policy evaluation."""
     import cloudpickle
     candidates = []
-    if model_load_dir:
-        candidates.append(model_load_dir)
+
+    # If a dict or JSON string mapping env -> model was passed
+    if isinstance(model_load_dir, dict):
+        model_load_dir = model_load_dir.get(env_name)
+    elif isinstance(model_load_dir, str) and model_load_dir.startswith("{"):
+        try:
+            mapping = json.loads(model_load_dir)
+            model_load_dir = mapping.get(env_name)
+        except Exception:
+            pass
+
+    if model_load_dir and not str(model_load_dir).startswith("PLACEHOLDER"):
+        candidates.append(str(model_load_dir))
         candidates.append(f"ground_truth/{model_load_dir}")
     
     gt_dir = os.path.join(base_results_dir, "ppo", "ground_truth")
@@ -102,7 +113,7 @@ def resolve_model_load_dir(model_load_dir, env_name, base_results_dir="results")
                 with open(pkl_path, "rb") as f:
                     data = cloudpickle.load(f)
                 if isinstance(data, dict) and "runner_state" in data:
-                    print(f"Auto-resolved MODEL_LOAD_DIR to valid checkpoint: '{cand}'")
+                    print(f"[{env_name}] Auto-resolved MODEL_LOAD_DIR to valid checkpoint: '{cand}'")
                     return cand
             except Exception:
                 continue
