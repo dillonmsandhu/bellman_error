@@ -30,13 +30,14 @@ fi
 N_SEEDS=5
 NUM_ENVS=32
 NUM_STEPS=256
+NUM_STEPS=256
 TOTAL_TIMESTEPS=100000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
 SAMPLED_ALGOS=("td" "sampled_E" "monte_carlo")
 
 # Common Learning Rate Grid to sweep over for TD, Sampled E, and Monte Carlo
-LR_GRID="0.005 0.001 0.0005 0.0001 0.00005 0.00001 0.000005"
+LR_GRID="0.001 0.0005 0.0001 0.00005 0.00001 0.000005"
 
 # Per-environment evaluation policy placeholders for fixed policy evaluation.
 # Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").

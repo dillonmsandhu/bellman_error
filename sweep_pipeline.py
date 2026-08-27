@@ -67,14 +67,14 @@ DEFAULT_SAMPLED_ALGOS = ["td", "sampled_E", "monte_carlo"]
 
 def get_default_param_grid(algo_name, lr_list=None):
     """Returns sensible default parameter grids for standard and multi-param algorithms."""
-    standard_lrs = lr_list if lr_list is not None else [5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
+    standard_lrs = lr_list if lr_list is not None else [1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
     
     if "td_lambda" in algo_name:
         # TD(lambda) requires grid over both LR and VALUE_LAMBDA
-        reduced_lrs = [1e-2, 3e-3, 1e-3, 3e-4] if lr_list is None else lr_list
+        reduced_lrs = [1e-2, 5e-3, 1e-3, 5e-4, 1e-4] if lr_list is None else lr_list
         return {
             "LR": reduced_lrs,
-            "VALUE_LAMBDA": [0.0, 0.4, 0.8, 0.95, 1.0],
+            "VALUE_LAMBDA": [0.05, 0.4, 0.8, 0.95, 1.0],
         }
     else:
         return {"LR": standard_lrs}
