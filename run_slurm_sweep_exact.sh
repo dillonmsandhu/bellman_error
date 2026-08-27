@@ -25,7 +25,7 @@ else
 fi
 
 # Configuration
-N_SEEDS=5
+N_SEEDS=3
 TOTAL_TIMESTEPS=2000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
