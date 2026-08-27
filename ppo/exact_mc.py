@@ -8,7 +8,6 @@ import core.bellman_error as bellman_error
 
 SAVE_DIR = "ppo/exact_mc"
 
-
 def network_inference(params, network, S, n_actions):
     "Maps from network to policy and value vectors in R^S"
     pi_dist, v = network.apply(params, S)

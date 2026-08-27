@@ -30,7 +30,7 @@ def plot_sweep_curves(
     
     for idx, (label, curve) in enumerate(sorted_items):
         y = np.asarray(curve)
-        x = [i * steps_per_pi for i in range(len(y))]
+        x = list(range(len(y)))
         is_best = (label == best_label) or (idx == 0)
         
         final_val = float(y[-1])
@@ -58,7 +58,8 @@ def plot_sweep_curves(
 
     if log_scale:
         ax.set_yscale("log")
-    ax.set_xlabel("Environment Steps", fontsize=12)
+    xlabel_str = f"Update Steps ({steps_per_pi} env steps/update)" if steps_per_pi > 1 else "Update Steps"
+    ax.set_xlabel(xlabel_str, fontsize=12)
     ax.set_ylabel(metric_key, fontsize=12)
     plot_title = title or f"Hyperparameter Sweep: {metric_key} ({env_name})"
     ax.set_title(plot_title, fontsize=14, fontweight="bold")
@@ -93,7 +94,7 @@ def plot_best_seeds(
         return None
     
     n_seeds, time_steps = arr.shape
-    x = [i * steps_per_pi for i in range(time_steps)]
+    x = list(range(time_steps))
     
     fig, ax = plt.subplots(figsize=(10, 6))
     hparams_str = ", ".join([f"{k}={v}" for k, v in best_hparams.items()])
@@ -120,7 +121,8 @@ def plot_best_seeds(
     
     if log_scale:
         ax.set_yscale("log")
-    ax.set_xlabel("Environment Steps", fontsize=12)
+    xlabel_str = f"Update Steps ({steps_per_pi} env steps/update)" if steps_per_pi > 1 else "Update Steps"
+    ax.set_xlabel(xlabel_str, fontsize=12)
     ax.set_ylabel(metric_key, fontsize=12)
     ax.set_title(f"Best Config Seeds ({hparams_str}) - {env_name}", fontsize=13, fontweight="bold")
     ax.grid(True, which="both", linestyle="--", alpha=0.5)
@@ -153,7 +155,8 @@ def plot_seeds_grid(
     cols = min(4, n_combos)
     rows = (n_combos + cols - 1) // cols
     fig, axes = plt.subplots(rows, cols, figsize=(4.5 * cols, 3.5 * rows), squeeze=False)
-    x = [i * steps_per_pi for i in range(time_steps)]
+    x = list(range(time_steps))
+    xlabel_str = f"Update Steps ({steps_per_pi} env steps/update)" if steps_per_pi > 1 else "Update Steps"
     
     for idx, combo in enumerate(combinations):
         r, c = idx // cols, idx % cols
@@ -172,7 +175,7 @@ def plot_seeds_grid(
         ax.set_title(f"#{idx}: {label_str}\n(final={mean_y[-1]:.2e})", fontsize=9)
         ax.grid(True, which="both", linestyle="--", alpha=0.4)
         if r == rows - 1:
-            ax.set_xlabel("Steps", fontsize=9)
+            ax.set_xlabel(xlabel_str, fontsize=9)
         if c == 0:
             ax.set_ylabel(metric_key, fontsize=9)
             

@@ -40,6 +40,7 @@ ALGO_REGISTRY = {
         "td": "fixed_policy.td",
         "mc": "fixed_policy.mc",
         "monte_carlo": "fixed_policy.mc",
+        "sampled_E": "fixed_policy.sampled_E",
     },
     "random": {
         "exact_td": "random_policy.exact_td",
