@@ -36,7 +36,7 @@ SAMPLED_ALGOS=("td" "sampled_E" "monte_carlo")
 CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 512, "NUM_EPOCHS": 4}'
 
 # Common Learning Rate Grid to sweep over for TD, Sampled E, and Monte Carlo
-LR_GRID="0.001 0.0005 0.0001 0.00005 0.00001 0.000005"
+LR_GRID="0.01 0.005 0.001 0.0005 0.0001 0.00005 0.00001 0.000005 0.000001"
 
 # Per-environment evaluation policy placeholders for fixed policy evaluation.
 # Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").

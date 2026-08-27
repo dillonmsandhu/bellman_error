@@ -71,10 +71,10 @@ def get_default_param_grid(algo_name, lr_list=None):
     
     if "td_lambda" in algo_name:
         # TD(lambda) requires grid over both LR and VALUE_LAMBDA
-        reduced_lrs = [1e-2, 5e-3, 1e-3, 5e-4, 1e-4] if lr_list is None else lr_list
+        reduced_lrs = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
         return {
             "LR": reduced_lrs,
-            "VALUE_LAMBDA": [0.05, 0.4, 0.8, 0.95, 1.0],
+            "VALUE_LAMBDA": [0.1, 0.5, 0.9,],
         }
     else:
         return {"LR": standard_lrs}
