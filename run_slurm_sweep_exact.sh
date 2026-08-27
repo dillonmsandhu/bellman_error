@@ -69,7 +69,8 @@ for env in "${ENVS[@]}"; do
             --algos ${EXACT_ALGOS[*]} \
             --n-seeds $N_SEEDS \
             --total-timesteps $TOTAL_TIMESTEPS \
-            --model-dir '$MODEL_DIR'"
+            --model-dir '$MODEL_DIR' \
+            --use-geom-mean"
 
         echo "Command: $CMD"
         eval "$CMD"
