@@ -28,7 +28,9 @@ fi
 
 # Configuration
 N_SEEDS=5
-TOTAL_TIMESTEPS=2000
+NUM_ENVS=32
+NUM_STEPS=256
+TOTAL_TIMESTEPS=100000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
 SAMPLED_ALGOS=("td" "sampled_E" "monte_carlo")
@@ -54,7 +56,7 @@ echo "Environments: ${ENVS[*]}"
 echo "Policies: ${POLICIES[*]}"
 echo "Algorithms: ${SAMPLED_ALGOS[*]}"
 echo "LR Grid: $LR_GRID"
-echo "Seeds: $N_SEEDS | Timesteps: $TOTAL_TIMESTEPS"
+echo "Seeds: $N_SEEDS | NUM_ENVS: $NUM_ENVS | NUM_STEPS: $NUM_STEPS | Timesteps: $TOTAL_TIMESTEPS"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
@@ -76,6 +78,8 @@ for env in "${ENVS[@]}"; do
             --algos ${SAMPLED_ALGOS[*]} \
             --lr-grid $LR_GRID \
             --n-seeds $N_SEEDS \
+            --num-envs $NUM_ENVS \
+            --num-steps $NUM_STEPS \
             --total-timesteps $TOTAL_TIMESTEPS \
             --model-dir '$MODEL_DIR'"
 

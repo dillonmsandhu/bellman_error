@@ -127,6 +127,8 @@ def run_sweep_pipeline(
     algos=None,
     n_seeds=3,
     total_timesteps=1000,
+    num_envs=None,
+    num_steps=None,
     model_load_dir="short_run",
     metric_key="nn_weighted_VE",
     lr_grid=None,
@@ -161,6 +163,8 @@ def run_sweep_pipeline(
     print("\n" + "=" * 70)
     print(f"STARTING SWEEP PIPELINE: {policy_type.upper()} POLICY")
     print(f"Environment: {env_name} | Timesteps: {total_timesteps} | Seeds: {n_seeds}")
+    if num_envs is not None:
+        print(f"NUM_ENVS: {num_envs} | NUM_STEPS: {num_steps}")
     print(f"Algorithms to sweep: {algos}")
     print(f"Output Root Directory: {sweep_root_dir}")
     print("=" * 70 + "\n")
@@ -171,6 +175,10 @@ def run_sweep_pipeline(
     base_config["N_SEEDS"] = n_seeds
     base_config["TOTAL_TIMESTEPS"] = total_timesteps
     base_config["MODEL_LOAD_DIR"] = model_load_dir
+    if num_envs is not None:
+        base_config["NUM_ENVS"] = num_envs
+    if num_steps is not None:
+        base_config["NUM_STEPS"] = num_steps
     if config_overrides:
         base_config.update(config_overrides)
 
@@ -289,6 +297,10 @@ def parse_args():
                         help="Number of random seeds to evaluate per configuration")
     parser.add_argument("--total-timesteps", type=int, default=1000,
                         help="Total training/evaluation updates (timesteps)")
+    parser.add_argument("--num-envs", type=int, default=None,
+                        help="Number of parallel environments (NUM_ENVS)")
+    parser.add_argument("--num-steps", type=int, default=None,
+                        help="Number of rollout steps per env (NUM_STEPS)")
     parser.add_argument("--model-dir", type=str, default="short_run",
                         help="Model load directory for fixed/ppo evaluation policy")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE",
@@ -297,6 +309,8 @@ def parse_args():
                         help="Custom learning rate grid (e.g. --lr-grid 0.01 0.001 0.0001)")
     parser.add_argument("--custom-grids-json", type=str, default=None,
                         help="Path to JSON file specifying custom grids per algorithm")
+    parser.add_argument("--config", type=str, default=None,
+                        help="JSON string or path to JSON file with additional config overrides")
     parser.add_argument("--use-geom-mean", action="store_true",
                         help="Use geometric mean for error bands in comparison plot")
     return parser.parse_args()
@@ -310,15 +324,26 @@ if __name__ == "__main__":
         with open(args.custom_grids_json, "r") as f:
             custom_grids = json.load(f)
 
+    config_overrides = None
+    if args.config:
+        if os.path.exists(args.config):
+            with open(args.config, "r") as f:
+                config_overrides = json.load(f)
+        else:
+            config_overrides = json.loads(args.config)
+
     run_sweep_pipeline(
         policy_type=args.policy,
         env_name=args.env_name,
         algos=args.algos,
         n_seeds=args.n_seeds,
         total_timesteps=args.total_timesteps,
+        num_envs=args.num_envs,
+        num_steps=args.num_steps,
         model_load_dir=args.model_dir,
         metric_key=args.metric,
         lr_grid=args.lr_grid,
         custom_grids=custom_grids,
+        config_overrides=config_overrides,
         use_geom_mean=args.use_geom_mean,
     )
