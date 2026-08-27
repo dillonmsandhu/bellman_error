@@ -33,7 +33,7 @@ POLICIES=("random" "fixed")
 SAMPLED_ALGOS=("td" "sampled_E" "monte_carlo")
 
 # Base config overrides for sampled algorithms (NUM_ENVS, NUM_STEPS, TOTAL_TIMESTEPS, MINIBATCH_SIZE, etc.)
-CONFIG='{"NUM_ENVS": 32, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 100000, "MINIBATCH_SIZE": 8192}'
+CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 512, "NUM_EPOCHS": 4}'
 
 # Common Learning Rate Grid to sweep over for TD, Sampled E, and Monte Carlo
 LR_GRID="0.001 0.0005 0.0001 0.00005 0.00001 0.000005"
