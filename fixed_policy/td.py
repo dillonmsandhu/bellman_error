@@ -21,11 +21,11 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     info: jnp.ndarray
 
-def make_train(config):
+def make_train(base_config):
     # Load the fixed policy we will evaluate:
     # model saved under ./results/{alg}/{sub_dir}
-    model_dir = 'ppo/' + config['MODEL_LOAD_DIR']
-    _, out = utils.load_run_data(model_dir, config['ENV_NAME'], 'results') 
+    model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']
+    _, out = utils.load_run_data(model_dir, base_config['ENV_NAME'], 'results') 
     policy_train_state = out['runner_state'][0]
     
     # The saved train state is batched over N_SEEDS (which is 1 by default).
@@ -37,16 +37,17 @@ def make_train(config):
         pi, _ = policy_train_state.apply_fn(policy_params, obs)
         return pi
 
-    batch_size = config["NUM_STEPS"] * config["NUM_ENVS"]
-    config["NUM_MINIBATCHES"] = batch_size // config["MINIBATCH_SIZE"]
-    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // batch_size
+    batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
+    base_config["NUM_MINIBATCHES"] = batch_size // base_config["MINIBATCH_SIZE"]
+    base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"] // batch_size
     
-    env, env_params = helpers.make_env(config)
-    evaluator = helpers.initialize_evaluator(config, env, env_params)
+    env, env_params = helpers.make_env(base_config)
+    evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
 
-    def train(rng):
+    def train(rng, hparams=None):
+        config = utils.merge_hparams(base_config, hparams)
         k = config.get('k', 32)
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']

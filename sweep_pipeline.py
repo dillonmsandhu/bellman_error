@@ -37,6 +37,9 @@ ALGO_REGISTRY = {
         "exact_E": "fixed_policy.exact_E_gd",
         "exact_td_lambda": "fixed_policy.exact_td_lambda",
         "exact_td_symmetric": "fixed_policy.exact_td_symmetric",
+        "td": "fixed_policy.td",
+        "mc": "fixed_policy.mc",
+        "monte_carlo": "fixed_policy.mc",
     },
     "random": {
         "exact_td": "random_policy.exact_td",
@@ -45,6 +48,10 @@ ALGO_REGISTRY = {
         "exact_E": "random_policy.exact_E_gd",
         "exact_td_lambda": "random_policy.exact_td_lambda",
         "exact_td_symmetric": "random_policy.exact_td_symmetric",
+        "td": "random_policy.td",
+        "mc": "random_policy.mc",
+        "monte_carlo": "random_policy.mc",
+        "sampled_E": "random_policy.sampled_E",
     },
     "ppo": {
         "exact_td": "ppo.exact_td",
@@ -55,6 +62,7 @@ ALGO_REGISTRY = {
 }
 
 DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda"]
+DEFAULT_SAMPLED_ALGOS = ["td", "sampled_E", "monte_carlo"]
 
 
 def get_default_param_grid(algo_name, lr_list=None):
@@ -132,8 +140,12 @@ def run_sweep_pipeline(
     sweep_root_dir = os.path.join(base_save_dir, policy_type, "sweeps", sweep_batch_name)
     os.makedirs(sweep_root_dir, exist_ok=True)
 
-    if algos is None:
+    if algos is None or algos == ["exact"]:
         algos = [a for a in DEFAULT_ALGOS if a in ALGO_REGISTRY.get(policy_type, {})]
+    elif algos == ["sampled"]:
+        algos = [a for a in DEFAULT_SAMPLED_ALGOS if a in ALGO_REGISTRY.get(policy_type, {})]
+    elif algos == ["all"]:
+        algos = list(ALGO_REGISTRY.get(policy_type, {}).keys())
 
     print("\n" + "=" * 70)
     print(f"STARTING SWEEP PIPELINE: {policy_type.upper()} POLICY")

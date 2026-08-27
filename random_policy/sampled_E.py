@@ -6,6 +6,7 @@ import core.networks as networks
 import distrax
 import core.bellman_error as bellman_error
 from core.feature_metrics import feature_metrics
+import core.utils as utils
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -23,23 +24,24 @@ class Transition(NamedTuple):
     next_target: jnp.ndarray
     info: jnp.ndarray
 
-def make_train(config):
+def make_train(base_config):
     # Ensure GAE_LAMBDA defaults to 1.0 for Monte Carlo returns unless specified
-    if "GAE_LAMBDA" not in config or config["GAE_LAMBDA"] == 0.0:
-        config["GAE_LAMBDA"] = config.get("VALUE_LAMBDA", 1.0)
-        if config["GAE_LAMBDA"] == 0.0:
-            config["GAE_LAMBDA"] = 1.0
+    if "GAE_LAMBDA" not in base_config or base_config["GAE_LAMBDA"] == 0.0:
+        base_config["GAE_LAMBDA"] = base_config.get("VALUE_LAMBDA", 1.0)
+        if base_config["GAE_LAMBDA"] == 0.0:
+            base_config["GAE_LAMBDA"] = 1.0
 
-    batch_size = config["NUM_STEPS"] * config["NUM_ENVS"]
-    config["NUM_MINIBATCHES"] = batch_size // config["MINIBATCH_SIZE"]
-    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // batch_size
+    batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
+    base_config["NUM_MINIBATCHES"] = batch_size // base_config["MINIBATCH_SIZE"]
+    base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"] // batch_size
     
-    env, env_params = helpers.make_env(config)
-    evaluator = helpers.initialize_evaluator(config, env, env_params)
+    env, env_params = helpers.make_env(base_config)
+    evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
 
-    def train(rng):
+    def train(rng, hparams=None):
+        config = utils.merge_hparams(base_config, hparams)
         k = config.get('k', 32)
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
