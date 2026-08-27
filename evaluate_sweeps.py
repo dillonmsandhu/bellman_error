@@ -17,7 +17,15 @@ from analyze_sweeps import (
 )
 
 
-def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name="FourRooms-misc", use_geom_mean=False):
+def plot_all_latest_sweeps(
+    metric_key="nn_weighted_VE",
+    policy="fixed",
+    env_name="FourRooms-misc",
+    use_geom_mean=False,
+    rank_by="auc",
+    rank_order="lower",
+    window_size=20,
+):
     """
     Finds the latest run for each algorithm, plots individual seed trajectories for the best config,
     and produces a cross-algorithm comparison plot.
@@ -43,7 +51,11 @@ def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name
         # Plot seed trajectories for the winning configuration
         try:
             seed_trajectories, best_label, best_idx, best_hparams = extract_best_configuration(
-                sweep_data, metric_key=metric_key
+                sweep_data,
+                metric_key=metric_key,
+                rank_by=rank_by,
+                rank_order=rank_order,
+                window_size=window_size,
             )
             cfg = sweep_data.get("config", {})
             steps_per_pi = cfg.get("NUM_ENVS", 1) * cfg.get("NUM_STEPS", 1)
@@ -54,7 +66,7 @@ def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name
             for seed_idx in range(n_seeds):
                 ax.plot(
                     x, seed_trajectories[seed_idx],
-                    label=f"Seed {seed_idx} (final={seed_trajectories[seed_idx, -1]:.2e})",
+                    label=f"Seed {seed_idx} (final={seed_trajectories[seed_idx, -1]:.2e}, auc={seed_trajectories[seed_idx].mean():.2e})",
                     linewidth=1.5,
                     alpha=0.75
                 )
@@ -86,7 +98,13 @@ def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name
     print("\n" + "=" * 70)
     print("CROSS-ALGORITHM COMPARISON")
     print("=" * 70)
-    summary_df = summarize_algorithm_comparison(valid_runs, metric_key=metric_key)
+    summary_df = summarize_algorithm_comparison(
+        valid_runs,
+        metric_key=metric_key,
+        rank_by=rank_by,
+        rank_order=rank_order,
+        window_size=window_size,
+    )
     print(summary_df.to_string(index=False))
 
     save_dir = f"results/{policy}/sweeps/comparison"
@@ -100,6 +118,9 @@ def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name
         env_name=env_name,
         log_scale=True,
         use_geom_mean=use_geom_mean,
+        rank_by=rank_by,
+        rank_order=rank_order,
+        window_size=window_size,
         save_path=plot_path,
         title=f"{policy.capitalize()} Policy Evaluation ({env_name}) - Algorithm Comparison",
     )
@@ -113,6 +134,22 @@ if __name__ == "__main__":
     parser.add_argument("--env-name", type=str, default="FourRooms-misc", help="Environment name")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE", help="Metric to plot")
     parser.add_argument("--use-geom-mean", action="store_true", help="Use geometric mean for error bands")
+    parser.add_argument("--rank-by", type=str, default="auc", choices=["auc", "final_window", "final_step", "min", "max"],
+                        help="Criterion to rank and select best config (default: auc)")
+    parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"],
+                        help="Optimization goal: lower (default) or higher")
+    parser.add_argument("--higher-is-better", action="store_true", help="Shortcut for --rank-order higher")
+    parser.add_argument("--window-size", type=int, default=20, help="Window size (in steps) for final_window ranking (default: 20)")
     args = parser.parse_args()
 
-    plot_all_latest_sweeps(metric_key=args.metric, policy=args.policy, env_name=args.env_name, use_geom_mean=args.use_geom_mean)
+    rank_order = "higher" if args.higher_is_better else args.rank_order
+
+    plot_all_latest_sweeps(
+        metric_key=args.metric,
+        policy=args.policy,
+        env_name=args.env_name,
+        use_geom_mean=args.use_geom_mean,
+        rank_by=args.rank_by,
+        rank_order=rank_order,
+        window_size=args.window_size,
+    )

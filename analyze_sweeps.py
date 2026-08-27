@@ -132,11 +132,26 @@ def load_sweep_data(path_or_base_dir, env_name=None):
     }
 
 
-def extract_best_configuration(sweep_data, metric_key="nn_weighted_VE"):
+def extract_best_configuration(
+    sweep_data,
+    metric_key="nn_weighted_VE",
+    rank_by="auc",
+    rank_order="lower",
+    config_idx=None,
+    window_size=20,
+):
     """
     Extracts the 2D seed trajectories (n_seeds, time_steps) and hyperparameter label
     for the best performing configuration in a sweep.
     
+    Args:
+        sweep_data: Dict loaded via load_sweep_data
+        metric_key: Name of metric (e.g. "nn_weighted_VE")
+        rank_by: Ranking criterion ("auc", "final_window", "final_step", "min", "max")
+        rank_order: "lower" (lower is better) or "higher" (higher is better)
+        config_idx: Optional explicit integer config index to force-select
+        window_size: Window size in steps for "final_window"
+        
     Returns:
         (seed_trajectories, best_label, best_idx, best_hparams_dict)
     """
@@ -154,23 +169,52 @@ def extract_best_configuration(sweep_data, metric_key="nn_weighted_VE"):
         return arr, "Default", 0, {}
     elif arr.ndim == 3:
         # (n_combos, n_seeds, time_steps)
-        if best_config_meta is not None and "best_config_idx" in best_config_meta:
-            best_idx = int(best_config_meta["best_config_idx"])
+        n_combos, n_seeds, time_steps = arr.shape
+
+        if config_idx is not None:
+            best_idx = int(config_idx)
+        else:
+            rank_by_lower = rank_by.lower()
+            if rank_by_lower in ["auc", "mean", "time_mean", "auc_mean"]:
+                scores = arr.mean(axis=(1, 2))
+            elif rank_by_lower in ["final_window", "window", "final_window_mean"]:
+                win = max(1, min(time_steps, window_size))
+                scores = arr[:, :, -win:].mean(axis=(1, 2))
+            elif rank_by_lower in ["final", "final_step", "final_mean", "last"]:
+                scores = arr[:, :, -1].mean(axis=1)
+            elif rank_by_lower in ["min", "minimum"]:
+                scores = arr.min(axis=-1).mean(axis=1)
+            elif rank_by_lower in ["max", "maximum"]:
+                scores = arr.max(axis=-1).mean(axis=1)
+            else:
+                scores = arr.mean(axis=(1, 2))
+
+            is_lower = rank_order.lower() in ["lower", "min", "asc", "ascending"]
+            best_idx = int(np.argmin(scores)) if is_lower else int(np.argmax(scores))
+
+        # Identify hyperparameter columns
+        best_hparams = {}
+        if summary_df is not None and not summary_df.empty:
+            match = summary_df[summary_df["config_idx"] == best_idx]
+            if not match.empty:
+                row = match.iloc[0]
+                exclude = [
+                    "rank", "config_idx",
+                    f"auc_{metric_key}", f"auc_{metric_key}_std",
+                    f"final_window_{metric_key}", f"final_window_{metric_key}_std",
+                    f"final_{metric_key}", f"final_{metric_key}_mean",
+                    f"final_{metric_key}_std", f"mean_{metric_key}",
+                    f"min_{metric_key}", f"max_{metric_key}",
+                ]
+                hparam_cols = [c for c in summary_df.columns if c not in exclude]
+                best_hparams = {c: row[c] for c in hparam_cols}
+
+        if not best_hparams and best_config_meta is not None and best_config_meta.get("best_config_idx") == best_idx:
             best_hparams = best_config_meta.get("best_hyperparameters", {})
-            best_label = ", ".join([f"{k}={v}" for k, v in best_hparams.items()])
-        elif summary_df is not None and not summary_df.empty:
-            best_row = summary_df.iloc[0]
-            best_idx = int(best_row["config_idx"])
-            # Identify hyperparameter columns (exclude stats)
-            exclude = ["rank", "config_idx", f"final_{metric_key}", f"final_{metric_key}_mean",
-                       f"final_{metric_key}_std", f"mean_{metric_key}", f"min_{metric_key}"]
-            hparam_cols = [c for c in summary_df.columns if c not in exclude]
-            best_hparams = {c: best_row[c] for c in hparam_cols}
+
+        if best_hparams:
             best_label = ", ".join([f"{k}={v}" for k, v in best_hparams.items()])
         else:
-            final_means = arr[:, :, -1].mean(axis=1)
-            best_idx = int(np.argmin(final_means))
-            best_hparams = {}
             best_label = f"Config #{best_idx}"
 
         seed_trajectories = arr[best_idx]
@@ -187,6 +231,10 @@ def plot_algorithm_comparison(
     env_name="FourRooms-misc",
     log_scale=True,
     use_geom_mean=False,
+    rank_by="auc",
+    rank_order="lower",
+    window_size=20,
+    config_idx=None,
     x_axis="update_steps",
     steps_per_pi=None,
     save_path=None,
@@ -204,6 +252,10 @@ def plot_algorithm_comparison(
         env_name: Name of environment for title
         log_scale: Whether to plot on log scale
         use_geom_mean: If True, uses geometric mean and log-std band; else standard mean ± std.
+        rank_by: Metric ranking criterion ("auc", "final_window", "final_step", "min", "max")
+        rank_order: "lower" (default) or "higher"
+        window_size: Window size in steps for final_window ranking (default: 20)
+        config_idx: Optional explicit integer config index to force-select
         x_axis: "update_steps" (default) or "env_steps".
         steps_per_pi: Optional override for environment steps per update.
         save_path: Optional file path to save plot PNG.
@@ -227,7 +279,12 @@ def plot_algorithm_comparison(
                 continue
 
             seed_trajectories, best_label, best_idx, best_hparams = extract_best_configuration(
-                sweep_data, metric_key=metric_key
+                sweep_data,
+                metric_key=metric_key,
+                rank_by=rank_by,
+                rank_order=rank_order,
+                config_idx=config_idx,
+                window_size=window_size,
             )
         except Exception as e:
             print(f"Could not load/extract best configuration for {algo_name}: {e}")
@@ -307,7 +364,14 @@ def plot_algorithm_comparison(
     return fig
 
 
-def summarize_algorithm_comparison(algorithms_dict, metric_key="nn_weighted_VE", save_path=None):
+def summarize_algorithm_comparison(
+    algorithms_dict,
+    metric_key="nn_weighted_VE",
+    rank_by="auc",
+    rank_order="lower",
+    window_size=20,
+    save_path=None,
+):
     """
     Creates a unified comparison table of the best hyperparameter settings and performance
     across multiple algorithms.
@@ -324,18 +388,31 @@ def summarize_algorithm_comparison(algorithms_dict, metric_key="nn_weighted_VE",
                 sweep_data = source
 
             seed_trajectories, best_label, best_idx, best_hparams = extract_best_configuration(
-                sweep_data, metric_key=metric_key
+                sweep_data,
+                metric_key=metric_key,
+                rank_by=rank_by,
+                rank_order=rank_order,
+                window_size=window_size,
             )
+            n_seeds, time_steps = seed_trajectories.shape
+            win = max(1, min(time_steps, window_size))
+
+            auc_val = float(seed_trajectories.mean())
+            window_val = float(seed_trajectories[:, -win:].mean())
             final_vals = seed_trajectories[:, -1]
             min_vals = seed_trajectories.min(axis=-1)
+            max_vals = seed_trajectories.max(axis=-1)
 
             rows.append({
                 "Algorithm": algo_name,
                 "Best Hyperparameters": best_label,
+                f"AUC {metric_key}": auc_val,
+                f"Final Window ({win} steps)": window_val,
                 f"Final {metric_key} (Mean)": float(final_vals.mean()),
                 f"Final {metric_key} (Std)": float(final_vals.std()) if len(final_vals) > 1 else 0.0,
                 f"Min {metric_key}": float(min_vals.mean()),
-                "Seeds": int(seed_trajectories.shape[0]),
+                f"Max {metric_key}": float(max_vals.mean()),
+                "Seeds": int(n_seeds),
                 "Run Dir": sweep_data.get("run_dir", "N/A"),
             })
         except Exception as e:
@@ -343,7 +420,23 @@ def summarize_algorithm_comparison(algorithms_dict, metric_key="nn_weighted_VE",
 
     summary_df = pd.DataFrame(rows)
     if not summary_df.empty:
-        summary_df = summary_df.sort_values(by=f"Final {metric_key} (Mean)", ascending=True).reset_index(drop=True)
+        rank_by_lower = rank_by.lower()
+        if rank_by_lower in ["auc", "mean", "time_mean", "auc_mean"]:
+            sort_col = f"AUC {metric_key}"
+        elif rank_by_lower in ["final_window", "window", "final_window_mean"]:
+            matching_cols = [c for c in summary_df.columns if c.startswith("Final Window")]
+            sort_col = matching_cols[0] if matching_cols else f"Final {metric_key} (Mean)"
+        elif rank_by_lower in ["final", "final_step", "final_mean"]:
+            sort_col = f"Final {metric_key} (Mean)"
+        elif rank_by_lower in ["min", "minimum"]:
+            sort_col = f"Min {metric_key}"
+        elif rank_by_lower in ["max", "maximum"]:
+            sort_col = f"Max {metric_key}"
+        else:
+            sort_col = f"AUC {metric_key}" if f"AUC {metric_key}" in summary_df.columns else f"Final {metric_key} (Mean)"
+
+        is_ascending = rank_order.lower() in ["lower", "min", "asc", "ascending"]
+        summary_df = summary_df.sort_values(by=sort_col, ascending=is_ascending).reset_index(drop=True)
         summary_df.insert(0, "Rank", summary_df.index + 1)
 
     if save_path:
@@ -364,7 +457,15 @@ if __name__ == "__main__":
     parser.add_argument("--env-name", type=str, default="FourRooms-misc", help="Environment name")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE", help="Primary metric key")
     parser.add_argument("--use-geom-mean", action="store_true", help="Plot geometric mean instead of arithmetic mean")
+    parser.add_argument("--rank-by", type=str, default="auc", choices=["auc", "final_window", "final_step", "min", "max"],
+                        help="Criterion to rank and select best config (default: auc)")
+    parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"],
+                        help="Optimization goal: lower (default) or higher")
+    parser.add_argument("--higher-is-better", action="store_true", help="Shortcut for --rank-order higher")
+    parser.add_argument("--window-size", type=int, default=20, help="Window size (in steps) for final_window ranking (default: 20)")
     args = parser.parse_args()
+
+    rank_order = "higher" if args.higher_is_better else args.rank_order
 
     default_algos = {
         "fixed": {
@@ -390,7 +491,13 @@ if __name__ == "__main__":
     target_dict = default_algos.get(args.policy, default_algos["fixed"])
     print(f"\nAnalyzing latest sweeps for policy='{args.policy}', env='{args.env_name}'...")
     
-    summary = summarize_algorithm_comparison(target_dict, metric_key=args.metric)
+    summary = summarize_algorithm_comparison(
+        target_dict,
+        metric_key=args.metric,
+        rank_by=args.rank_by,
+        rank_order=rank_order,
+        window_size=args.window_size,
+    )
     print("\n" + "=" * 70)
     print("ALGORITHM COMPARISON SUMMARY:")
     print("=" * 70)
@@ -408,5 +515,8 @@ if __name__ == "__main__":
         metric_key=args.metric,
         env_name=args.env_name,
         use_geom_mean=args.use_geom_mean,
+        rank_by=args.rank_by,
+        rank_order=rank_order,
+        window_size=args.window_size,
         save_path=plot_path,
     )

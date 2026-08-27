@@ -132,6 +132,9 @@ def run_sweep_pipeline(
     num_steps=None,
     model_load_dir="short_run",
     metric_key="nn_weighted_VE",
+    rank_by="auc",
+    rank_order="lower",
+    window_size=20,
     lr_grid=None,
     custom_grids=None,
     config_overrides=None,
@@ -167,6 +170,7 @@ def run_sweep_pipeline(
     if num_envs is not None:
         print(f"NUM_ENVS: {num_envs} | NUM_STEPS: {num_steps}")
     print(f"Algorithms to sweep: {algos}")
+    print(f"Ranking: {rank_by} ({'lower' if rank_order in ['lower', 'min', 'asc', 'ascending'] else 'higher'} is better)")
     print(f"Output Root Directory: {sweep_root_dir}")
     print("=" * 70 + "\n")
 
@@ -192,6 +196,9 @@ def run_sweep_pipeline(
         "total_timesteps": total_timesteps,
         "model_load_dir": model_load_dir,
         "metric_key": metric_key,
+        "rank_by": rank_by,
+        "rank_order": rank_order,
+        "window_size": window_size,
         "timestamp": timestamp,
         "base_config": base_config,
     }
@@ -231,6 +238,9 @@ def run_sweep_pipeline(
                 base_config=base_config.copy(),
                 param_grid=param_grid,
                 metric_key=metric_key,
+                rank_by=rank_by,
+                rank_order=rank_order,
+                window_size=window_size,
                 save_dir=algo_save_dir,
                 log_scale=log_scale,
                 save_metrics=True,
@@ -253,7 +263,10 @@ def run_sweep_pipeline(
     summary_df = summarize_algorithm_comparison(
         completed_runs_for_comparison,
         metric_key=metric_key,
-        save_path=os.path.join(comparison_dir, "comparison_summary.csv")
+        rank_by=rank_by,
+        rank_order=rank_order,
+        window_size=window_size,
+        save_path=os.path.join(comparison_dir, "comparison_summary.csv"),
     )
     # Save JSON format
     summary_df.to_json(os.path.join(comparison_dir, "comparison_summary.json"), orient="records", indent=4)
@@ -268,6 +281,9 @@ def run_sweep_pipeline(
         env_name=env_name,
         log_scale=log_scale,
         use_geom_mean=use_geom_mean,
+        rank_by=rank_by,
+        rank_order=rank_order,
+        window_size=window_size,
         save_path=plot_path,
         title=f"{policy_type.capitalize()} Policy Evaluation ({env_name}) - Algorithm Comparison",
     )
@@ -306,6 +322,14 @@ def parse_args():
                         help="Model load directory for fixed/ppo evaluation policy")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE",
                         help="Primary metric to optimize and rank by")
+    parser.add_argument("--rank-by", type=str, default="auc", choices=["auc", "final_window", "final_step", "min", "max"],
+                        help="Criterion to rank and select best config (default: auc)")
+    parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"],
+                        help="Optimization goal: lower (default) or higher")
+    parser.add_argument("--higher-is-better", action="store_true",
+                        help="Shortcut for --rank-order higher (e.g. for nn_greedy_accuracy or reward)")
+    parser.add_argument("--window-size", type=int, default=20,
+                        help="Number of final steps to average when using final_window ranking (default: 20)")
     parser.add_argument("--lr-grid", nargs="+", type=float, default=None,
                         help="Custom learning rate grid (e.g. --lr-grid 0.01 0.001 0.0001)")
     parser.add_argument("--custom-grids-json", type=str, default=None,
@@ -333,6 +357,8 @@ if __name__ == "__main__":
         else:
             config_overrides = json.loads(args.config)
 
+    rank_order = "higher" if args.higher_is_better else args.rank_order
+
     run_sweep_pipeline(
         policy_type=args.policy,
         env_name=args.env_name,
@@ -343,6 +369,9 @@ if __name__ == "__main__":
         num_steps=args.num_steps,
         model_load_dir=args.model_dir,
         metric_key=args.metric,
+        rank_by=args.rank_by,
+        rank_order=rank_order,
+        window_size=args.window_size,
         lr_grid=args.lr_grid,
         custom_grids=custom_grids,
         config_overrides=config_overrides,

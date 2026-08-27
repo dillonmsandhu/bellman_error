@@ -198,6 +198,9 @@ def tune(
     base_config,
     param_grid,
     metric_key="nn_weighted_VE",
+    rank_by="auc",
+    rank_order="lower",
+    window_size=20,
     save_dir="results/tuning",
     rng_seed=42,
     log_scale=True,
@@ -212,6 +215,9 @@ def tune(
         base_config: Dictionary containing experiment configuration.
         param_grid: Dictionary mapping hyperparameter names to lists/tuples of values.
         metric_key: The metric to optimize / rank by (default: "nn_weighted_VE").
+        rank_by: Metric ranking criterion: "auc" (default), "final_window", "final_step", "min", "max".
+        rank_order: "lower" (lower is better, default) or "higher" (higher is better).
+        window_size: Number of final steps to average when using "final_window" (default: 20).
         save_dir: Base directory to save tuning outputs.
         rng_seed: Base seed for PRNG.
         log_scale: Whether to plot on log y-scale.
@@ -256,6 +262,7 @@ def tune(
     print(f"RUNNING PARALLEL SWEEP: {len(combinations)} configs x {n_seeds} seeds = {len(combinations)*n_seeds} runs")
     print(f"Environment: {env_name} | Primary Metric: {metric_key}")
     print(f"Hyperparameters: {keys}")
+    print(f"Ranking By: {rank_by} ({'lower' if rank_order in ['lower', 'min', 'asc', 'ascending'] else 'higher'} is better)")
     print(f"{'='*60}\n")
     
     out = parallel_train(rngs, hparams_tree)
@@ -278,34 +285,67 @@ def tune(
 
         curve = mean_trajectories[idx]
         curves[label] = curve
+        time_steps = len(curve)
+        win = max(1, min(time_steps, window_size))
+
+        auc_mean = float(curve.mean())
+        auc_std = float(metric_tensor[idx].mean(axis=-1).std()) if n_seeds > 1 else 0.0
+
+        window_mean = float(curve[-win:].mean())
+        window_std = float(metric_tensor[idx, :, -win:].mean(axis=-1).std()) if n_seeds > 1 else 0.0
 
         final_mean = float(curve[-1])
         final_std = float(std_trajectories[idx, -1]) if n_seeds > 1 else 0.0
-        time_mean = float(curve.mean())
         min_val = float(curve.min())
+        max_val = float(curve.max())
 
         row = {
             "config_idx": idx,
             **current_params,
+            f"auc_{metric_key}": auc_mean,
+            f"auc_{metric_key}_std": auc_std,
+            f"final_window_{metric_key}": window_mean,
+            f"final_window_{metric_key}_std": window_std,
             f"final_{metric_key}_mean": final_mean,
             f"final_{metric_key}_std": final_std,
-            f"mean_{metric_key}": time_mean,
             f"min_{metric_key}": min_val,
-            # Backward-compatible column name:
+            f"max_{metric_key}": max_val,
+            # Backward-compatible column names:
+            f"mean_{metric_key}": auc_mean,
             f"final_{metric_key}": final_mean,
         }
         table_rows.append(row)
 
     summary_df = pd.DataFrame(table_rows)
     if not summary_df.empty:
-        summary_df = summary_df.sort_values(by=f"final_{metric_key}_mean", ascending=True).reset_index(drop=True)
+        # Determine sort column
+        rank_by_lower = rank_by.lower()
+        if rank_by_lower in ["auc", "mean", "time_mean", "auc_mean"]:
+            sort_col = f"auc_{metric_key}"
+        elif rank_by_lower in ["final_window", "window", "final_window_mean"]:
+            sort_col = f"final_window_{metric_key}"
+        elif rank_by_lower in ["final", "final_step", "final_mean", "last"]:
+            sort_col = f"final_{metric_key}_mean"
+        elif rank_by_lower in ["min", "minimum"]:
+            sort_col = f"min_{metric_key}"
+        elif rank_by_lower in ["max", "maximum"]:
+            sort_col = f"max_{metric_key}"
+        else:
+            sort_col = f"auc_{metric_key}" if f"auc_{metric_key}" in summary_df.columns else f"final_{metric_key}_mean"
+
+        is_ascending = rank_order.lower() in ["lower", "min", "asc", "ascending"]
+        summary_df = summary_df.sort_values(by=sort_col, ascending=is_ascending).reset_index(drop=True)
         summary_df["rank"] = summary_df.index + 1
+
         # Reorder columns with rank first
         cols = ["rank", "config_idx"] + keys + [
+            f"auc_{metric_key}",
+            f"final_window_{metric_key}",
             f"final_{metric_key}_mean",
             f"final_{metric_key}_std",
-            f"mean_{metric_key}",
             f"min_{metric_key}",
+            f"max_{metric_key}",
+            f"mean_{metric_key}",
         ]
         summary_df = summary_df[[c for c in cols if c in summary_df.columns]]
 
@@ -331,10 +371,16 @@ def tune(
         "best_config_idx": best_idx,
         "rank": 1,
         "primary_metric": metric_key,
+        "rank_by": rank_by,
+        "rank_order": rank_order,
+        "window_size": win,
+        f"auc_{metric_key}": float(best_row[f"auc_{metric_key}"]),
+        f"final_window_{metric_key}": float(best_row[f"final_window_{metric_key}"]),
         f"final_{metric_key}_mean": float(best_row[f"final_{metric_key}_mean"]),
         f"final_{metric_key}_std": float(best_row[f"final_{metric_key}_std"]),
         f"min_{metric_key}": float(best_row[f"min_{metric_key}"]),
-        f"mean_{metric_key}_over_time": float(best_row[f"mean_{metric_key}"]),
+        f"max_{metric_key}": float(best_row[f"max_{metric_key}"]),
+        f"mean_{metric_key}_over_time": float(best_row[f"auc_{metric_key}"]),
         "timestamp": timestamp,
         "env_name": env_name,
         "n_seeds": n_seeds,
@@ -347,9 +393,11 @@ def tune(
 
     # Print summary
     print("\n" + "=" * 60)
-    print(f"★ TOP CONFIGURATION: {best_label}")
-    print(f"  Final {metric_key}: {best_row[f'final_{metric_key}_mean']:.4e} (±{best_row[f'final_{metric_key}_std']:.4e})")
-    print(f"  Min {metric_key}:   {best_row[f'min_{metric_key}']:.4e}")
+    print(f"★ TOP CONFIGURATION: {best_label} (Ranked by {rank_by} [{'lower' if is_ascending else 'higher'} is better])")
+    print(f"  AUC {metric_key}:          {best_row[f'auc_{metric_key}']:.4e}")
+    print(f"  Final Window ({win} steps): {best_row[f'final_window_{metric_key}']:.4e}")
+    print(f"  Final {metric_key}:         {best_row[f'final_{metric_key}_mean']:.4e} (±{best_row[f'final_{metric_key}_std']:.4e})")
+    print(f"  Min {metric_key}:           {best_row[f'min_{metric_key}']:.4e}")
     print("=" * 60)
     print("\nTop 5 Configurations:")
     print(summary_df.head(5).to_string(index=False))
