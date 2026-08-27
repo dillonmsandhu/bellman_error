@@ -58,12 +58,25 @@ def run_experiment_main(make_train, SAVE_DIR):
         try:
             if args.sweep:
                 if args.sweep == 'default':
-                    param_grid = {"LR": [5e-2, 5e-3, 5e-4, 5e-5]}
+                    param_grid = {"LR": [5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4]}
                 else:
                     import json
-                    with open(args.sweep, 'r') as f:
-                        param_grid = json.load(f)
-                tune(make_train, run_config, param_grid, save_dir=f"{run_dir}/tuning")
+                    if os.path.exists(args.sweep):
+                        with open(args.sweep, 'r') as f:
+                            param_grid = json.load(f)
+                    else:
+                        param_grid = json.loads(args.sweep)
+                
+                # If run_suffix was default timestamp, save directly under results/{SAVE_DIR}/tuning
+                save_base = f"results/{SAVE_DIR}/tuning" if args.run_suffix == run_timestamp else f"{run_dir}/tuning"
+                tune(
+                    make_train,
+                    run_config,
+                    param_grid,
+                    save_dir=save_base,
+                    save_checkpoint=args.save_checkpoint,
+                    save_metrics=args.save_metrics or True,
+                )
             else:
                 # Note: make_train and evaluate should be defined in your scope
                 evaluate(run_config, make_train, run_dir, args, rng)
