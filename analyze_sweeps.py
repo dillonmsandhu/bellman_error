@@ -184,7 +184,8 @@ def plot_algorithm_comparison(
     env_name="FourRooms-misc",
     log_scale=True,
     use_geom_mean=False,
-    steps_per_pi=1,
+    x_axis="update_steps",
+    steps_per_pi=None,
     save_path=None,
 ):
     """
@@ -200,7 +201,8 @@ def plot_algorithm_comparison(
         env_name: Name of environment for title
         log_scale: Whether to plot on log scale
         use_geom_mean: If True, uses geometric mean and log-std band; else standard mean ± std.
-        steps_per_pi: Number of environment steps per data point.
+        x_axis: "update_steps" (default) or "env_steps".
+        steps_per_pi: Optional override for environment steps per update.
         save_path: Optional file path to save plot PNG.
         
     Returns:
@@ -230,11 +232,24 @@ def plot_algorithm_comparison(
 
         n_seeds, time_steps = seed_trajectories.shape
         cfg = sweep_data.get("config", {})
-        steps_step = cfg.get("NUM_ENVS", 1) * cfg.get("NUM_STEPS", 1) if steps_per_pi == 1 else steps_per_pi
-        x = [i * steps_step for i in range(time_steps)]
+        env_steps_per_update = cfg.get("NUM_ENVS", 1) * cfg.get("NUM_STEPS", 1) if steps_per_pi is None else steps_per_pi
+
+        if x_axis == "env_steps":
+            x = [i * env_steps_per_update for i in range(time_steps)]
+        else:
+            x = list(range(time_steps))
 
         color = colors[idx % len(colors)]
-        label_with_hparam = f"{algo_name} ({best_label})" if best_label else algo_name
+        
+        # Build clean label with hyperparams and env steps/update for sampled methods
+        label_parts = []
+        if best_label:
+            label_parts.append(best_label)
+        if env_steps_per_update > 1 and x_axis == "update_steps":
+            label_parts.append(f"{env_steps_per_update} env steps/update")
+        
+        extra_str = f" ({', '.join(label_parts)})" if label_parts else ""
+        label_with_hparam = f"{algo_name}{extra_str}"
 
         if use_geom_mean:
             # Geometric mean & multiplicative std band
@@ -267,7 +282,12 @@ def plot_algorithm_comparison(
 
     if log_scale:
         ax.set_yscale("log")
-    ax.set_xlabel("Environment Steps", fontsize=12)
+    
+    if x_axis == "env_steps":
+        ax.set_xlabel("Environment Steps", fontsize=12)
+    else:
+        ax.set_xlabel("Update Steps", fontsize=12)
+
     ax.set_ylabel(ylabel or metric_key, fontsize=12)
     plot_title = title or f"Algorithm Comparison (Best Configs) - {env_name}"
     ax.set_title(plot_title, fontsize=13, fontweight="bold")

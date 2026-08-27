@@ -48,7 +48,7 @@ def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name
             cfg = sweep_data.get("config", {})
             steps_per_pi = cfg.get("NUM_ENVS", 1) * cfg.get("NUM_STEPS", 1)
             n_seeds, time_steps = seed_trajectories.shape
-            x = [i * steps_per_pi for i in range(time_steps)]
+            x = list(range(time_steps))
 
             fig, ax = plt.subplots(figsize=(10, 6))
             for seed_idx in range(n_seeds):
@@ -63,7 +63,8 @@ def plot_all_latest_sweeps(metric_key="nn_weighted_VE", policy="fixed", env_name
             ax.plot(x, mean_y, label=f"Mean across {n_seeds} seeds", color="black", linewidth=2.2, linestyle="--")
 
             ax.set_yscale("log")
-            ax.set_xlabel("Environment Steps", fontsize=12)
+            xlabel_str = f"Update Steps ({steps_per_pi} env steps/update)" if steps_per_pi > 1 else "Update Steps"
+            ax.set_xlabel(xlabel_str, fontsize=12)
             ax.set_ylabel(metric_key, fontsize=12)
             ax.set_title(f"{algo_name} ({env}) - Best Config: {best_label}", fontsize=13, fontweight="bold")
             ax.grid(True, which="both", linestyle="--", alpha=0.5)
