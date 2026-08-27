@@ -235,6 +235,22 @@ class ContinuingWrapper(GymnaxWrapper):
 
         return obs, env_state, reward, masked_done, info
 
+class MountainCarSparseRewardWrapper(GymnaxWrapper):
+    """
+    Replaces standard -1.0/step reward with sparse +1.0 goal reward matching MountainCarExactValue.
+    Reward is 1.0 when the agent transitions into the goal state (done & ~is_timeout), and 0.0 otherwise.
+    """
+    def __init__(self, env):
+        super().__init__(env)
+
+    def step(self, key, state, action, params=None):
+        obs, env_state, reward, done, info = self._env.step(key, state, action, params)
+        is_timeout = info.get("is_timeout", False)
+        is_goal = jnp.logical_and(done, jnp.logical_not(is_timeout))
+        sparse_reward = jnp.where(is_goal, 1.0, 0.0)
+        return obs, env_state, sparse_reward, done, info
+
+
 class MountainCarNormalizeWrapper(UniversalObservationWrapper):
     """Normalize MountainCar-v0 observations to [-1, 1]."""
     def __init__(self, env):
@@ -250,3 +266,4 @@ class MountainCarNormalizeWrapper(UniversalObservationWrapper):
         # Scale velocity to [-1, 1]
         vel = 2.0 * (obs[..., 1] - (-self.max_speed)) / (2 * self.max_speed) - 1.0
         return jnp.stack([pos, vel], axis=-1)
+

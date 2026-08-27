@@ -4,7 +4,9 @@ from core.imports import *
 import gymnax
 from gymnax.wrappers.purerl import FlattenObservationWrapper
 from envs.log_wrapper import LogWrapper
-from envs.wrappers import NormalizeObservationWrapper, NormalizeRewardWrapper, AddChannelWrapper, ClipAction, NormalizeRewardEnvState, NormalizeObsEnvState, TerminalInfoWrapper, MountainCarNormalizeWrapper
+from envs.wrappers import (NormalizeObservationWrapper, NormalizeRewardWrapper, 
+AddChannelWrapper, ClipAction, NormalizeRewardEnvState, NormalizeObsEnvState, 
+TerminalInfoWrapper, MountainCarNormalizeWrapper, MountainCarSparseRewardWrapper)
 from envs.boyan_chain import MatrixMockEnv, BoyanParams
 from envs.whirlpool import WhirlpoolExactValue
 from envs.whirlpool_env import Whirlpool
@@ -42,6 +44,7 @@ def make_env(config):
         )
         env = TerminalInfoWrapper(env)
         env = MountainCarNormalizeWrapper(env)
+        env = MountainCarSparseRewardWrapper(env)
         config["NETWORK_TYPE"] = 'mlp'
 
     elif config['ENV_NAME'] == 'FourRooms-misc':
