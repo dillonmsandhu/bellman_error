@@ -164,28 +164,35 @@ def run_sweep_pipeline(
     elif algos == ["all"]:
         algos = list(ALGO_REGISTRY.get(policy_type, {}).keys())
 
-    print("\n" + "=" * 70)
-    print(f"STARTING SWEEP PIPELINE: {policy_type.upper()} POLICY")
-    print(f"Environment: {env_name} | Timesteps: {total_timesteps} | Seeds: {n_seeds}")
-    if num_envs is not None:
-        print(f"NUM_ENVS: {num_envs} | NUM_STEPS: {num_steps}")
-    print(f"Algorithms to sweep: {algos}")
-    print(f"Ranking: {rank_by} ({'lower' if rank_order in ['lower', 'min', 'asc', 'ascending'] else 'higher'} is better)")
-    print(f"Output Root Directory: {sweep_root_dir}")
-    print("=" * 70 + "\n")
-
     # Base configuration template
     base_config = default_cfg.config.copy()
     base_config["ENV_NAME"] = env_name
     base_config["N_SEEDS"] = n_seeds
-    base_config["TOTAL_TIMESTEPS"] = total_timesteps
     base_config["MODEL_LOAD_DIR"] = model_load_dir
+
+    if total_timesteps is not None:
+        base_config["TOTAL_TIMESTEPS"] = total_timesteps
     if num_envs is not None:
         base_config["NUM_ENVS"] = num_envs
     if num_steps is not None:
         base_config["NUM_STEPS"] = num_steps
     if config_overrides:
         base_config.update(config_overrides)
+
+    total_timesteps = base_config.get("TOTAL_TIMESTEPS", 1000)
+    num_envs = base_config.get("NUM_ENVS", 1)
+    num_steps = base_config.get("NUM_STEPS", 1)
+    minibatch_size = base_config.get("MINIBATCH_SIZE", 1)
+    num_epochs = base_config.get("NUM_EPOCHS", 1)
+
+    print("\n" + "=" * 70)
+    print(f"STARTING SWEEP PIPELINE: {policy_type.upper()} POLICY")
+    print(f"Environment: {env_name} | Timesteps: {total_timesteps} | Seeds: {n_seeds}")
+    print(f"NUM_ENVS: {num_envs} | NUM_STEPS: {num_steps} | MINIBATCH_SIZE: {minibatch_size} | NUM_EPOCHS: {num_epochs}")
+    print(f"Algorithms to sweep: {algos}")
+    print(f"Ranking: {rank_by} ({'lower' if rank_order in ['lower', 'min', 'asc', 'ascending'] else 'higher'} is better)")
+    print(f"Output Root Directory: {sweep_root_dir}")
+    print("=" * 70 + "\n")
 
     # Save pipeline run specification
     pipeline_meta = {
@@ -312,7 +319,7 @@ def parse_args():
                         help="List of algorithms to sweep (e.g. exact_td exact_mc exact_E_gd exact_td_lambda)")
     parser.add_argument("--n-seeds", type=int, default=3,
                         help="Number of random seeds to evaluate per configuration")
-    parser.add_argument("--total-timesteps", type=int, default=1000,
+    parser.add_argument("--total-timesteps", type=int, default=None,
                         help="Total training/evaluation updates (timesteps)")
     parser.add_argument("--num-envs", type=int, default=None,
                         help="Number of parallel environments (NUM_ENVS)")
