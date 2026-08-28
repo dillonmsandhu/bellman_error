@@ -79,7 +79,10 @@ for env in "${ENVS[@]}"; do
             --lr-grid $LR_GRID \
             --n-seeds $N_SEEDS \
             --model-dir '$MODEL_DIR' \
-            --config '$CONFIG'"
+            --config '$CONFIG' \
+            --rank-by 'final_window' \
+            --window-size 40 \
+            --use-geom-mean"
 
         echo "Command: $CMD"
         eval "$CMD"

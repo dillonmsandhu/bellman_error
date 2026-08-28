@@ -70,7 +70,9 @@ for env in "${ENVS[@]}"; do
             --n-seeds $N_SEEDS \
             --total-timesteps $TOTAL_TIMESTEPS \
             --model-dir '$MODEL_DIR' \
-            --use-geom-mean"
+            --use-geom-mean \
+            --rank-by 'final_window' \
+            --window-size 400"
 
         echo "Command: $CMD"
         eval "$CMD"
