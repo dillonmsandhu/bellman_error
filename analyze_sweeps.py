@@ -5,6 +5,10 @@ and cross-algorithm comparisons.
 """
 
 import os
+# Force JAX to CPU to prevent GPU VRAM allocation/OOM during analysis
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 import json
 import cloudpickle
 import numpy as np
@@ -55,14 +59,17 @@ def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_re
     """
     found = {}
     
-    # 1. Check latest sweep batch under results/{policy}/sweeps/
+    # 1. Check all sweep batches under results/{policy}/sweeps/ in reverse chronological order
     sweeps_dir = os.path.join(base_results_dir, policy, "sweeps")
     if os.path.exists(sweeps_dir):
-        batches = sorted([d for d in os.listdir(sweeps_dir) if os.path.isdir(os.path.join(sweeps_dir, d)) and not d.startswith(".")])
-        if batches:
-            latest_batch = batches[-1]
-            batch_path = os.path.join(sweeps_dir, latest_batch)
+        batches = sorted([d for d in os.listdir(sweeps_dir) if os.path.isdir(os.path.join(sweeps_dir, d)) and not d.startswith(".")], reverse=True)
+        for batch in batches:
+            batch_path = os.path.join(sweeps_dir, batch)
+            if not os.path.isdir(batch_path):
+                continue
             for algo in os.listdir(batch_path):
+                if algo in found:
+                    continue
                 algo_dir = os.path.join(batch_path, algo, "tuning")
                 if os.path.exists(algo_dir):
                     ts, env, run_path = find_latest_run_dir(algo_dir)
@@ -198,15 +205,18 @@ def extract_best_configuration(
             match = summary_df[summary_df["config_idx"] == best_idx]
             if not match.empty:
                 row = match.iloc[0]
-                exclude = [
-                    "rank", "config_idx",
-                    f"auc_{metric_key}", f"auc_{metric_key}_std",
-                    f"final_window_{metric_key}", f"final_window_{metric_key}_std",
-                    f"final_{metric_key}", f"final_{metric_key}_mean",
-                    f"final_{metric_key}_std", f"mean_{metric_key}",
-                    f"min_{metric_key}", f"max_{metric_key}",
-                ]
-                hparam_cols = [c for c in summary_df.columns if c not in exclude]
+                def is_metric_col(col):
+                    c = col.lower()
+                    if c in ["rank", "config_idx", "timestamp", "env_name", "env"]:
+                        return True
+                    for prefix in ["auc", "final", "final_window", "mean", "min", "max", "std"]:
+                        if c.startswith(prefix + "_") or c == prefix:
+                            return True
+                    if c.endswith("_std") or c.endswith("_mean"):
+                        return True
+                    return False
+
+                hparam_cols = [c for c in summary_df.columns if not is_metric_col(c)]
                 best_hparams = {c: row[c] for c in hparam_cols}
 
         if not best_hparams and best_config_meta is not None and best_config_meta.get("best_config_idx") == best_idx:
