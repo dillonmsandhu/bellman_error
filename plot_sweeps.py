@@ -29,18 +29,16 @@ def _():
         find_latest_run_dir,
         discover_algorithm_sweeps,
     )
+
     return (
-        os,
-        json,
-        glob,
+        discover_algorithm_sweeps,
+        extract_best_configuration,
+        load_sweep_data,
+        mo,
         np,
+        os,
         pd,
         plt,
-        mo,
-        load_sweep_data,
-        extract_best_configuration,
-        find_latest_run_dir,
-        discover_algorithm_sweeps,
     )
 
 
@@ -83,43 +81,108 @@ def _():
         "mc": "#ff7f0e",              # Orange
         "td0": "#9467bd",             # Purple
     }
-
-    return TASKS, EXACT_ALGOS, SAMPLED_ALGOS, ALGO_DISPLAY_NAMES, ALGO_COLORS
+    return ALGO_COLORS, ALGO_DISPLAY_NAMES, EXACT_ALGOS, SAMPLED_ALGOS, TASKS
 
 
 @app.cell
-def _(TASKS, discover_algorithm_sweeps, load_sweep_data, os):
+def _(TASKS, discover_algorithm_sweeps, find_latest_run_dir, load_sweep_data, os):
     def load_all_task_data(
         base_results_dir="results",
+        custom_batches=None,
+        custom_paths=None,
     ):
         """
-        Discovers and loads all sweep data across the 4 core tasks.
+        Discovers and loads sweep data across the 4 core tasks.
+        
+        Args:
+            base_results_dir: Root results directory (default "results").
+            custom_batches: List or string of batch directory paths, e.g.:
+                ["results/fixed/sweeps/fixed_MountainCar-v0_20260828_094649", ...]
+            custom_paths: Dict mapping (policy, env) or task_id to batch dirs or algo paths.
         """
-        all_task_data = {}
+        all_task_data = {t["id"]: {"task_info": t, "runs": {}} for t in TASKS}
+
+        # 1. If custom_batches provided (list or multi-line string)
+        if custom_batches:
+            if isinstance(custom_batches, str):
+                custom_batches = [line.strip() for line in custom_batches.strip().splitlines() if line.strip() and not line.strip().startswith("#")]
+            for batch_dir in custom_batches:
+                if not os.path.exists(batch_dir):
+                    print(f"Warning: Custom batch directory not found: {batch_dir}")
+                    continue
+                # Inspect algorithms inside batch directory
+                for item in os.listdir(batch_dir):
+                    item_path = os.path.join(batch_dir, item)
+                    if not os.path.isdir(item_path):
+                        continue
+                    
+                    # Could be algo/tuning or direct algo dir
+                    tuning_dir = os.path.join(item_path, "tuning")
+                    search_dir = tuning_dir if os.path.exists(tuning_dir) else item_path
+                    ts, env, run_path = find_latest_run_dir(search_dir)
+                    if not run_path:
+                        continue
+                    
+                    try:
+                        sweep = load_sweep_data(run_path)
+                        env_name = sweep.get("env_name", env)
+                        policy_type = "fixed" if "fixed" in batch_dir else ("ppo" if "ppo" in batch_dir else "random")
+                        # Match to task
+                        for task in TASKS:
+                            if task["policy"] == policy_type and (task["env"] == env_name or env_name in task["env"] or task["env"] in batch_dir):
+                                all_task_data[task["id"]]["runs"][item] = sweep
+                    except Exception as e:
+                        print(f"Error loading {item} from {batch_dir}: {e}")
+
+        # 2. If custom_paths provided (explicit mapping)
+        if custom_paths:
+            for key, paths in custom_paths.items():
+                target_tasks = []
+                for t in TASKS:
+                    if key == t["id"] or key == (t["policy"], t["env"]):
+                        target_tasks.append(t["id"])
+                if isinstance(paths, str):
+                    paths = [paths]
+                for p in paths:
+                    for algo in os.listdir(p) if os.path.isdir(p) else [os.path.basename(p)]:
+                        algo_path = os.path.join(p, algo, "tuning") if os.path.exists(os.path.join(p, algo, "tuning")) else p
+                        ts, env, run_path = find_latest_run_dir(algo_path)
+                        if run_path:
+                            try:
+                                sweep = load_sweep_data(run_path)
+                                for tid in target_tasks:
+                                    all_task_data[tid]["runs"][algo] = sweep
+                            except Exception as e:
+                                print(f"Error loading {algo} from {algo_path}: {e}")
+
+        # 3. For any remaining tasks with missing algorithms, auto-discover latest
         for task in TASKS:
             task_id = task["id"]
             policy = task["policy"]
             env = task["env"]
 
             discovered = discover_algorithm_sweeps(policy=policy, env_name=env, base_results_dir=base_results_dir)
-            loaded_runs = {}
             for algo, path in discovered.items():
-                try:
-                    loaded_runs[algo] = load_sweep_data(path)
-                except Exception as e:
-                    print(f"[{task['name']}] Could not load {algo} from {path}: {e}")
+                if algo not in all_task_data[task_id]["runs"]:
+                    try:
+                        all_task_data[task_id]["runs"][algo] = load_sweep_data(path)
+                    except Exception as e:
+                        print(f"[{task['name']}] Could not load {algo} from {path}: {e}")
 
-            all_task_data[task_id] = {
-                "task_info": task,
-                "runs": loaded_runs,
-            }
         return all_task_data
 
     return (load_all_task_data,)
 
 
 @app.cell
-def _(plt, np, ALGO_DISPLAY_NAMES, ALGO_COLORS, extract_best_configuration, os):
+def _(
+    ALGO_COLORS,
+    ALGO_DISPLAY_NAMES,
+    extract_best_configuration,
+    np,
+    os,
+    plt,
+):
     def plot_4task_grid(
         all_task_data,
         algo_list,
@@ -221,7 +284,14 @@ def _(plt, np, ALGO_DISPLAY_NAMES, ALGO_COLORS, extract_best_configuration, os):
 
 
 @app.cell
-def _(plt, np, ALGO_DISPLAY_NAMES, ALGO_COLORS, extract_best_configuration, os):
+def _(
+    ALGO_COLORS,
+    ALGO_DISPLAY_NAMES,
+    extract_best_configuration,
+    np,
+    os,
+    plt,
+):
     def plot_dual_metric_grid(
         all_task_data,
         algo_list,
@@ -337,7 +407,7 @@ def _(plt, np, ALGO_DISPLAY_NAMES, ALGO_COLORS, extract_best_configuration, os):
 
 
 @app.cell
-def _(pd, np, ALGO_DISPLAY_NAMES, extract_best_configuration, os):
+def _(ALGO_DISPLAY_NAMES, extract_best_configuration, os, pd):
     def generate_task_summary_table(
         all_task_data,
         algo_list,
@@ -424,23 +494,21 @@ def _(pd, np, ALGO_DISPLAY_NAMES, extract_best_configuration, os):
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        # 🔬 Reinforcement Learning Sweep Benchmark Suite
-        ### Cross-Algorithm & Cross-Task Learning Curves & Converged Metric Analysis
-        Tasks evaluated:
-        1. **Fixed Policy** — MountainCar-v0
-        2. **Fixed Policy** — FourRooms-misc
-        3. **Random Policy** — MountainCar-v0
-        4. **Random Policy** — FourRooms-misc
-        """
-    )
+    mo.md("""
+    # 🔬 Reinforcement Learning Sweep Benchmark Suite
+    ### Cross-Algorithm & Cross-Task Learning Curves & Converged Metric Analysis
+    Tasks evaluated:
+    1. **Fixed Policy** — MountainCar-v0
+    2. **Fixed Policy** — FourRooms-misc
+    3. **Random Policy** — MountainCar-v0
+    4. **Random Policy** — FourRooms-misc
+    """)
     return
 
 
 @app.cell
 def _(mo):
-    base_dir_input = mo.ui.text(value="results", label="Results Directory")
+    base_dir_input = mo.ui.text(value="results", label="Base Results Dir")
     window_size_slider = mo.ui.slider(start=10, stop=500, step=10, value=200, label="Tail Window Size")
     rank_by_dropdown = mo.ui.dropdown(
         options=["final_window", "auc", "final_step", "min"],
@@ -448,16 +516,31 @@ def _(mo):
         label="Rank Configs By",
     )
     use_geom_mean_checkbox = mo.ui.checkbox(value=True, label="Geometric Mean Bands")
+    custom_batches_input = mo.ui.text_area(
+        placeholder="Paste specific sweep batch dirs (one per line, optional), e.g.:\nresults/fixed/sweeps/fixed_MountainCar-v0_20260828_094649\nresults/fixed/sweeps/fixed_MountainCar-v0_20260828_093547",
+        label="Specific Sweep Batches (Optional)",
+        rows=2,
+    )
 
-    controls = mo.hstack([base_dir_input, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox], justify="start")
+    controls = mo.vstack([
+        mo.hstack([base_dir_input, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox], justify="start"),
+        custom_batches_input,
+    ])
     controls
-    return base_dir_input, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox, controls
+    return (
+        base_dir_input,
+        custom_batches_input,
+        rank_by_dropdown,
+        use_geom_mean_checkbox,
+        window_size_slider,
+    )
 
 
 @app.cell
-def _(base_dir_input, window_size_slider, rank_by_dropdown, load_all_task_data, mo):
+def _(base_dir_input, custom_batches_input, load_all_task_data, mo):
     task_data = load_all_task_data(
         base_results_dir=base_dir_input.value,
+        custom_batches=custom_batches_input.value if custom_batches_input.value.strip() else None,
     )
     total_loaded = sum(len(v["runs"]) for v in task_data.values())
     mo.md(f"✅ **Sweep Runs Discovered:** Loaded **{total_loaded}** algorithm sweep runs across 4 tasks.")
@@ -465,7 +548,15 @@ def _(base_dir_input, window_size_slider, rank_by_dropdown, load_all_task_data, 
 
 
 @app.cell
-def _(task_data, SAMPLED_ALGOS, plot_4task_grid, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox, mo):
+def _(
+    SAMPLED_ALGOS,
+    mo,
+    plot_4task_grid,
+    rank_by_dropdown,
+    task_data,
+    use_geom_mean_checkbox,
+    window_size_slider,
+):
     fig_sampled = plot_4task_grid(
         task_data,
         algo_list=SAMPLED_ALGOS,
@@ -482,11 +573,19 @@ def _(task_data, SAMPLED_ALGOS, plot_4task_grid, window_size_slider, rank_by_dro
         mo.md("## 📊 1. Sampled Algorithms: 4-Task Value Error (`nn_weighted_VE`)"),
         fig_sampled,
     ])
-    return (fig_sampled,)
+    return
 
 
 @app.cell
-def _(task_data, EXACT_ALGOS, plot_4task_grid, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox, mo):
+def _(
+    EXACT_ALGOS,
+    mo,
+    plot_4task_grid,
+    rank_by_dropdown,
+    task_data,
+    use_geom_mean_checkbox,
+    window_size_slider,
+):
     fig_exact = plot_4task_grid(
         task_data,
         algo_list=EXACT_ALGOS,
@@ -503,11 +602,19 @@ def _(task_data, EXACT_ALGOS, plot_4task_grid, window_size_slider, rank_by_dropd
         mo.md("## 📊 2. Exact Algorithms: 4-Task Value Error (`nn_weighted_VE`)"),
         fig_exact,
     ])
-    return (fig_exact,)
+    return
 
 
 @app.cell
-def _(task_data, SAMPLED_ALGOS, plot_dual_metric_grid, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox, mo):
+def _(
+    SAMPLED_ALGOS,
+    mo,
+    plot_dual_metric_grid,
+    rank_by_dropdown,
+    task_data,
+    use_geom_mean_checkbox,
+    window_size_slider,
+):
     fig_dual = plot_dual_metric_grid(
         task_data,
         algo_list=SAMPLED_ALGOS,
@@ -523,11 +630,19 @@ def _(task_data, SAMPLED_ALGOS, plot_dual_metric_grid, window_size_slider, rank_
         mo.md("## 🎯 3. Sampled Algorithms: Dual Metric Comparison (`nn_weighted_VE` vs `nn_greedy_correct`)"),
         fig_dual,
     ])
-    return (fig_dual,)
+    return
 
 
 @app.cell
-def _(task_data, SAMPLED_ALGOS, EXACT_ALGOS, generate_task_summary_table, window_size_slider, rank_by_dropdown, mo):
+def _(
+    EXACT_ALGOS,
+    SAMPLED_ALGOS,
+    generate_task_summary_table,
+    mo,
+    rank_by_dropdown,
+    task_data,
+    window_size_slider,
+):
     sampled_table = generate_task_summary_table(
         task_data,
         algo_list=SAMPLED_ALGOS,
@@ -552,7 +667,7 @@ def _(task_data, SAMPLED_ALGOS, EXACT_ALGOS, generate_task_summary_table, window
         mo.md(f"## 📋 5. Exact Algorithms: Converged Summary Table (Tail Window: Past {window_size_slider.value} steps)"),
         mo.ui.table(exact_table),
     ])
-    return sampled_table, exact_table
+    return
 
 
 @app.cell
