@@ -17,6 +17,10 @@ app = marimo.App(width="wide")
 @app.cell
 def _():
     import os
+    # Force JAX to CPU to prevent GPU VRAM exhaustion when unpickling sweep files
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["JAX_PLATFORMS"] = "cpu"
+
     import json
     import glob
     import numpy as np
@@ -507,6 +511,19 @@ def _(mo):
 
 
 @app.cell
+def _():
+    # Paste your sweep directories here to save them permanently in code/git:
+    SWEEPS_TO_LOAD = [
+        "results/fixed/sweeps/fixed_MountainCar-v0_20260828_094649",
+        "results/fixed/sweeps/fixed_MountainCar-v0_20260828_093547",
+        # "results/random/sweeps/random_MountainCar-v0_...",
+        # "results/fixed/sweeps/fixed_FourRooms-misc_...",
+        # "results/random/sweeps/random_FourRooms-misc_...",
+    ]
+    return (SWEEPS_TO_LOAD,)
+
+
+@app.cell
 def _(mo):
     base_dir_input = mo.ui.text(value="results", label="Base Results Dir")
     window_size_slider = mo.ui.slider(start=10, stop=500, step=10, value=200, label="Tail Window Size")
@@ -516,20 +533,11 @@ def _(mo):
         label="Rank Configs By",
     )
     use_geom_mean_checkbox = mo.ui.checkbox(value=True, label="Geometric Mean Bands")
-    custom_batches_input = mo.ui.text_area(
-        placeholder="Paste specific sweep batch dirs (one per line, optional), e.g.:\nresults/fixed/sweeps/fixed_MountainCar-v0_20260828_094649\nresults/fixed/sweeps/fixed_MountainCar-v0_20260828_093547",
-        label="Specific Sweep Batches (Optional)",
-        rows=2,
-    )
 
-    controls = mo.vstack([
-        mo.hstack([base_dir_input, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox], justify="start"),
-        custom_batches_input,
-    ])
+    controls = mo.hstack([base_dir_input, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox], justify="start")
     controls
     return (
         base_dir_input,
-        custom_batches_input,
         rank_by_dropdown,
         use_geom_mean_checkbox,
         window_size_slider,
@@ -537,13 +545,13 @@ def _(mo):
 
 
 @app.cell
-def _(base_dir_input, custom_batches_input, load_all_task_data, mo):
+def _(SWEEPS_TO_LOAD, base_dir_input, load_all_task_data, mo):
     task_data = load_all_task_data(
         base_results_dir=base_dir_input.value,
-        custom_batches=custom_batches_input.value if custom_batches_input.value.strip() else None,
+        custom_batches=SWEEPS_TO_LOAD if SWEEPS_TO_LOAD else None,
     )
     total_loaded = sum(len(v["runs"]) for v in task_data.values())
-    mo.md(f"✅ **Sweep Runs Discovered:** Loaded **{total_loaded}** algorithm sweep runs across 4 tasks.")
+    mo.md(f"✅ **Sweep Runs Loaded:** Loaded **{total_loaded}** algorithm sweep runs across 4 tasks.")
     return (task_data,)
 
 
