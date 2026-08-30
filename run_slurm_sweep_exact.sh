@@ -29,7 +29,7 @@ N_SEEDS=3
 TOTAL_TIMESTEPS=2000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
-EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda")
+EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda" "exact_Etd")
 
 # Per-environment evaluation policy placeholders for fixed policy evaluation.
 # Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").

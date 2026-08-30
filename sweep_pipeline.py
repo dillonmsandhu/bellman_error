@@ -35,9 +35,12 @@ ALGO_REGISTRY = {
         "exact_mc": "fixed_policy.exact_mc",
         "exact_E_gd": "fixed_policy.exact_E_gd",
         "exact_E": "fixed_policy.exact_E_gd",
+        "exact_Etd": "fixed_policy.exact_Etd",
+        "exact_E_td": "fixed_policy.exact_Etd",
         "exact_td_lambda": "fixed_policy.exact_td_lambda",
         "exact_td_symmetric": "fixed_policy.exact_td_symmetric",
         "td": "fixed_policy.td",
+        "td0": "fixed_policy.td0",
         "mc": "fixed_policy.mc",
         "monte_carlo": "fixed_policy.mc",
         "sampled_E": "fixed_policy.sampled_E",
@@ -47,9 +50,12 @@ ALGO_REGISTRY = {
         "exact_mc": "random_policy.exact_mc",
         "exact_E_gd": "random_policy.exact_E_gd",
         "exact_E": "random_policy.exact_E_gd",
+        "exact_Etd": "random_policy.exact_Etd",
+        "exact_E_td": "random_policy.exact_Etd",
         "exact_td_lambda": "random_policy.exact_td_lambda",
         "exact_td_symmetric": "random_policy.exact_td_symmetric",
         "td": "random_policy.td",
+        "td0": "random_policy.td0",
         "mc": "random_policy.mc",
         "monte_carlo": "random_policy.mc",
         "sampled_E": "random_policy.sampled_E",
@@ -62,20 +68,28 @@ ALGO_REGISTRY = {
     },
 }
 
-DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda"]
-DEFAULT_SAMPLED_ALGOS = ["td", "sampled_E", "monte_carlo"]
+DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_Etd"]
+DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo"]
 
 
-def get_default_param_grid(algo_name, lr_list=None):
+def get_default_param_grid(algo_name, lr_list=None, lambda_list=None):
     """Returns sensible default parameter grids for standard and multi-param algorithms."""
     standard_lrs = lr_list if lr_list is not None else [1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
     
-    if "td_lambda" in algo_name:
-        # TD(lambda) requires grid over both LR and VALUE_LAMBDA
+    if algo_name in ["td", "td_lambda"]:
+        # Sample-based TD sweeps over both LR and GAE_LAMBDA
+        lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
+        return {
+            "LR": standard_lrs,
+            "GAE_LAMBDA": lambdas,
+        }
+    elif "exact_td_lambda" in algo_name:
+        # Exact TD(lambda) requires grid over both LR and VALUE_LAMBDA
         reduced_lrs = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
+        lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
         return {
             "LR": reduced_lrs,
-            "VALUE_LAMBDA": [0.1, 0.5, 0.9,],
+            "VALUE_LAMBDA": lambdas,
         }
     else:
         return {"LR": standard_lrs}
@@ -136,6 +150,7 @@ def run_sweep_pipeline(
     rank_order="lower",
     window_size=20,
     lr_grid=None,
+    lambda_grid=None,
     custom_grids=None,
     config_overrides=None,
     base_save_dir="results",
@@ -234,7 +249,7 @@ def run_sweep_pipeline(
         if custom_grids and algo_name in custom_grids:
             param_grid = custom_grids[algo_name]
         else:
-            param_grid = get_default_param_grid(algo_name, lr_list=lr_grid)
+            param_grid = get_default_param_grid(algo_name, lr_list=lr_grid, lambda_list=lambda_grid)
 
         # Output folder for this specific algorithm inside the sweep root
         algo_save_dir = os.path.join(sweep_root_dir, algo_name, "tuning")
@@ -339,6 +354,8 @@ def parse_args():
                         help="Number of final steps to average when using final_window ranking (default: 20)")
     parser.add_argument("--lr-grid", nargs="+", type=float, default=None,
                         help="Custom learning rate grid (e.g. --lr-grid 0.01 0.001 0.0001)")
+    parser.add_argument("--lambda-grid", nargs="+", type=float, default=None,
+                        help="Custom lambda grid for TD algorithms (e.g. --lambda-grid 0.0 0.3 0.6 0.9 0.95 1.0)")
     parser.add_argument("--custom-grids-json", type=str, default=None,
                         help="Path to JSON file specifying custom grids per algorithm")
     parser.add_argument("--config", type=str, default=None,
@@ -380,6 +397,7 @@ if __name__ == "__main__":
         rank_order=rank_order,
         window_size=args.window_size,
         lr_grid=args.lr_grid,
+        lambda_grid=args.lambda_grid,
         custom_grids=custom_grids,
         config_overrides=config_overrides,
         use_geom_mean=args.use_geom_mean,

@@ -30,13 +30,16 @@ fi
 N_SEEDS=5
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
-SAMPLED_ALGOS=("td" "sampled_E" "monte_carlo")
+SAMPLED_ALGOS=("td" "td0" "sampled_E" "monte_carlo")
 
 # Base config overrides for sampled algorithms (NUM_ENVS, NUM_STEPS, TOTAL_TIMESTEPS, MINIBATCH_SIZE, etc.)
 CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 1024, "NUM_EPOCHS": 1}'
 
-# Common Learning Rate Grid to sweep over for TD, Sampled E, and Monte Carlo
+# Common Learning Rate Grid to sweep over for TD, TD(0), Sampled E, and Monte Carlo
 LR_GRID="0.01 0.005 0.001 0.0005 0.0001 0.00005 0.00001 0.000005 0.000001"
+
+# Lambda Grid to sweep over for TD (GAE_LAMBDA)
+LAMBDA_GRID="0.0 0.3 0.6 0.9 0.95 1.0"
 
 # Per-environment evaluation policy placeholders for fixed policy evaluation.
 # Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").
@@ -50,12 +53,13 @@ declare -A FIXED_MODEL_DIRS=(
 mkdir -p slurm
 
 echo "======================================================================"
-echo "STARTING SLURM SAMPLED ALGORITHMS SWEEP (TD, Sampled E, Monte Carlo)"
+echo "STARTING SLURM SAMPLED ALGORITHMS SWEEP (TD, TD(0), Sampled E, Monte Carlo)"
 echo "Start Time: $START_TIME"
 echo "Environments: ${ENVS[*]}"
 echo "Policies: ${POLICIES[*]}"
 echo "Algorithms: ${SAMPLED_ALGOS[*]}"
 echo "LR Grid: $LR_GRID"
+echo "Lambda Grid: $LAMBDA_GRID"
 echo "Config Overrides: $CONFIG"
 echo "======================================================================"
 
@@ -77,6 +81,7 @@ for env in "${ENVS[@]}"; do
             --env-name $env \
             --algos ${SAMPLED_ALGOS[*]} \
             --lr-grid $LR_GRID \
+            --lambda-grid $LAMBDA_GRID \
             --n-seeds $N_SEEDS \
             --model-dir '$MODEL_DIR' \
             --config '$CONFIG' \

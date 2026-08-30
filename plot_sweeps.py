@@ -55,7 +55,7 @@ def _():
         {"id": "random_fourrooms", "name": "Random Policy - FourRooms-misc", "policy": "random", "env": "FourRooms-misc"},
     ]
 
-    EXACT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_td_symmetric"]
+    EXACT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_td_symmetric", "exact_Etd"]
     SAMPLED_ALGOS = ["td", "sampled_E", "monte_carlo", "mc", "td0"]
 
     ALGO_DISPLAY_NAMES = {
@@ -63,6 +63,8 @@ def _():
         "exact_mc": "Exact MC",
         "exact_E_gd": "Exact E (GD)",
         "exact_E": "Exact E (GD)",
+        "exact_Etd": "Exact E + TD",
+        "exact_E_td": "Exact E + TD",
         "exact_td_lambda": "Exact TD(λ)",
         "exact_td_symmetric": "Exact TD (Sym)",
         "td": "Sampled TD(0)",
@@ -77,6 +79,8 @@ def _():
         "exact_mc": "#ff7f0e",        # Orange
         "exact_E_gd": "#2ca02c",      # Green
         "exact_E": "#2ca02c",         # Green
+        "exact_Etd": "#8c564b",       # Brown
+        "exact_E_td": "#8c564b",      # Brown
         "exact_td_lambda": "#d62728", # Red
         "exact_td_symmetric": "#9467bd", # Purple
         "td": "#1f77b4",              # Blue

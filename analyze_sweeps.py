@@ -82,11 +82,15 @@ def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_re
         "exact_mc": f"{base_results_dir}/{policy}/mc_exact/tuning",
         "exact_E_gd": f"{base_results_dir}/{policy}/E_gd_exact/tuning",
         "exact_E": f"{base_results_dir}/{policy}/exact_E/tuning",
+        "exact_Etd": f"{base_results_dir}/{policy}/exact_E_td/tuning",
+        "exact_E_td": f"{base_results_dir}/{policy}/exact_E_td/tuning",
         "exact_td_lambda": f"{base_results_dir}/{policy}/td_lambda_exact/tuning",
         "exact_td_symmetric": f"{base_results_dir}/{policy}/td_exact_symmetric/tuning",
         "sampled_E": f"{base_results_dir}/{policy}/sampled_E/tuning",
         "td": f"{base_results_dir}/{policy}/td/tuning",
+        "td0": f"{base_results_dir}/{policy}/td0/tuning",
         "mc": f"{base_results_dir}/{policy}/mc/tuning",
+        "monte_carlo": f"{base_results_dir}/{policy}/mc/tuning",
     }
     for algo, tuning_dir in standalone_dirs.items():
         if algo not in found and os.path.exists(tuning_dir):
