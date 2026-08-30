@@ -10,8 +10,8 @@
 
 import marimo
 
-__generated_with = "0.24.0"
-app = marimo.App(width="wide")
+__generated_with = "0.23.9"
+app = marimo.App(width="normal")
 
 
 @app.cell
@@ -37,6 +37,7 @@ def _():
     return (
         discover_algorithm_sweeps,
         extract_best_configuration,
+        find_latest_run_dir,
         load_sweep_data,
         mo,
         np,
@@ -89,7 +90,13 @@ def _():
 
 
 @app.cell
-def _(TASKS, discover_algorithm_sweeps, find_latest_run_dir, load_sweep_data, os):
+def _(
+    TASKS,
+    discover_algorithm_sweeps,
+    find_latest_run_dir,
+    load_sweep_data,
+    os,
+):
     def load_all_task_data(
         base_results_dir="results",
         custom_batches=None,
@@ -97,7 +104,7 @@ def _(TASKS, discover_algorithm_sweeps, find_latest_run_dir, load_sweep_data, os
     ):
         """
         Discovers and loads sweep data across the 4 core tasks.
-        
+
         Args:
             base_results_dir: Root results directory (default "results").
             custom_batches: List or string of batch directory paths, e.g.:
@@ -119,14 +126,14 @@ def _(TASKS, discover_algorithm_sweeps, find_latest_run_dir, load_sweep_data, os
                     item_path = os.path.join(batch_dir, item)
                     if not os.path.isdir(item_path):
                         continue
-                    
+
                     # Could be algo/tuning or direct algo dir
                     tuning_dir = os.path.join(item_path, "tuning")
                     search_dir = tuning_dir if os.path.exists(tuning_dir) else item_path
                     ts, env, run_path = find_latest_run_dir(search_dir)
                     if not run_path:
                         continue
-                    
+
                     try:
                         sweep = load_sweep_data(run_path)
                         env_name = sweep.get("env_name", env)
@@ -407,7 +414,7 @@ def _(
 
         return fig
 
-    return (plot_dual_metric_grid,)
+    return
 
 
 @app.cell
@@ -516,9 +523,13 @@ def _():
     SWEEPS_TO_LOAD = [
         "results/fixed/sweeps/fixed_MountainCar-v0_20260828_094649",
         "results/fixed/sweeps/fixed_MountainCar-v0_20260828_093547",
-        # "results/random/sweeps/random_MountainCar-v0_...",
-        # "results/fixed/sweeps/fixed_FourRooms-misc_...",
-        # "results/random/sweeps/random_FourRooms-misc_...",
+        "results/fixed/sweeps/fixed_FourRooms-misc_20260828_093737",
+        "results/fixed/sweeps/fixed_FourRooms-misc_20260828_093104",
+
+        "results/random/sweeps/random_FourRooms-misc_20260828_093356",
+        "results/random/sweeps/random_FourRooms-misc_20260828_092803",
+        "results/random/sweeps/random_MountainCar-v0_20260828_093356",
+        "results/random/sweeps/random_MountainCar-v0_20260828_093944",
     ]
     return (SWEEPS_TO_LOAD,)
 
@@ -615,29 +626,51 @@ def _(
 
 @app.cell
 def _(
-    SAMPLED_ALGOS,
-    mo,
-    plot_dual_metric_grid,
+    EXACT_ALGOS,
+    plot_4task_grid,
     rank_by_dropdown,
     task_data,
     use_geom_mean_checkbox,
     window_size_slider,
 ):
-    fig_dual = plot_dual_metric_grid(
+    fig_greedy_exact = plot_4task_grid(
         task_data,
-        algo_list=SAMPLED_ALGOS,
-        title="Sampled Algorithms: Value Error vs. Greedy Policy Accuracy",
-        metric_1="nn_weighted_VE",
-        metric_2="nn_greedy_correct",
+        algo_list=EXACT_ALGOS,
+        title_prefix="Exact Algorithms Performance Across 4 Tasks",
+        metric_key="nn_greedy_correct",
+        ylabel="Greedy Policy Accuracy",
+        log_scale=False,
+        use_geom_mean=use_geom_mean_checkbox.value,
         rank_by=rank_by_dropdown.value,
         window_size=window_size_slider.value,
-        use_geom_mean=use_geom_mean_checkbox.value,
-        save_path="results/comparison_sampled_dual_metrics_4tasks.png",
+        save_path="results/comparison_exact_4tasks_greedy_acc.png",
     )
-    mo.vstack([
-        mo.md("## 🎯 3. Sampled Algorithms: Dual Metric Comparison (`nn_weighted_VE` vs `nn_greedy_correct`)"),
-        fig_dual,
-    ])
+    fig_greedy_exact
+    return
+
+
+@app.cell
+def _(
+    SAMPLED_ALGOS,
+    plot_4task_grid,
+    rank_by_dropdown,
+    task_data,
+    use_geom_mean_checkbox,
+    window_size_slider,
+):
+    fig_greedy_sampled = plot_4task_grid(
+        task_data,
+        algo_list=SAMPLED_ALGOS,
+        title_prefix="Exact Algorithms Performance Across 4 Tasks",
+        metric_key="nn_greedy_correct",
+        ylabel="Greedy Policy Accuracy",
+        log_scale=False,
+        use_geom_mean=use_geom_mean_checkbox.value,
+        rank_by=rank_by_dropdown.value,
+        window_size=window_size_slider.value,
+        save_path="results/comparison_sampled_4tasks_greedy_acc.png",
+    )
+    fig_greedy_sampled
     return
 
 
@@ -675,6 +708,21 @@ def _(
         mo.md(f"## 📋 5. Exact Algorithms: Converged Summary Table (Tail Window: Past {window_size_slider.value} steps)"),
         mo.ui.table(exact_table),
     ])
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
     return
 
 
