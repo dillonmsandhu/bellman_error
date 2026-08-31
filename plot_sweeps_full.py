@@ -58,8 +58,7 @@ def _():
         {"id": "random_fourrooms", "name": "Random Policy - FourRooms-misc", "policy": "random", "env": "FourRooms-misc"},
     ]
 
-    # EXACT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_td_symmetric", "exact_Etd"]
-    EXACT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_td_symmetric"]
+    EXACT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_td_symmetric", "exact_E_td"]
     SAMPLED_ALGOS = ["td", "sampled_E", "monte_carlo", "mc", "td0"]
 
     ALGO_DISPLAY_NAMES = {
@@ -194,10 +193,47 @@ def _(
 
 
 @app.cell
+def _(extract_best_configuration):
+    def get_selected_config_idx(
+        sweep_data,
+        selection_metric="nn_greedy_correct",
+        window_size=1000,
+        rank_by="final_window",
+    ):
+        """
+        Selects the single best configuration index once for this sweep run based on greedy accuracy.
+        Uses rank_by='final_window', window_size=1000, rank_order='higher'.
+        Falls back to 'nn_weighted_VE' (rank_order='lower') if selection_metric is not available.
+        """
+        metrics = sweep_data.get("metrics", {})
+        if selection_metric in metrics:
+            metric_to_use = selection_metric
+            order = "higher"
+        elif "nn_weighted_VE" in metrics:
+            metric_to_use = "nn_weighted_VE"
+            order = "lower"
+        else:
+            metric_to_use = list(metrics.keys())[0]
+            order = "higher"
+
+        _, label, idx, hparams = extract_best_configuration(
+            sweep_data,
+            metric_key=metric_to_use,
+            rank_by=rank_by,
+            rank_order=order,
+            window_size=window_size,
+        )
+        return idx, label, hparams
+
+    return (get_selected_config_idx,)
+
+
+@app.cell
 def _(
     ALGO_COLORS,
     ALGO_DISPLAY_NAMES,
     extract_best_configuration,
+    get_selected_config_idx,
     np,
     os,
     plt,
@@ -210,13 +246,13 @@ def _(
         ylabel="Value Error (nn_weighted_VE)",
         log_scale=True,
         use_geom_mean=True,
-        rank_by="final_window",
-        rank_order="lower",
-        window_size=200,
+        selection_metric="nn_greedy_correct",
+        selection_window=1000,
         save_path=None,
     ):
         """
         Plots a 2x2 grid comparing specified algorithms across the 4 core tasks.
+        Uses the single run selected via selection_metric (window_size=1000, higher is better).
         """
         fig, axes = plt.subplots(2, 2, figsize=(15, 10), sharex=False)
         axes = axes.flatten()
@@ -241,12 +277,19 @@ def _(
 
                 sweep_data = runs_dict[algo]
                 try:
-                    seed_trajectories, best_label, best_idx, _ = extract_best_configuration(
+                    # 1. Select the single winning configuration once based on greedy accuracy
+                    best_idx, best_label, _ = get_selected_config_idx(
+                        sweep_data,
+                        selection_metric=selection_metric,
+                        window_size=selection_window,
+                        rank_by="final_window",
+                    )
+
+                    # 2. Extract trajectory for the requested metric_key for that exact best_idx
+                    seed_trajectories, _, _, _ = extract_best_configuration(
                         sweep_data,
                         metric_key=metric_key,
-                        rank_by=rank_by,
-                        rank_order=rank_order,
-                        window_size=window_size,
+                        config_idx=best_idx,
                     )
                 except Exception:
                     continue
@@ -289,7 +332,7 @@ def _(
             else:
                 ax.text(0.5, 0.5, "No Runs Found", ha="center", va="center", transform=ax.transAxes, fontsize=12, color="gray")
 
-        fig.suptitle(f"{title_prefix} — {metric_key}", fontsize=15, fontweight="bold", y=0.995)
+        fig.suptitle(f"{title_prefix} — {metric_key} (Selected by {selection_metric})", fontsize=15, fontweight="bold", y=0.995)
         fig.tight_layout()
 
         if save_path:
@@ -307,6 +350,7 @@ def _(
     ALGO_COLORS,
     ALGO_DISPLAY_NAMES,
     extract_best_configuration,
+    get_selected_config_idx,
     np,
     os,
     plt,
@@ -317,14 +361,14 @@ def _(
         title="Sampled Algorithms: Value Error vs Greedy Policy Accuracy across 4 Tasks",
         metric_1="nn_weighted_VE",
         metric_2="nn_greedy_correct",
-        rank_by="final_window",
-        rank_order="lower",
-        window_size=200,
+        selection_metric="nn_greedy_correct",
+        selection_window=1000,
         use_geom_mean=True,
         save_path=None,
     ):
         """
         Plots a 4x2 grid (4 rows = 4 tasks, 2 cols = metric_1 (log) & metric_2 (linear)).
+        Uses the single winning configuration selected by selection_metric (window_size=1000).
         """
         task_keys = ["fixed_mountaincar", "fixed_fourrooms", "random_mountaincar", "random_fourrooms"]
         fig, axes = plt.subplots(4, 2, figsize=(16, 18), sharex=False)
@@ -354,14 +398,26 @@ def _(
                 color = ALGO_COLORS.get(algo, "#333333")
                 display_name = ALGO_DISPLAY_NAMES.get(algo, algo)
 
+                # Select single best run once based on greedy accuracy
+                try:
+                    best_idx, best_label, _ = get_selected_config_idx(
+                        sweep_data,
+                        selection_metric=selection_metric,
+                        window_size=selection_window,
+                        rank_by="final_window",
+                    )
+                except Exception:
+                    continue
+
+                label = f"{display_name} ({best_label})" if best_label else display_name
+
                 # Metric 1
                 try:
-                    m1_traj, best_label, _, _ = extract_best_configuration(
-                        sweep_data, metric_key=metric_1, rank_by=rank_by, rank_order=rank_order, window_size=window_size
+                    m1_traj, _, _, _ = extract_best_configuration(
+                        sweep_data, metric_key=metric_1, config_idx=best_idx
                     )
                     n_seeds, time_steps = m1_traj.shape
                     x = list(range(time_steps))
-                    label = f"{display_name} ({best_label})" if best_label else display_name
 
                     if use_geom_mean:
                         safe_arr = np.maximum(m1_traj, 1e-18)
@@ -385,7 +441,7 @@ def _(
                 # Metric 2
                 try:
                     m2_traj, _, _, _ = extract_best_configuration(
-                        sweep_data, metric_key=metric_2, rank_by=rank_by, rank_order=rank_order, window_size=window_size
+                        sweep_data, metric_key=metric_2, config_idx=best_idx
                     )
                     n_seeds, time_steps = m2_traj.shape
                     x = list(range(time_steps))
@@ -422,22 +478,22 @@ def _(
 
         return fig
 
-    return
+    return (plot_dual_metric_grid,)
 
 
 @app.cell
-def _(ALGO_DISPLAY_NAMES, extract_best_configuration, os, pd):
+def _(ALGO_DISPLAY_NAMES, extract_best_configuration, get_selected_config_idx, os, pd):
     def generate_task_summary_table(
         all_task_data,
         algo_list,
         metric_key="nn_weighted_VE",
-        window_size=200,
-        rank_by="final_window",
-        rank_order="lower",
+        window_size=1000,
+        selection_metric="nn_greedy_correct",
         save_path=None,
     ):
         """
-        Creates a unified summary table across all 4 tasks for the specified algorithms.
+        Creates a unified summary table across all 4 tasks for the specified algorithms,
+        evaluating the single configuration selected by selection_metric (window_size=1000).
         """
         task_keys = ["fixed_mountaincar", "fixed_fourrooms", "random_mountaincar", "random_fourrooms"]
         rows = []
@@ -456,12 +512,18 @@ def _(ALGO_DISPLAY_NAMES, extract_best_configuration, os, pd):
 
                 sweep_data = runs_dict[algo]
                 try:
-                    seed_trajectories, best_label, best_idx, _ = extract_best_configuration(
+                    # Single selection based on greedy accuracy
+                    best_idx, best_label, _ = get_selected_config_idx(
+                        sweep_data,
+                        selection_metric=selection_metric,
+                        window_size=window_size,
+                        rank_by="final_window",
+                    )
+
+                    seed_trajectories, _, _, _ = extract_best_configuration(
                         sweep_data,
                         metric_key=metric_key,
-                        rank_by=rank_by,
-                        rank_order=rank_order,
-                        window_size=window_size,
+                        config_idx=best_idx,
                     )
                     n_seeds, time_steps = seed_trajectories.shape
                     win = max(1, min(time_steps, window_size))
@@ -483,7 +545,7 @@ def _(ALGO_DISPLAY_NAMES, extract_best_configuration, os, pd):
                     rows.append({
                         "Task": task_info["name"],
                         "Algorithm": display_name,
-                        "Best Hyperparameters": best_label,
+                        "Best Hyperparameters (by Greedy Acc)": best_label,
                         f"Converged Window (Past {win} steps)": f"{window_mean:.4e} ± {window_std:.2e}",
                         f"AUC ({metric_key})": f"{auc_val:.4e}",
                         f"Final ({metric_key})": f"{final_mean:.4e} ± {final_std:.2e}",
@@ -545,19 +607,19 @@ def _():
 @app.cell
 def _(mo):
     base_dir_input = mo.ui.text(value="results", label="Base Results Dir")
-    window_size_slider = mo.ui.slider(start=10, stop=20000, step=10, value=200, label="Tail Window Size")
-    rank_by_dropdown = mo.ui.dropdown(
-        options=["final_window", "auc", "final_step", "min"],
-        value="final_window",
-        label="Rank Configs By",
+    window_size_slider = mo.ui.slider(start=10, stop=20000, step=10, value=1000, label="Selection Tail Window Size")
+    selection_metric_dropdown = mo.ui.dropdown(
+        options=["nn_greedy_correct", "nn_weighted_VE", "E"],
+        value="nn_greedy_correct",
+        label="Select Best Config By",
     )
     use_geom_mean_checkbox = mo.ui.checkbox(value=True, label="Geometric Mean Bands")
 
-    controls = mo.hstack([base_dir_input, window_size_slider, rank_by_dropdown, use_geom_mean_checkbox], justify="start")
+    controls = mo.hstack([base_dir_input, selection_metric_dropdown, window_size_slider, use_geom_mean_checkbox], justify="start")
     controls
     return (
         base_dir_input,
-        rank_by_dropdown,
+        selection_metric_dropdown,
         use_geom_mean_checkbox,
         window_size_slider,
     )
@@ -579,7 +641,7 @@ def _(
     EXACT_ALGOS,
     mo,
     plot_4task_grid,
-    rank_by_dropdown,
+    selection_metric_dropdown,
     task_data,
     use_geom_mean_checkbox,
     window_size_slider,
@@ -592,8 +654,8 @@ def _(
         ylabel="Value Error (nn_weighted_VE)",
         log_scale=True,
         use_geom_mean=use_geom_mean_checkbox.value,
-        rank_by=rank_by_dropdown.value,
-        window_size=window_size_slider.value,
+        selection_metric=selection_metric_dropdown.value,
+        selection_window=window_size_slider.value,
         save_path="results/comparison_exact_4tasks_VE.png",
     )
 
@@ -605,11 +667,10 @@ def _(
         ylabel="Greedy Policy Accuracy",
         log_scale=False,
         use_geom_mean=use_geom_mean_checkbox.value,
-        rank_by=rank_by_dropdown.value,
-        window_size=window_size_slider.value,
+        selection_metric=selection_metric_dropdown.value,
+        selection_window=window_size_slider.value,
         save_path="results/comparison_exact_4tasks_greedy_acc.png",
     )
-
 
     fig_E_exact = plot_4task_grid(
         task_data,
@@ -619,16 +680,16 @@ def _(
         ylabel="E (A-weighted value error)",
         log_scale=True,
         use_geom_mean=use_geom_mean_checkbox.value,
-        rank_by=rank_by_dropdown.value,
-        window_size=window_size_slider.value,
+        selection_metric=selection_metric_dropdown.value,
+        selection_window=window_size_slider.value,
         save_path="results/comparison_exact_4tasks_E.png",
     )
 
     mo.vstack([
-        mo.md("## 📊 2. Exact Algorithms: 4-Task Value Error (`nn_weighted_VE`)"),
+        mo.md("## 📊 2. Exact Algorithms: 4-Task Value Error (`nn_weighted_VE`) & Greedy Accuracy"),
         mo.image(src="results/comparison_exact_4tasks_VE.png"),
-        mo.image(src="results/comparison_exact_4tasks_greedy_acc.png")])
-
+        mo.image(src="results/comparison_exact_4tasks_greedy_acc.png"),
+    ])
     return
 
 
@@ -645,7 +706,7 @@ def _(
     EXACT_ALGOS,
     generate_task_summary_table,
     mo,
-    rank_by_dropdown,
+    selection_metric_dropdown,
     task_data,
     window_size_slider,
 ):
@@ -654,7 +715,7 @@ def _(
         algo_list=EXACT_ALGOS,
         metric_key="nn_weighted_VE",
         window_size=window_size_slider.value,
-        rank_by=rank_by_dropdown.value,
+        selection_metric=selection_metric_dropdown.value,
         save_path="results/exact_algorithms_converged_summary.csv",
     )
     mo.ui.table(exact_table)
@@ -673,7 +734,7 @@ def _(
     mo,
     plot_4task_grid,
     plt,
-    rank_by_dropdown,
+    selection_metric_dropdown,
     task_data,
     use_geom_mean_checkbox,
     window_size_slider,
@@ -686,8 +747,8 @@ def _(
         ylabel="Value Error (nn_weighted_VE)",
         log_scale=True,
         use_geom_mean=use_geom_mean_checkbox.value,
-        rank_by=rank_by_dropdown.value,
-        window_size=window_size_slider.value,
+        selection_metric=selection_metric_dropdown.value,
+        selection_window=window_size_slider.value,
         save_path="results/comparison_sampled_4tasks_VE.png",
     )
 
@@ -699,14 +760,14 @@ def _(
         ylabel="Greedy Policy Accuracy",
         log_scale=False,
         use_geom_mean=use_geom_mean_checkbox.value,
-        rank_by=rank_by_dropdown.value,
-        window_size=window_size_slider.value,
+        selection_metric=selection_metric_dropdown.value,
+        selection_window=window_size_slider.value,
         save_path="results/comparison_sampled_4tasks_greedy_acc.png",
     )
     plt.close('all')
 
     mo.vstack([
-        mo.md("## 📊 1. Sampled Algorithms: 4-Task Value Error (`nn_weighted_VE`)"),
+        mo.md("## 📊 1. Sampled Algorithms: 4-Task Value Error (`nn_weighted_VE`) & Greedy Accuracy"),
         mo.image(src="results/comparison_sampled_4tasks_VE.png"), 
         mo.image(src="results/comparison_sampled_4tasks_greedy_acc.png"), 
     ])
@@ -723,7 +784,7 @@ def _(
     SAMPLED_ALGOS,
     generate_task_summary_table,
     mo,
-    rank_by_dropdown,
+    selection_metric_dropdown,
     task_data,
     window_size_slider,
 ):
@@ -732,7 +793,7 @@ def _(
         algo_list=SAMPLED_ALGOS,
         metric_key="nn_weighted_VE",
         window_size=window_size_slider.value,
-        rank_by=rank_by_dropdown.value,
+        selection_metric=selection_metric_dropdown.value,
         save_path="results/sampled_algorithms_converged_summary.csv",
     )
 
