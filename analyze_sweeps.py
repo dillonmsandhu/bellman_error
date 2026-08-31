@@ -78,25 +78,30 @@ def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_re
                         
     # 2. Also check standalone algorithm tuning dirs if not already found
     standalone_dirs = {
-        "exact_td": f"{base_results_dir}/{policy}/td_exact/tuning",
-        "exact_mc": f"{base_results_dir}/{policy}/mc_exact/tuning",
-        "exact_E_gd": f"{base_results_dir}/{policy}/E_gd_exact/tuning",
-        "exact_E": f"{base_results_dir}/{policy}/exact_E/tuning",
-        "exact_Etd": f"{base_results_dir}/{policy}/exact_E_td/tuning",
-        "exact_E_td": f"{base_results_dir}/{policy}/exact_E_td/tuning",
-        "exact_td_lambda": f"{base_results_dir}/{policy}/td_lambda_exact/tuning",
-        "exact_td_symmetric": f"{base_results_dir}/{policy}/td_exact_symmetric/tuning",
-        "sampled_E": f"{base_results_dir}/{policy}/sampled_E/tuning",
-        "td": f"{base_results_dir}/{policy}/td/tuning",
-        "td0": f"{base_results_dir}/{policy}/td0/tuning",
-        "mc": f"{base_results_dir}/{policy}/mc/tuning",
-        "monte_carlo": f"{base_results_dir}/{policy}/mc/tuning",
+        "exact_td": [f"{base_results_dir}/{policy}/td_exact/tuning", f"{base_results_dir}/{policy}/td_exact"],
+        "exact_mc": [f"{base_results_dir}/{policy}/mc_exact/tuning", f"{base_results_dir}/{policy}/mc_exact"],
+        "exact_E_gd": [f"{base_results_dir}/{policy}/E_gd_exact/tuning", f"{base_results_dir}/{policy}/exact_E/tuning", f"{base_results_dir}/{policy}/exact_E"],
+        "exact_E": [f"{base_results_dir}/{policy}/exact_E/tuning", f"{base_results_dir}/{policy}/exact_E"],
+        "exact_Etd": [f"{base_results_dir}/{policy}/exact_E_td/tuning", f"{base_results_dir}/{policy}/exact_E_td"],
+        "exact_E_td": [f"{base_results_dir}/{policy}/exact_E_td/tuning", f"{base_results_dir}/{policy}/exact_E_td"],
+        "exact_td_lambda": [f"{base_results_dir}/{policy}/td_lambda_exact/tuning", f"{base_results_dir}/{policy}/td_lambda_exact"],
+        "exact_td_symmetric": [f"{base_results_dir}/{policy}/td_exact_symmetric/tuning", f"{base_results_dir}/{policy}/td_exact_symmetric"],
+        "sampled_E": [f"{base_results_dir}/{policy}/sampled_E/tuning", f"{base_results_dir}/{policy}/sampled_E"],
+        "td": [f"{base_results_dir}/{policy}/td/tuning", f"{base_results_dir}/{policy}/td"],
+        "td0": [f"{base_results_dir}/{policy}/td0/tuning", f"{base_results_dir}/{policy}/td0"],
+        "mc": [f"{base_results_dir}/{policy}/mc/tuning", f"{base_results_dir}/{policy}/mc"],
+        "monte_carlo": [f"{base_results_dir}/{policy}/mc/tuning", f"{base_results_dir}/{policy}/mc"],
     }
-    for algo, tuning_dir in standalone_dirs.items():
-        if algo not in found and os.path.exists(tuning_dir):
-            ts, env, run_path = find_latest_run_dir(tuning_dir)
-            if run_path and (env_name is None or env == env_name):
-                found[algo] = run_path
+    for algo, candidate_dirs in standalone_dirs.items():
+        if algo in found:
+            continue
+        dirs_list = candidate_dirs if isinstance(candidate_dirs, (list, tuple)) else [candidate_dirs]
+        for tuning_dir in dirs_list:
+            if os.path.exists(tuning_dir):
+                ts, env, run_path = find_latest_run_dir(tuning_dir)
+                if run_path and (env_name is None or env == env_name):
+                    found[algo] = run_path
+                    break
 
     return found
 
@@ -467,50 +472,68 @@ def summarize_algorithm_comparison(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Analyze and compare hyperparameter sweeps.")
-    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo"], help="Policy category to search")
+    parser.add_argument("--sweep-dir", type=str, default=None,
+                        help="Path to a batch sweep folder (e.g. results/fixed/sweeps/fixed_FourRooms-misc_...)")
+    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo"], help="Policy category to search if --sweep-dir is not provided")
     parser.add_argument("--env-name", type=str, default="FourRooms-misc", help="Environment name")
-    parser.add_argument("--metric", type=str, default="nn_weighted_VE", help="Primary metric key")
+    parser.add_argument("--metric", type=str, default="nn_weighted_VE", help="Primary metric key (e.g. nn_weighted_VE, nn_greedy_correct, E, V_start)")
     parser.add_argument("--use-geom-mean", action="store_true", help="Plot geometric mean instead of arithmetic mean")
-    parser.add_argument("--rank-by", type=str, default="auc", choices=["auc", "final_window", "final_step", "min", "max"],
-                        help="Criterion to rank and select best config (default: auc)")
+    parser.add_argument("--rank-by", type=str, default="final_window", choices=["auc", "final_window", "final_step", "min", "max"],
+                        help="Criterion to rank and select best config (default: final_window)")
     parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"],
                         help="Optimization goal: lower (default) or higher")
-    parser.add_argument("--higher-is-better", action="store_true", help="Shortcut for --rank-order higher")
+    parser.add_argument("--higher-is-better", action="store_true", help="Shortcut for --rank-order higher (recommended for accuracy/reward metrics)")
     parser.add_argument("--window-size", type=int, default=20, help="Window size (in steps) for final_window ranking (default: 20)")
+    parser.add_argument("--linear-scale", action="store_true", help="Force linear y-scale instead of log scale")
     args = parser.parse_args()
 
-    rank_order = "higher" if args.higher_is_better else args.rank_order
-
-    default_algos = {
-        "fixed": {
-            "Exact TD": "results/fixed/td_exact/tuning",
-            "Exact MC": "results/fixed/mc_exact/tuning",
-            "Exact E": "results/fixed/E_gd_exact/tuning",
-            "Exact TD(λ)": "results/fixed/td_lambda_exact/tuning",
-        },
-        "random": {
-            "Exact TD": "results/random/td_exact/tuning",
-            "Exact MC": "results/random/mc_exact/tuning",
-            "Exact E": "results/random/exact_E/tuning",
-            "Exact TD(λ)": "results/random/td_lambda_exact/tuning",
-        },
-        "ppo": {
-            "Exact TD": "results/ppo/exact_td/tuning",
-            "Exact MC": "results/ppo/exact_mc/tuning",
-            "Exact E": "results/ppo/exact_E/tuning",
-            "Exact TD(λ)": "results/ppo/exact_td_lambda/tuning",
-        }
-    }
-
-    target_dict = default_algos.get(args.policy, default_algos["fixed"])
-    print(f"\nAnalyzing latest sweeps for policy='{args.policy}', env='{args.env_name}'...")
+    # Determine optimization direction (higher is better for accuracy/return metrics)
+    is_higher = args.higher_is_better or args.rank_order == "higher" or "correct" in args.metric or "acc" in args.metric or "reward" in args.metric
+    rank_order = "higher" if is_higher else "lower"
     
+    # Disable log scale for bounded metrics like accuracy in [0, 1] or when explicitly requested
+    log_scale = False if (args.linear_scale or "correct" in args.metric or "acc" in args.metric) else True
+
+    # 1. Discover target runs from --sweep-dir or workspace auto-discovery
+    if args.sweep_dir and os.path.exists(args.sweep_dir):
+        target_dict = {}
+        for item in sorted(os.listdir(args.sweep_dir)):
+            item_path = os.path.join(args.sweep_dir, item)
+            if not os.path.isdir(item_path) or item.startswith(".") or item == "comparison":
+                continue
+            tuning_dir = os.path.join(item_path, "tuning")
+            search_dir = tuning_dir if os.path.exists(tuning_dir) else item_path
+            ts, env, run_path = find_latest_run_dir(search_dir)
+            if run_path:
+                target_dict[item] = run_path
+        save_dir = os.path.join(args.sweep_dir, "comparison")
+        print(f"\nAnalyzing sweep directory: '{args.sweep_dir}'")
+    else:
+        target_dict = discover_algorithm_sweeps(policy=args.policy, env_name=args.env_name)
+        save_dir = f"results/{args.policy}/sweeps/comparison"
+        print(f"\nAnalyzing latest sweeps for policy='{args.policy}', env='{args.env_name}'...")
+
+    if not target_dict:
+        print("No algorithm sweep runs found.")
+        exit(0)
+
+    print(f"Found {len(target_dict)} algorithm runs: {list(target_dict.keys())}")
+    print(f"Metric: '{args.metric}' | Rank By: '{args.rank_by}' ({rank_order} is better)")
+
+    os.makedirs(save_dir, exist_ok=True)
+    summary_filename = "comparison_summary.csv" if args.metric == "nn_weighted_VE" else f"comparison_summary_{args.metric}.csv"
+    plot_filename = "comparison_best_configs.png" if args.metric == "nn_weighted_VE" else f"comparison_best_configs_{args.metric}.png"
+    
+    summary_path = os.path.join(save_dir, summary_filename)
+    plot_path = os.path.join(save_dir, plot_filename)
+
     summary = summarize_algorithm_comparison(
         target_dict,
         metric_key=args.metric,
         rank_by=args.rank_by,
         rank_order=rank_order,
         window_size=args.window_size,
+        save_path=summary_path,
     )
     print("\n" + "=" * 70)
     print("ALGORITHM COMPARISON SUMMARY:")
@@ -518,19 +541,16 @@ if __name__ == "__main__":
     print(summary.to_string(index=False))
     print("=" * 70)
 
-    save_dir = f"results/{args.policy}/sweeps/comparison"
-    os.makedirs(save_dir, exist_ok=True)
-    summary_path = os.path.join(save_dir, "algorithm_comparison_summary.csv")
-    summary.to_csv(summary_path, index=False)
-
-    plot_path = os.path.join(save_dir, "algorithm_comparison_best_configs.png")
     plot_algorithm_comparison(
         target_dict,
         metric_key=args.metric,
         env_name=args.env_name,
+        log_scale=log_scale,
         use_geom_mean=args.use_geom_mean,
         rank_by=args.rank_by,
         rank_order=rank_order,
         window_size=args.window_size,
         save_path=plot_path,
     )
+    print(f"\nSaved summary to: {summary_path}")
+    print(f"Saved comparison plot to: {plot_path}\n")
