@@ -22,10 +22,10 @@ def _():
     import os
 
     # Ensure repository root is in sys.path when running from notebooks/ directory
-    current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.path.abspath(".")
-    repo_root = os.path.abspath(os.path.join(current_dir, "..")) if os.path.basename(current_dir) == "notebooks" else current_dir
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
+    _current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.path.abspath(".")
+    _repo_root = os.path.abspath(os.path.join(_current_dir, "..")) if os.path.basename(_current_dir) == "notebooks" else _current_dir
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
 
     import jax
     import jax.numpy as jnp
@@ -154,10 +154,10 @@ def _(PRESETS, mo):
 
 @app.cell
 def _(PRESETS, preset_selector):
-    active_preset = PRESETS[preset_selector.value]
-    policy_type = active_preset["policy_type"]
-    fixed_policy_dir = active_preset["fixed_policy_dir"]
-    runs_spec = active_preset["runs"]
+    _active_preset = PRESETS[preset_selector.value]
+    policy_type = _active_preset["policy_type"]
+    fixed_policy_dir = _active_preset["fixed_policy_dir"]
+    runs_spec = _active_preset["runs"]
     epoch_idx = -1  # Final checkpoint index
     return epoch_idx, fixed_policy_dir, policy_type, runs_spec
 
@@ -173,24 +173,23 @@ def _(
     policy_type,
 ):
     # Initialize Environment & Evaluator
-    env, env_params = make_env(config)
-    evaluator = initialize_evaluator(config, env, env_params)
+    _env, _env_params = make_env(config)
+    evaluator = initialize_evaluator(config, _env, _env_params)
 
     # Optional Fixed Policy Loading
-    fixed_policy_fn = None
-    policy_train_state = None
+    _fixed_policy_fn = None
     if policy_type == "fixed":
         try:
-            fixed_policy_fn, policy_train_state, _ = load_fixed_policy(
+            _fixed_policy_fn, _, _ = load_fixed_policy(
                 fixed_policy_dir, env_name=config.get("ENV_NAME", "FourRooms-misc")
             )
             print(f"Successfully loaded fixed policy from {fixed_policy_dir}")
-        except Exception as e:
-            print(f"Warning: Could not load fixed policy from '{fixed_policy_dir}': {e}")
+        except Exception as _e:
+            print(f"Warning: Could not load fixed policy from '{fixed_policy_dir}': {_e}")
 
     # Compute Ground Truth (V^pi, mu, grids)
     gt = compute_ground_truth(
-        evaluator, policy_type=policy_type, fixed_policy_fn=fixed_policy_fn
+        evaluator, policy_type=policy_type, fixed_policy_fn=_fixed_policy_fn
     )
     return evaluator, gt
 
@@ -201,21 +200,21 @@ def _(epoch_idx, evaluator, get_run_value_grid, gt, resolve_runs, runs_spec):
     resolved_runs = resolve_runs(runs_spec)
 
     run_grids = {}
-    for key, rinfo in resolved_runs.items():
-        grid = None
-        if rinfo["metrics"] is not None:
+    for _key, _rinfo in resolved_runs.items():
+        _grid = None
+        if _rinfo["metrics"] is not None:
             try:
-                grid = get_run_value_grid(rinfo, evaluator, epoch_idx=epoch_idx)
-            except Exception as e:
-                print(f"Could not extract value grid for {key}: {e}")
-                grid = None
+                _grid = get_run_value_grid(_rinfo, evaluator, epoch_idx=epoch_idx)
+            except Exception as _e:
+                print(f"Could not extract value grid for {_key}: {_e}")
+                _grid = None
 
         # Fallback to ground truth if data is not available locally for demo preview
-        run_grids[key] = {
-            "title": rinfo["title"],
-            "color": rinfo["color"],
-            "grid": grid if grid is not None else gt["v_grid"],
-            "is_loaded": grid is not None,
+        run_grids[_key] = {
+            "title": _rinfo["title"],
+            "color": _rinfo["color"],
+            "grid": _grid if _grid is not None else gt["v_grid"],
+            "is_loaded": _grid is not None,
         }
     return resolved_runs, run_grids
 
@@ -223,7 +222,7 @@ def _(epoch_idx, evaluator, get_run_value_grid, gt, resolve_runs, runs_spec):
 @app.cell
 def _(evaluator, gt, plot_multi_grids):
     # Ground Truth: True Value Function and Stationary Distribution
-    fig_gt = plot_multi_grids(
+    _fig_gt = plot_multi_grids(
         {
             "True Value Function ($V^\pi$)": gt["v_grid"],
             "Stationary Distribution ($\mu$)": gt["mu_grid"],
@@ -236,37 +235,37 @@ def _(evaluator, gt, plot_multi_grids):
         use_log=False,
         shared_vrange=False,
     )
-    fig_gt
+    _fig_gt
     return
 
 
 @app.cell
 def _(evaluator, plot_multi_grids, run_grids):
     # Side-by-side comparison of learned value functions
-    display_grids = {info["title"]: info["grid"] for info in run_grids.values()}
-    fig_values = plot_multi_grids(
-        display_grids,
+    _display_grids = {info["title"]: info["grid"] for info in run_grids.values()}
+    _fig_values = plot_multi_grids(
+        _display_grids,
         evaluator,
         cmap="viridis",
         shared_vrange=True,
     )
-    fig_values
+    _fig_values
     return
 
 
 @app.cell
 def _(evaluator, gt, plot_error_grids, run_grids):
     # Side-by-side comparison of value errors (MSE)
-    error_input = {key: info["grid"] for key, info in run_grids.items()}
-    fig_errors = plot_error_grids(
-        error_input,
+    _error_input = {_k: _info["grid"] for _k, _info in run_grids.items()}
+    _fig_errors = plot_error_grids(
+        _error_input,
         gt["v_grid"],
         evaluator,
         metric_type="squared_error",
         use_log=True,
         shared_vrange=True,
     )
-    fig_errors
+    _fig_errors
     return
 
 
@@ -288,10 +287,10 @@ def _(mo, runs_spec):
 
     # Dynamic checkboxes for each algorithm in runs_spec
     run_toggles = {
-        key: mo.ui.checkbox(
-            value=True, label=f"Show {runs_spec[key].get('title', key)}"
+        _k: mo.ui.checkbox(
+            value=True, label=f"Show {runs_spec[_k].get('title', _k)}"
         )
-        for key in runs_spec
+        for _k in runs_spec
     }
     return azim_slider, elev_slider, run_toggles
 
@@ -308,96 +307,88 @@ def _(
     run_toggles,
 ):
     # Render interactive 3D plots
-    toggle_values = {key: toggle.value for key, toggle in run_toggles.items()}
+    _toggle_values = {_k: _t.value for _k, _t in run_toggles.items()}
 
-    controls = mo.hstack(
+    _controls = mo.hstack(
         [elev_slider, azim_slider] + list(run_toggles.values()),
         justify="start",
         wrap=True,
     )
-    fig_3d = render_3d(
+    _fig_3d = render_3d(
         gt["v_grid"],
         run_grids,
         evaluator,
         elev=elev_slider.value,
         azim=azim_slider.value,
-        show_toggles=toggle_values,
+        show_toggles=_toggle_values,
     )
-    mo.output.append(controls)
-    mo.output.append(fig_3d)
+    mo.output.append(_controls)
+    mo.output.append(_fig_3d)
     return
 
 
 @app.cell
 def _(evaluator, gt, plot_3d_comparison, run_grids):
     # 3D Line Wireframe Comparison
-    fig_3d_lines = plot_3d_comparison(gt["v_grid"], run_grids, evaluator)
-    fig_3d_lines
+    _fig_3d_lines = plot_3d_comparison(gt["v_grid"], run_grids, evaluator)
+    _fig_3d_lines
     return
 
 
 @app.cell
 def _(compute_runs_jaggedness, evaluator, gt, mo, run_grids):
     # Surface Jaggedness / Smoothness Evaluation
-    jag_scores = compute_runs_jaggedness(
+    _jag_scores = compute_runs_jaggedness(
         run_grids, evaluator.occupied_map, v_true=gt["v_grid"]
     )
-    table_rows = [
-        {"Algorithm / Run": k, "Jaggedness Score (lower is smoother)": f"{v:.5f}"}
-        for k, v in jag_scores.items()
+    _table_rows = [
+        {"Algorithm / Run": _k, "Jaggedness Score (lower is smoother)": f"{_v:.5f}"}
+        for _k, _v in _jag_scores.items()
     ]
-    jag_table = mo.ui.table(table_rows)
+    _jag_table = mo.ui.table(_table_rows)
     mo.output.append(mo.md("### Surface Jaggedness Comparison"))
-    mo.output.append(jag_table)
+    mo.output.append(_jag_table)
     return
 
 
 @app.cell
 def _(evaluator, plot_feature_singular_vectors, resolved_runs):
     # Top Feature Spatial Patterns
-    feature_figs = {}
-    for key, rinfo in resolved_runs.items():
-        if rinfo["metrics"] is not None and "feature_top_singular_vectors" in rinfo["metrics"]:
-            fig_feat = plot_feature_singular_vectors(
-                rinfo["metrics"],
+    _feature_figs = {}
+    for _key, _rinfo in resolved_runs.items():
+        if _rinfo["metrics"] is not None and "feature_top_singular_vectors" in _rinfo["metrics"]:
+            _fig_feat = plot_feature_singular_vectors(
+                _rinfo["metrics"],
                 evaluator=evaluator,
-                title_prefix=rinfo["title"],
+                title_prefix=_rinfo["title"],
             )
-            if fig_feat is not None:
-                feature_figs[key] = fig_feat
-    return (feature_figs,)
+            if _fig_feat is not None:
+                _feature_figs[_key] = _fig_feat
 
-
-@app.cell
-def _(feature_figs):
-    for fig in feature_figs.values():
-        fig
+    for _fig in _feature_figs.values():
+        _fig
     return
 
 
 @app.cell
 def _(evaluator, plot_jacobian_singular_vectors, resolved_runs):
     # Top Jacobian Singular Vectors
-    jacobian_figs = {}
-    for key, rinfo in resolved_runs.items():
-        if rinfo["metrics"] is not None and any(
-            k in rinfo["metrics"]
-            for k in ["Jacobian_top_singular_vectors", "jacobian_top_singular_vectors"]
+    _jacobian_figs = {}
+    for _key, _rinfo in resolved_runs.items():
+        if _rinfo["metrics"] is not None and any(
+            _k in _rinfo["metrics"]
+            for _k in ["Jacobian_top_singular_vectors", "jacobian_top_singular_vectors"]
         ):
-            fig_jac = plot_jacobian_singular_vectors(
-                rinfo["metrics"],
+            _fig_jac = plot_jacobian_singular_vectors(
+                _rinfo["metrics"],
                 evaluator=evaluator,
-                title_prefix=rinfo["title"],
+                title_prefix=_rinfo["title"],
             )
-            if fig_jac is not None:
-                jacobian_figs[key] = fig_jac
-    return (jacobian_figs,)
+            if _fig_jac is not None:
+                _jacobian_figs[_key] = _fig_jac
 
-
-@app.cell
-def _(jacobian_figs):
-    for fig in jacobian_figs.values():
-        fig
+    for _fig in _jacobian_figs.values():
+        _fig
     return
 
 

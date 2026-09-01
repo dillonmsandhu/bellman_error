@@ -14,6 +14,13 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import sys
+    import os
+
+    current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath('.')
+    repo_root = os.path.abspath(os.path.join(current_dir, '..')) if os.path.basename(current_dir) == 'notebooks' else current_dir
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    import sys
 
     print("Python Executable:", sys.executable)
     print("Site-Packages:", [p for p in sys.path if "site-packages" in p])

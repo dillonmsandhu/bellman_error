@@ -239,21 +239,27 @@ def save_feature_spectra(env_dir, env_name, sv_start, sv_end, title):
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
 
-def load_run_data(run_folder_name, env_name, results_base_path="../results"):
+def load_run_data(run_folder_name, env_name, results_base_path="results"):
     """
     Load the configuration and output data for a run given the run folder and environment.
     
     Parameters:
     - run_folder_name (str): The timestamped run folder name, e.g., "dpi_20241110_193658"
     - env_name (str): The environment name, e.g., "Asterix-MinAtar"
-    - results_base_path (str): Base path to the results directory, default is a sibling "results" directory.
+    - results_base_path (str): Base path to the results directory.
     
     Returns:
     - config (dict): Loaded JSON configuration.
     - results (object): Loaded output data from pickle.
     """
-    # Construct paths
+    # Construct paths with automatic fallback
     run_path = os.path.join(results_base_path, run_folder_name, env_name)
+    if not os.path.exists(run_path):
+        for candidate_base in [results_base_path, "../results", "results", os.path.join("..", results_base_path)]:
+            test_path = os.path.join(candidate_base, run_folder_name, env_name)
+            if os.path.exists(test_path):
+                run_path = test_path
+                break
     config_path = os.path.join(run_path, "config.json")
     results_path = os.path.join(run_path, "out.pkl")
     
