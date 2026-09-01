@@ -32,6 +32,7 @@ def _():
 
     td_config, td_metrics = load_run_data('random/td_exact/tuned_saved_metrics/', 'FourRooms-misc', 'results')
     mc_config, mc_metrics = load_run_data('random/mc_exact/tuned_saved_metrics/', 'FourRooms-misc', 'results')
+    E_config, E_metrics = load_run_data('random/exact_E/tuned_saved_metrics/', 'FourRooms-misc', 'results')
 
     env, env_params = make_env(td_config)
     evaluator = initialize_evaluator(td_config, env, env_params)
@@ -42,7 +43,7 @@ def _():
 
 
     return (
-        email_pdf,
+        E_metrics,
         evaluator,
         jax,
         jnp,
@@ -178,7 +179,7 @@ def _(V_pi, evaluator, jnp, plt, target_policy_probs):
 
 
 @app.cell
-def _(email_pdf, evaluator, jnp, mc_metrics, plt, td_metrics, v_g):
+def _(evaluator, jnp, mc_metrics, plt, td_metrics, v_g):
     def plot_combined_errs(
         grid1,
         grid2,
@@ -241,17 +242,18 @@ def _(email_pdf, evaluator, jnp, mc_metrics, plt, td_metrics, v_g):
     td_err = (evaluator.get_value_grid(td_metrics["V_nn"][0, 1000]) - v_g) ** 2
 
     fig = plot_combined_errs(td_err, mc_err, evaluator, title1 = 'TD', title2= 'Supervised', use_log=True)
-    fig.savefig('figures/td_vs_mc_value_errors.pdf', bbox_inches='tight')
-    email_pdf('figures/td_vs_mc_value_errors.pdf')
+    # fig.savefig('figures/td_vs_mc_value_errors.pdf', bbox_inches='tight')
+    # email_pdf('figures/td_vs_mc_value_errors.pdf')
+    fig
     return
 
 
 @app.cell
-def _(evaluator, mc_metrics, td_metrics):
-    td_v_last = evaluator.get_value_grid(td_metrics['V_nn'][0,500])
-    mc_v_last = evaluator.get_value_grid(mc_metrics['V_nn'][0,500])
-
-    return mc_v_last, td_v_last
+def _(E_metrics, evaluator, mc_metrics, td_metrics):
+    td_v_last = evaluator.get_value_grid(td_metrics['V_nn'][0,100])
+    mc_v_last = evaluator.get_value_grid(mc_metrics['V_nn'][0,100])
+    E_v_last = evaluator.get_value_grid(E_metrics['V_nn'][0,100])
+    return E_v_last, mc_v_last, td_v_last
 
 
 @app.cell
@@ -269,12 +271,13 @@ def _(mo):
     azim_slider = mo.ui.slider(-180, 180, step=5, value=-60, label="Azimuth (Rotation)")
     show_td = mo.ui.checkbox(value=True, label="Show TD")
     show_mc = mo.ui.checkbox(value=True, label="Show MC")
-    return azim_slider, elev_slider, show_mc, show_td
+    show_E = mo.ui.checkbox(value=True, label="Show E")
+    return azim_slider, elev_slider, show_E, show_mc, show_td
 
 
 @app.cell
 def _(jnp, np, plt):
-    def plot_3d_comparison(v_true, v_td, v_mc, evaluator, title="Value Function Comparison (3D Lines)"):
+    def plot_3d_comparison(v_true, v_td, v_mc, v_e, evaluator, title="Value Function Comparison (3D Lines)"):
         fig = plt.figure(figsize=(12, 10))
         ax = fig.add_subplot(111, projection='3d')
 
@@ -288,18 +291,22 @@ def _(jnp, np, plt):
         vt = jnp.where(mask == 1, jnp.nan, v_true)
         vtd = jnp.where(mask == 1, jnp.nan, v_td)
         vmc = jnp.where(mask == 1, jnp.nan, v_mc)
+        ve = jnp.where(mask == 1, jnp.nan, v_e)
 
         # Plot lines along rows
         for i in range(ny):
             ax.plot(X[i, :], Y[i, :], vt[i, :], color='black', alpha=0.5, linewidth=1.5, label='True' if i == 0 else "")
             ax.plot(X[i, :], Y[i, :], vtd[i, :], color='blue', alpha=0.6, linewidth=1.5, label='TD' if i == 0 else "")
             ax.plot(X[i, :], Y[i, :], vmc[i, :], color='red', alpha=0.6, linewidth=1.5, label='MC' if i == 0 else "")
+            ax.plot(X[i, :], Y[i, :], ve[i, :], color='green', alpha=0.6, linewidth=1.5, label='E' if i == 0 else "")
+        
 
         # Plot lines along columns
         for j in range(nx):
             ax.plot(X[:, j], Y[:, j], vt[:, j], color='black', alpha=0.2, linewidth=1)
             ax.plot(X[:, j], Y[:, j], vtd[:, j], color='blue', alpha=0.6, linewidth=1.5)
             ax.plot(X[:, j], Y[:, j], vmc[:, j], color='red', alpha=0.6, linewidth=1.5)
+            ax.plot(X[:, j], Y[:, j], ve[:, j], color='green', alpha=0.6, linewidth=1.5)
 
         ax.set_title(title)
         ax.set_xlabel('X (Col)')
@@ -310,8 +317,10 @@ def _(jnp, np, plt):
         from matplotlib.lines import Line2D
         custom_lines = [Line2D([0], [0], color='black', lw=4, alpha=0.8),
                         Line2D([0], [0], color='blue', lw=1.5, alpha=0.8),
-                        Line2D([0], [0], color='red', lw=1.5, alpha=0.8)]
-        ax.legend(custom_lines, ['True', 'TD', 'MC'])
+                        Line2D([0], [0], color='red', lw=1.5, alpha=0.8),
+                        Line2D([0], [0], color='green', lw=1.5, alpha=0.8)
+                        ]
+        ax.legend(custom_lines, ['True', 'TD', 'MC', 'E'])
 
         return fig
 
@@ -320,6 +329,7 @@ def _(jnp, np, plt):
 
 @app.cell
 def _(
+    E_v_last,
     azim_slider,
     elev_slider,
     evaluator,
@@ -328,12 +338,13 @@ def _(
     mo,
     np,
     plt,
+    show_E,
     show_mc,
     show_td,
     td_v_last,
     v_g,
 ):
-    def render_3d(v_true, v_td, v_mc, evaluator, elev, azim, show_td, show_mc):
+    def render_3d(v_true, v_td, v_mc, v_e, evaluator, elev, azim, show_td, show_mc, show_E):
         fig = plt.figure(figsize=(14, 7))
         mask = evaluator.occupied_map
         ny, nx = v_true.shape
@@ -343,6 +354,7 @@ def _(
         vt = jnp.where(mask == 1, jnp.nan, v_true)
         vtd = jnp.where(mask == 1, jnp.nan, v_td)
         vmc = jnp.where(mask == 1, jnp.nan, v_mc)
+        ve = jnp.where(mask == 1, jnp.nan, v_e)
 
         # Plot 1: Comparison
         ax1 = fig.add_subplot(121, projection='3d')
@@ -356,6 +368,9 @@ def _(
         if show_mc:
             for i in range(ny): ax1.plot(X[i, :], Y[i, :], vmc[i, :], color='red', alpha=0.8, linewidth=1)
             for j in range(nx): ax1.plot(X[:, j], Y[:, j], vmc[:, j], color='red', alpha=0.8, linewidth=1)
+        if show_E:
+            for i in range(ny): ax1.plot(X[i, :], Y[i, :], vmc[i, :], color='green', alpha=0.8, linewidth=1)
+            for j in range(nx): ax1.plot(X[:, j], Y[:, j], vmc[:, j], color='green', alpha=0.8, linewidth=1)
 
         ax1.set_title("Value Comparison (Surface=True)")
         ax1.view_init(elev=elev, azim=azim)
@@ -367,6 +382,7 @@ def _(
         ax2 = fig.add_subplot(122, projection='3d')
         if show_td: ax2.plot_surface(X, Y, vt - vtd, color='blue', alpha=0.5)
         if show_mc: ax2.plot_surface(X, Y, vt - vmc, color='red', alpha=0.5)
+        if show_E: ax2.plot_surface(X, Y, vt - vmc, color='green', alpha=0.5)
         ax2.set_title("Underestimation Error ($V_{true} - V_{learned}$)")
         ax2.view_init(elev=elev, azim=azim)
         ax2.set_xlabel('X')
@@ -377,6 +393,7 @@ def _(
         legend_elements = [Line2D([0], [0], color='green', lw=4, alpha=0.3, label='True (Surface)')]
         if show_td: legend_elements.append(Line2D([0], [0], color='blue', lw=2, label='TD'))
         if show_mc: legend_elements.append(Line2D([0], [0], color='red', lw=2, label='MC'))
+        if show_mc: legend_elements.append(Line2D([0], [0], color='green', lw=2, label='E'))
         ax1.legend(handles=legend_elements)
         plt.tight_layout()
         return fig
@@ -384,7 +401,7 @@ def _(
 
     controls = mo.hstack([elev_slider, azim_slider, show_td, show_mc], justify="start")
     mo.output.append(controls)
-    mo.output.append(render_3d(v_g, td_v_last, mc_v_last, evaluator, elev_slider.value, azim_slider.value, show_td.value, show_mc.value))
+    mo.output.append(render_3d(v_g, td_v_last, mc_v_last,E_v_last,evaluator, elev_slider.value, azim_slider.value, show_td.value, show_mc.value, show_E= show_E.value))
     return
 
 
@@ -407,7 +424,7 @@ def _(evaluator, jnp, mc_v_last, td_v_last, v_g):
 
 @app.cell
 def _(evaluator, jnp, plt, td_metrics):
-    def plot_features(metrics, title_prefix):
+    def plot_features(metrics, title_prefix, seed=0):
         # Extract the final epoch's top 5 singular vectors
         # Shape: (5, H, W)
         top_vectors = metrics["feature_top_singular_vectors"][-1]
@@ -417,7 +434,7 @@ def _(evaluator, jnp, plt, td_metrics):
 
         for i in range(5):
             ax = axes[i]
-            grid = top_vectors[i]
+            grid = top_vectors[seed][i]
 
             # Mask walls
             ax.imshow(mask, cmap="Greys", alpha=0.3)
@@ -437,11 +454,12 @@ def _(evaluator, jnp, plt, td_metrics):
     # Plot both
     fig_td_feats = plot_features(td_metrics, "Temporal Difference (TD)")
     # fig_mc_feats = plot_features(mc_metrics, "Monte Carlo (MC)")
-    return
+    return (fig_td_feats,)
 
 
 @app.cell
-def _():
+def _(fig_td_feats):
+    fig_td_feats
     return
 
 
