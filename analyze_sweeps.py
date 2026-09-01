@@ -2,6 +2,15 @@
 analyze_sweeps.py
 Modular analysis, extraction, and visualization tools for hyperparameter sweeps
 and cross-algorithm comparisons.
+
+
+Example Usage:
+python analyze_sweeps.py \
+    --sweep-dir results/fixed/sweeps/fixed_FourRooms-misc_20260826_155346 \
+    --metric nn_greedy_correct \
+    --rank-by final_window \
+    --higher-is-better
+    
 """
 
 import os

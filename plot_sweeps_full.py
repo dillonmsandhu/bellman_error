@@ -85,15 +85,129 @@ def _():
         "exact_E": "#1f741fff",         # Green
         "exact_Etd": "#8c564b",       # Brown
         "exact_E_td": "#8c564b",      # Brown
-        "exact_td_lambda": "#cb9e44ff", # Red
+        "exact_td_lambda": "#cb8144ff", # Red
         "exact_td_symmetric": "#9467bd", # Purple
-        "td": "#cb9e44ff",              # Blue
+        "td": "#cb8144ff",              # Blue
         "sampled_E": "#1f741fff",        # Green
         "monte_carlo": "#492d14ff",     # Orange
         "mc": "#492d14ff",              # Orange
         "td0": "#1f77b4",             # Purple
     }
     return ALGO_COLORS, ALGO_DISPLAY_NAMES, EXACT_ALGOS, SAMPLED_ALGOS, TASKS
+
+
+@app.cell
+def _(
+    ALGO_DISPLAY_NAMES,
+    extract_best_configuration,
+    get_selected_config_idx,
+    os,
+    pd,
+):
+    def generate_task_summary_table(
+        all_task_data,
+        algo_list,
+        metric_key="nn_weighted_VE",
+        window_size=20,
+        selection_metric="nn_greedy_correct",
+        save_path=None,
+    ):
+        """
+        Creates a unified summary table across all 4 tasks for the specified algorithms,
+        evaluating the single configuration selected by selection_metric (window_size=1000).
+        """
+        task_keys = ["fixed_mountaincar", "fixed_fourrooms", "random_mountaincar", "random_fourrooms"]
+        rows = []
+
+        is_percent = ("correct" in metric_key or "acc" in metric_key)
+
+        for task_id in task_keys:
+            if task_id not in all_task_data:
+                continue
+
+            task_obj = all_task_data[task_id]
+            task_info = task_obj["task_info"]
+            runs_dict = task_obj["runs"]
+
+            for algo in algo_list:
+                if algo not in runs_dict:
+                    continue
+
+                sweep_data = runs_dict[algo]
+                try:
+                    # Single selection based on greedy accuracy
+                    best_idx, best_label, _ = get_selected_config_idx(
+                        sweep_data,
+                        selection_metric=selection_metric,
+                        window_size=window_size,
+                        rank_by="final_window",
+                    )
+
+                    seed_trajectories, _, _, _ = extract_best_configuration(
+                        sweep_data,
+                        metric_key=metric_key,
+                        config_idx=best_idx,
+                    )
+                    n_seeds, time_steps = seed_trajectories.shape
+                    win = max(1, min(time_steps, window_size))
+
+                    auc_val = float(seed_trajectories.mean())
+                    window_vals = seed_trajectories[:, -win:]
+                    window_mean = float(window_vals.mean())
+                    window_std = float(window_vals.mean(axis=-1).std()) if n_seeds > 1 else 0.0
+
+                    final_vals = seed_trajectories[:, -1]
+                    final_mean = float(final_vals.mean())
+                    final_std = float(final_vals.std()) if n_seeds > 1 else 0.0
+
+                    min_val = float(seed_trajectories.min())
+                    max_val = float(seed_trajectories.max())
+
+                    display_name = ALGO_DISPLAY_NAMES.get(algo, algo)
+
+                    # Format percentages for accuracy metrics, scientific notation for errors
+                    if is_percent:
+                        conv_str = f"{window_mean * 100:.2f}% ± {window_std * 100:.2f}%"
+                        auc_str = f"{auc_val * 100:.2f}%"
+                        final_str = f"{final_mean * 100:.2f}% ± {final_std * 100:.2f}%"
+                        min_str = f"{min_val * 100:.2f}%"
+                        max_str = f"{max_val * 100:.2f}%"
+                    else:
+                        conv_str = f"{window_mean:.4e} ± {window_std:.2e}"
+                        auc_str = f"{auc_val:.4e}"
+                        final_str = f"{final_mean:.4e} ± {final_std:.2e}"
+                        min_str = f"{min_val:.4e}"
+                        max_str = f"{max_val:.4e}"
+
+                    rows.append({
+                        "Task": task_info["name"],
+                        "Algorithm": display_name,
+                        "Best Hyperparameters (by Greedy Acc)": best_label,
+                        f"Converged Window (Past {win} steps)": conv_str,
+                        f"AUC ({metric_key})": auc_str,
+                        f"Final ({metric_key})": final_str,
+                        f"Min {metric_key}": min_str,
+                        f"Max {metric_key}": max_str,
+                        "Seeds": int(n_seeds),
+                        "Total Steps": int(time_steps),
+                        "Run Directory": sweep_data.get("run_dir", "N/A"),
+                    })
+                except Exception as e:
+                    print(f"Error summarizing {algo} on {task_info['name']}: {e}")
+
+        summary_df = pd.DataFrame(rows)
+
+        if save_path and not summary_df.empty:
+            os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+            if save_path.endswith(".csv"):
+                summary_df.to_csv(save_path, index=False)
+            elif save_path.endswith(".json"):
+                summary_df.to_json(save_path, orient="records", indent=4)
+            print(f"Summary table saved to {save_path}")
+
+        return summary_df
+
+    return (generate_task_summary_table,)
 
 
 @app.cell
@@ -248,6 +362,7 @@ def _(
         use_geom_mean=True,
         selection_metric="nn_greedy_correct",
         selection_window=1000,
+        legend_loc="auto",
         save_path=None,
     ):
         """
@@ -258,6 +373,12 @@ def _(
         axes = axes.flatten()
 
         task_keys = ["fixed_mountaincar", "fixed_fourrooms", "random_mountaincar", "random_fourrooms"]
+
+        # Determine automatic legend placement
+        if legend_loc == "auto":
+            loc = "lower right" if ("correct" in metric_key or "acc" in metric_key) else "upper right"
+        else:
+            loc = legend_loc
 
         for idx, task_id in enumerate(task_keys):
             ax = axes[idx]
@@ -327,9 +448,9 @@ def _(
             ax.set_xlabel("Update Steps", fontsize=11)
             ax.set_ylabel(ylabel, fontsize=11)
             ax.grid(True, which="both", linestyle="--", alpha=0.5)
-            if plotted_any:
-                ax.legend(loc="upper right", fontsize=8.5, frameon=True)
-            else:
+            if plotted_any and loc is not None:
+                ax.legend(loc=loc, fontsize=8.5, frameon=True)
+            elif not plotted_any:
                 ax.text(0.5, 0.5, "No Runs Found", ha="center", va="center", transform=ax.transAxes, fontsize=12, color="gray")
 
         fig.suptitle(f"{title_prefix} — {metric_key} (Selected by {selection_metric})", fontsize=15, fontweight="bold", y=0.995)
@@ -478,99 +599,7 @@ def _(
 
         return fig
 
-    return (plot_dual_metric_grid,)
-
-
-@app.cell
-def _(ALGO_DISPLAY_NAMES, extract_best_configuration, get_selected_config_idx, os, pd):
-    def generate_task_summary_table(
-        all_task_data,
-        algo_list,
-        metric_key="nn_weighted_VE",
-        window_size=1000,
-        selection_metric="nn_greedy_correct",
-        save_path=None,
-    ):
-        """
-        Creates a unified summary table across all 4 tasks for the specified algorithms,
-        evaluating the single configuration selected by selection_metric (window_size=1000).
-        """
-        task_keys = ["fixed_mountaincar", "fixed_fourrooms", "random_mountaincar", "random_fourrooms"]
-        rows = []
-
-        for task_id in task_keys:
-            if task_id not in all_task_data:
-                continue
-
-            task_obj = all_task_data[task_id]
-            task_info = task_obj["task_info"]
-            runs_dict = task_obj["runs"]
-
-            for algo in algo_list:
-                if algo not in runs_dict:
-                    continue
-
-                sweep_data = runs_dict[algo]
-                try:
-                    # Single selection based on greedy accuracy
-                    best_idx, best_label, _ = get_selected_config_idx(
-                        sweep_data,
-                        selection_metric=selection_metric,
-                        window_size=window_size,
-                        rank_by="final_window",
-                    )
-
-                    seed_trajectories, _, _, _ = extract_best_configuration(
-                        sweep_data,
-                        metric_key=metric_key,
-                        config_idx=best_idx,
-                    )
-                    n_seeds, time_steps = seed_trajectories.shape
-                    win = max(1, min(time_steps, window_size))
-
-                    auc_val = float(seed_trajectories.mean())
-                    window_vals = seed_trajectories[:, -win:]
-                    window_mean = float(window_vals.mean())
-                    window_std = float(window_vals.mean(axis=-1).std()) if n_seeds > 1 else 0.0
-
-                    final_vals = seed_trajectories[:, -1]
-                    final_mean = float(final_vals.mean())
-                    final_std = float(final_vals.std()) if n_seeds > 1 else 0.0
-
-                    min_val = float(seed_trajectories.min())
-                    max_val = float(seed_trajectories.max())
-
-                    display_name = ALGO_DISPLAY_NAMES.get(algo, algo)
-
-                    rows.append({
-                        "Task": task_info["name"],
-                        "Algorithm": display_name,
-                        "Best Hyperparameters (by Greedy Acc)": best_label,
-                        f"Converged Window (Past {win} steps)": f"{window_mean:.4e} ± {window_std:.2e}",
-                        f"AUC ({metric_key})": f"{auc_val:.4e}",
-                        f"Final ({metric_key})": f"{final_mean:.4e} ± {final_std:.2e}",
-                        f"Min {metric_key}": f"{min_val:.4e}",
-                        f"Max {metric_key}": f"{max_val:.4e}",
-                        "Seeds": int(n_seeds),
-                        "Total Steps": int(time_steps),
-                        "Run Directory": sweep_data.get("run_dir", "N/A"),
-                    })
-                except Exception as e:
-                    print(f"Error summarizing {algo} on {task_info['name']}: {e}")
-
-        summary_df = pd.DataFrame(rows)
-
-        if save_path and not summary_df.empty:
-            os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-            if save_path.endswith(".csv"):
-                summary_df.to_csv(save_path, index=False)
-            elif save_path.endswith(".json"):
-                summary_df.to_json(save_path, orient="records", indent=4)
-            print(f"Summary table saved to {save_path}")
-
-        return summary_df
-
-    return (generate_task_summary_table,)
+    return
 
 
 @app.cell
@@ -607,7 +636,7 @@ def _():
 @app.cell
 def _(mo):
     base_dir_input = mo.ui.text(value="results", label="Base Results Dir")
-    window_size_slider = mo.ui.slider(start=10, stop=20000, step=10, value=1000, label="Selection Tail Window Size")
+    window_size_slider = mo.ui.slider(start=10, stop=20000, step=10, value=1800, label="Selection Tail Window Size")
     selection_metric_dropdown = mo.ui.dropdown(
         options=["nn_greedy_correct", "nn_weighted_VE", "E"],
         value="nn_greedy_correct",
@@ -669,6 +698,7 @@ def _(
         use_geom_mean=use_geom_mean_checkbox.value,
         selection_metric=selection_metric_dropdown.value,
         selection_window=window_size_slider.value,
+        legend_loc='lower right',
         save_path="results/comparison_exact_4tasks_greedy_acc.png",
     )
 
@@ -713,18 +743,12 @@ def _(
     exact_table = generate_task_summary_table(
         task_data,
         algo_list=EXACT_ALGOS,
-        metric_key="nn_weighted_VE",
+        metric_key="nn_greedy_correct",
         window_size=window_size_slider.value,
         selection_metric=selection_metric_dropdown.value,
         save_path="results/exact_algorithms_converged_summary.csv",
     )
     mo.ui.table(exact_table)
-    return
-
-
-@app.cell
-def _(mo):
-    mo.image(src="results/comparison_exact_4tasks_E.png")
     return
 
 
@@ -737,7 +761,6 @@ def _(
     selection_metric_dropdown,
     task_data,
     use_geom_mean_checkbox,
-    window_size_slider,
 ):
     fig_sampled = plot_4task_grid(
         task_data,
@@ -746,9 +769,9 @@ def _(
         metric_key="nn_weighted_VE",
         ylabel="Value Error (nn_weighted_VE)",
         log_scale=True,
+        selection_window = 40,
         use_geom_mean=use_geom_mean_checkbox.value,
         selection_metric=selection_metric_dropdown.value,
-        selection_window=window_size_slider.value,
         save_path="results/comparison_sampled_4tasks_VE.png",
     )
 
@@ -759,9 +782,10 @@ def _(
         metric_key="nn_greedy_correct",
         ylabel="Greedy Policy Accuracy",
         log_scale=False,
+        selection_window = 40,
+        legend_loc = 'lower right',
         use_geom_mean=use_geom_mean_checkbox.value,
         selection_metric=selection_metric_dropdown.value,
-        selection_window=window_size_slider.value,
         save_path="results/comparison_sampled_4tasks_greedy_acc.png",
     )
     plt.close('all')
@@ -771,11 +795,15 @@ def _(
         mo.image(src="results/comparison_sampled_4tasks_VE.png"), 
         mo.image(src="results/comparison_sampled_4tasks_greedy_acc.png"), 
     ])
+
     return
 
 
 @app.cell
-def _():
+def _(email_pdf):
+
+    email_pdf("results/comparison_sampled_4tasks_VE.png")
+    email_pdf("results/comparison_sampled_4tasks_greedy_acc.png")
     return
 
 
@@ -792,7 +820,7 @@ def _(
         task_data,
         algo_list=SAMPLED_ALGOS,
         metric_key="nn_weighted_VE",
-        window_size=window_size_slider.value,
+        window_size=20,
         selection_metric=selection_metric_dropdown.value,
         save_path="results/sampled_algorithms_converged_summary.csv",
     )
@@ -801,21 +829,6 @@ def _(
         mo.md(f"## 📋 4. Sampled Algorithms: Converged Summary Table (Tail Window: Past {window_size_slider.value} steps)"),
         mo.ui.table(sampled_table)
     ])
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
     return
 
 
