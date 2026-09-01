@@ -24,6 +24,23 @@ DEFAULT_COLORS = [
     "#17becf",  # Cyan
 ]
 
+def find_results_dir(base_results_path="results"):
+    """
+    Intelligently locates the results directory whether called from workspace root or a subfolder like notebooks/.
+    """
+    if os.path.isabs(base_results_path) and os.path.exists(base_results_path):
+        return base_results_path
+    if os.path.exists(base_results_path):
+        return base_results_path
+    parent_candidate = os.path.join("..", base_results_path)
+    if os.path.exists(parent_candidate):
+        return parent_candidate
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    file_candidate = os.path.join(file_dir, base_results_path)
+    if os.path.exists(file_candidate):
+        return file_candidate
+    return base_results_path
+
 # ---------------------------------------------------------------------------
 # Policy Loading & Ground Truth Computation
 # ---------------------------------------------------------------------------
@@ -44,6 +61,8 @@ def load_fixed_policy(model_load_dir_or_path, env_name="FourRooms-misc", base_re
         policy_train_state: Loaded train state object
         policy_config: Loaded config dictionary
     """
+    base_results_path = find_results_dir(base_results_path)
+
     # 1. Try direct / absolute path
     if os.path.exists(os.path.join(model_load_dir_or_path, "config.json")):
         policy_config, out = load_run_data_from_path(model_load_dir_or_path)
@@ -147,6 +166,7 @@ def resolve_runs(runs_dict, default_env_name="FourRooms-misc", base_results_path
         resolved_runs: Dict mapping run_key to normalized dict with:
             {"title", "color", "run_dir", "config", "metrics"}
     """
+    base_results_path = find_results_dir(base_results_path)
     resolved = {}
     for i, (key, spec) in enumerate(runs_dict.items()):
         if isinstance(spec, str):
@@ -944,34 +964,59 @@ def save_3d_value_surface(env_dir, env_name, value_grid, title, algorithm_name):
     plt.savefig(save_path, bbox_inches='tight', dpi=150)
     plt.close()
 
-def plot_jacobian_singular_vectors(metrics, env_name="Environment"):
+def plot_jacobian_singular_vectors(metrics, evaluator=None, env_name=None, title_prefix="Jacobian Singular Vectors", seed=0, epoch_idx=-1, n_components=5, figsize=None):
     """
-    Plots the top Jacobian singular vectors from the final training epoch.
+    Plots the top Jacobian singular vectors from metrics with optional environment wall masking.
     """
-    j_svs = np.array(metrics["Jacobian_top_singular_vectors"])
+    if metrics is None:
+        return None
+        
+    key = None
+    for k in ["Jacobian_top_singular_vectors", "jacobian_top_singular_vectors"]:
+        if k in metrics:
+            key = k
+            break
+            
+    if key is None:
+        return None
+        
+    j_svs = np.array(metrics[key])
     while j_svs.ndim > 4:
         j_svs = j_svs[0]
         
-    stack = j_svs[-1] if j_svs.ndim == 4 else j_svs
-    n_components = min(5, len(stack))
-    
-    fig, axes = plt.subplots(1, n_components, figsize=(4 * n_components, 4))
-    fig.suptitle(f"{env_name} - Top {n_components} Jacobian Singular Vectors", fontsize=16)
-    
+    stack = j_svs[epoch_idx] if j_svs.ndim == 4 else j_svs
+    if stack.ndim == 4:
+        stack = stack[seed]
+        
+    n_components = min(n_components, len(stack))
+    if figsize is None:
+        figsize = (4 * n_components, 4)
+        
+    fig, axes = plt.subplots(1, n_components, figsize=figsize)
     if n_components == 1:
         axes = [axes]
         
+    title = f"{env_name} - Top {n_components} Jacobian Singular Vectors" if env_name is not None else f"{title_prefix} Top {n_components} Jacobian Singular Vectors"
+    fig.suptitle(title, fontsize=16)
+    
+    mask = evaluator.occupied_map if evaluator is not None else None
+    
     for i in range(n_components):
+        ax = axes[i]
         grid = stack[i]
         max_abs = np.max(np.abs(grid))
         if max_abs == 0:
             max_abs = 1.0
         
-        ax = axes[i]
-        im = ax.matshow(grid, cmap='RdBu_r', vmin=-max_abs, vmax=max_abs)
+        if mask is not None:
+            ax.imshow(mask, cmap="Greys", alpha=0.3)
+            masked_grid = np.where(mask == 1, np.nan, grid)
+        else:
+            masked_grid = grid
+            
+        im = ax.imshow(masked_grid, cmap='RdBu_r', vmin=-max_abs, vmax=max_abs)
         ax.set_title(f"Component {i+1}")
-        ax.set_xticks([])
-        ax.set_yticks([])
+        ax.axis("off")
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
     plt.tight_layout()

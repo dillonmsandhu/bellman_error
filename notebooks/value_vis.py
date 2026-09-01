@@ -18,6 +18,15 @@ app = marimo.App()
 
 @app.cell
 def _():
+    import sys
+    import os
+
+    # Ensure repository root is in sys.path when running from notebooks/ directory
+    current_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.path.abspath(".")
+    repo_root = os.path.abspath(os.path.join(current_dir, "..")) if os.path.basename(current_dir) == "notebooks" else current_dir
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
     import jax
     import jax.numpy as jnp
     import numpy as np
@@ -35,9 +44,9 @@ def _():
         plot_error_grids,
         plot_3d_comparison,
         render_3d,
-        compute_jaggedness,
         compute_runs_jaggedness,
         plot_feature_singular_vectors,
+        plot_jacobian_singular_vectors,
     )
 
     return (
@@ -52,6 +61,7 @@ def _():
         plot_3d_comparison,
         plot_error_grids,
         plot_feature_singular_vectors,
+        plot_jacobian_singular_vectors,
         plot_multi_grids,
         render_3d,
         resolve_runs,
@@ -61,32 +71,93 @@ def _():
 @app.cell
 def _():
     # ---------------------------------------------------------------------------
-    # User Configuration: Policy Selection & Runs Specification
+    # Experiment Presets
     # ---------------------------------------------------------------------------
-    # Set policy_type to "random" or "fixed"
-    policy_type = "random"
-    fixed_policy_dir = "ppo/ground_truth/short_run"  # Pretrained policy directory
-
-    # Dictionary of runs to compare:
-    # Each entry defines run_dir (or direct metrics), title, and color.
-    runs_spec = {
-        "TD": {
-            "run_dir": "random/td_exact/tuned_saved_metrics/",
-            "title": "Temporal Difference (TD)",
-            "color": "blue",
+    PRESETS = {
+        "Random Policy (TD vs MC vs E)": {
+            "policy_type": "random",
+            "fixed_policy_dir": "ppo/ground_truth/short_run",
+            "runs": {
+                "TD": {
+                    "run_dir": "random/td_exact/tuned_saved_metrics/",
+                    "title": "Temporal Difference (TD)",
+                    "color": "blue",
+                },
+                "MC": {
+                    "run_dir": "random/mc_exact/tuned_saved_metrics/",
+                    "title": "Monte Carlo (MC)",
+                    "color": "red",
+                },
+                "E": {
+                    "run_dir": "random/exact_E/tuned_saved_metrics/",
+                    "title": "Expected Update (E)",
+                    "color": "green",
+                },
+            },
         },
-        "MC": {
-            "run_dir": "random/mc_exact/tuned_saved_metrics/",
-            "title": "Monte Carlo (MC)",
-            "color": "red",
+        "Fixed Policy (TD vs MC vs E)": {
+            "policy_type": "fixed",
+            "fixed_policy_dir": "ppo/ground_truth/short_run",
+            "runs": {
+                "TD": {
+                    "run_dir": "fixed/td_exact/tuned_saved_metrics/",
+                    "title": "Temporal Difference (TD)",
+                    "color": "blue",
+                },
+                "MC": {
+                    "run_dir": "fixed/mc_exact/tuned_saved_metrics/",
+                    "title": "Monte Carlo (MC)",
+                    "color": "red",
+                },
+                "E": {
+                    "run_dir": "fixed/exact_E_td/tuned_saved_metrics/",
+                    "title": "Expected Update (E)",
+                    "color": "green",
+                },
+            },
         },
-        "E": {
-            "run_dir": "random/exact_E/tuned_saved_metrics/",
-            "title": "Expected Update (E)",
-            "color": "green",
+        "TD vs TD(lambda) vs Symmetric TD": {
+            "policy_type": "random",
+            "fixed_policy_dir": "ppo/ground_truth/short_run",
+            "runs": {
+                "TD(0)": {
+                    "run_dir": "random/td_exact/tuned_saved_metrics/",
+                    "title": "TD(0)",
+                    "color": "blue",
+                },
+                "TD(lambda)": {
+                    "run_dir": "random/td_lambda_exact/tuned_saved_metrics/",
+                    "title": "TD(lambda)",
+                    "color": "purple",
+                },
+                "TD (Symmetric)": {
+                    "run_dir": "random/td_exact_symmetric/tuned_saved_metrics/",
+                    "title": "TD (Symmetric)",
+                    "color": "orange",
+                },
+            },
         },
     }
+    return (PRESETS,)
 
+
+@app.cell
+def _(PRESETS, mo):
+    preset_selector = mo.ui.dropdown(
+        options=list(PRESETS.keys()),
+        value="Random Policy (TD vs MC vs E)",
+        label="Select Experiment Preset",
+    )
+    preset_selector
+    return (preset_selector,)
+
+
+@app.cell
+def _(PRESETS, preset_selector):
+    active_preset = PRESETS[preset_selector.value]
+    policy_type = active_preset["policy_type"]
+    fixed_policy_dir = active_preset["fixed_policy_dir"]
+    runs_spec = active_preset["runs"]
     epoch_idx = -1  # Final checkpoint index
     return epoch_idx, fixed_policy_dir, policy_type, runs_spec
 
@@ -139,7 +210,7 @@ def _(epoch_idx, evaluator, get_run_value_grid, gt, resolve_runs, runs_spec):
                 print(f"Could not extract value grid for {key}: {e}")
                 grid = None
 
-        # If data is not available locally, fallback to ground truth demo for smooth visual preview
+        # Fallback to ground truth if data is not available locally for demo preview
         run_grids[key] = {
             "title": rinfo["title"],
             "color": rinfo["color"],
@@ -203,7 +274,7 @@ def _(evaluator, gt, plot_error_grids, run_grids):
 def _(mo):
     mo.md("""
     # Interactive 3D Analysis
-    Use the sliders below to rotate the 3D view.
+    Use the sliders below to rotate the 3D view and checkboxes to toggle algorithms.
     - **Left Plot**: Compares the **True Value Surface** with the **Learned Value Wireframes**.
     - **Right Plot**: Shows the **Underestimation Error** ($V_{true} - V_{learned}$).
     """)
@@ -300,6 +371,32 @@ def _(evaluator, plot_feature_singular_vectors, resolved_runs):
 @app.cell
 def _(feature_figs):
     for fig in feature_figs.values():
+        fig
+    return
+
+
+@app.cell
+def _(evaluator, plot_jacobian_singular_vectors, resolved_runs):
+    # Top Jacobian Singular Vectors
+    jacobian_figs = {}
+    for key, rinfo in resolved_runs.items():
+        if rinfo["metrics"] is not None and any(
+            k in rinfo["metrics"]
+            for k in ["Jacobian_top_singular_vectors", "jacobian_top_singular_vectors"]
+        ):
+            fig_jac = plot_jacobian_singular_vectors(
+                rinfo["metrics"],
+                evaluator=evaluator,
+                title_prefix=rinfo["title"],
+            )
+            if fig_jac is not None:
+                jacobian_figs[key] = fig_jac
+    return (jacobian_figs,)
+
+
+@app.cell
+def _(jacobian_figs):
+    for fig in jacobian_figs.values():
         fig
     return
 
