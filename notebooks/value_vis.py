@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.24.0"
+__generated_with = "0.23.9"
 app = marimo.App()
 
 
@@ -76,7 +76,7 @@ def _():
     PRESETS = {
         "Random Policy (TD vs MC vs E)": {
             "policy_type": "random",
-            "fixed_policy_dir": "ppo/ground_truth/short_run",
+            "fixed_policy_dir": "ppo/ground_truth/partial_four_rooms",
             "runs": {
                 "TD": {
                     "run_dir": "random/td_exact/tuned_saved_metrics/",
@@ -97,43 +97,22 @@ def _():
         },
         "Fixed Policy (TD vs MC vs E)": {
             "policy_type": "fixed",
-            "fixed_policy_dir": "ppo/ground_truth/short_run",
+            "fixed_policy_dir": "ppo/ground_truth/partial_four_rooms",
             "runs": {
                 "TD": {
-                    "run_dir": "fixed/td_exact/tuned_saved_metrics/",
+                    "run_dir": "fixed/td_exact/tuned_four_rooms_partial/",
                     "title": "Temporal Difference (TD)",
                     "color": "blue",
                 },
                 "MC": {
-                    "run_dir": "fixed/mc_exact/tuned_saved_metrics/",
+                    "run_dir": "fixed/mc_exact/tuned_four_rooms_partial/",
                     "title": "Monte Carlo (MC)",
                     "color": "red",
                 },
                 "E": {
-                    "run_dir": "fixed/exact_E_td/tuned_saved_metrics/",
+                    "run_dir": "fixed/E_gd_exact/tuned_four_rooms_partial/",
                     "title": "Expected Update (E)",
                     "color": "green",
-                },
-            },
-        },
-        "TD vs TD(lambda) vs Symmetric TD": {
-            "policy_type": "random",
-            "fixed_policy_dir": "ppo/ground_truth/short_run",
-            "runs": {
-                "TD(0)": {
-                    "run_dir": "random/td_exact/tuned_saved_metrics/",
-                    "title": "TD(0)",
-                    "color": "blue",
-                },
-                "TD(lambda)": {
-                    "run_dir": "random/td_lambda_exact/tuned_saved_metrics/",
-                    "title": "TD(lambda)",
-                    "color": "purple",
-                },
-                "TD (Symmetric)": {
-                    "run_dir": "random/td_exact_symmetric/tuned_saved_metrics/",
-                    "title": "TD (Symmetric)",
-                    "color": "orange",
                 },
             },
         },
@@ -158,7 +137,7 @@ def _(PRESETS, preset_selector):
     policy_type = _active_preset["policy_type"]
     fixed_policy_dir = _active_preset["fixed_policy_dir"]
     runs_spec = _active_preset["runs"]
-    epoch_idx = -1  # Final checkpoint index
+    epoch_idx = 500  # Final checkpoint index
     return epoch_idx, fixed_policy_dir, policy_type, runs_spec
 
 
