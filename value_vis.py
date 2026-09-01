@@ -369,8 +369,8 @@ def _(
             for i in range(ny): ax1.plot(X[i, :], Y[i, :], vmc[i, :], color='red', alpha=0.8, linewidth=1)
             for j in range(nx): ax1.plot(X[:, j], Y[:, j], vmc[:, j], color='red', alpha=0.8, linewidth=1)
         if show_E:
-            for i in range(ny): ax1.plot(X[i, :], Y[i, :], vmc[i, :], color='green', alpha=0.8, linewidth=1)
-            for j in range(nx): ax1.plot(X[:, j], Y[:, j], vmc[:, j], color='green', alpha=0.8, linewidth=1)
+            for i in range(ny): ax1.plot(X[i, :], Y[i, :], ve[i, :], color='green', alpha=0.8, linewidth=1)
+            for j in range(nx): ax1.plot(X[:, j], Y[:, j], ve[:, j], color='green', alpha=0.8, linewidth=1)
 
         ax1.set_title("Value Comparison (Surface=True)")
         ax1.view_init(elev=elev, azim=azim)
@@ -399,9 +399,21 @@ def _(
         return fig
 
 
-    controls = mo.hstack([elev_slider, azim_slider, show_td, show_mc], justify="start")
+    controls = mo.hstack([elev_slider, azim_slider, show_td, show_mc, show_E], justify="start")
     mo.output.append(controls)
     mo.output.append(render_3d(v_g, td_v_last, mc_v_last,E_v_last,evaluator, elev_slider.value, azim_slider.value, show_td.value, show_mc.value, show_E= show_E.value))
+    return
+
+
+@app.cell
+def _(E_v_last, plt):
+    plt.imshow(E_v_last)
+    return
+
+
+@app.cell
+def _(mc_v_last, plt):
+    plt.imshow(mc_v_last)
     return
 
 
