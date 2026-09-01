@@ -57,6 +57,8 @@ def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_re
     """
     Finds the latest sweep runs for each algorithm under policy sweeps or standalone tuning dirs.
     """
+    from analyze_runs import find_results_dir
+    base_results_dir = find_results_dir(base_results_dir)
     found = {}
     
     # 1. Check all sweep batches under results/{policy}/sweeps/ in reverse chronological order
