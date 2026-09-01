@@ -4,17 +4,34 @@ Clean, modular script to load latest sweep runs, plot seed trajectories for the 
 and generate cross-algorithm comparisons.
 """
 
+import sys
 import os
+
+# Ensure repository root is on sys.path when imported from notebooks/ or run directly
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_current_dir, ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-from analyze_sweeps import (
-    load_sweep_data,
-    extract_best_configuration,
-    plot_algorithm_comparison,
-    summarize_algorithm_comparison,
-    discover_algorithm_sweeps,
-)
+try:
+    from notebooks.analyze_sweeps import (
+        load_sweep_data,
+        extract_best_configuration,
+        plot_algorithm_comparison,
+        summarize_algorithm_comparison,
+        discover_algorithm_sweeps,
+    )
+except ImportError:
+    from analyze_sweeps import (
+        load_sweep_data,
+        extract_best_configuration,
+        plot_algorithm_comparison,
+        summarize_algorithm_comparison,
+        discover_algorithm_sweeps,
+    )
 
 
 def plot_all_latest_sweeps(
@@ -127,7 +144,7 @@ def plot_all_latest_sweeps(
     print(f"\nSummary & Comparison plot saved in: {save_dir}")
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Plot latest tuning sweeps and comparisons")
     parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo"],
                         help="Filter by policy type (fixed, random, ppo)")
@@ -153,3 +170,7 @@ if __name__ == "__main__":
         rank_order=rank_order,
         window_size=args.window_size,
     )
+
+
+if __name__ == "__main__":
+    main()

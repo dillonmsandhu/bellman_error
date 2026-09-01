@@ -1,4 +1,12 @@
+import sys
 import os
+
+# Ensure repository root is on sys.path when imported from notebooks/ or run directly
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_current_dir, ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 import json
 import cloudpickle
 import numpy as np
@@ -32,10 +40,10 @@ def find_results_dir(base_results_path="results"):
         return base_results_path
     if os.path.exists(base_results_path):
         return base_results_path
-    parent_candidate = os.path.join("..", base_results_path)
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_candidate = os.path.abspath(os.path.join(file_dir, "..", base_results_path))
     if os.path.exists(parent_candidate):
         return parent_candidate
-    file_dir = os.path.dirname(os.path.abspath(__file__))
     file_candidate = os.path.join(file_dir, base_results_path)
     if os.path.exists(file_candidate):
         return file_candidate

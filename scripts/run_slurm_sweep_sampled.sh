@@ -12,9 +12,14 @@
 # respective optimal learning rates.
 #
 # Usage:
-#   sbatch run_slurm_sweep_sampled.sh
-#   ./run_slurm_sweep_sampled.sh (for local test)
+#   sbatch scripts/run_slurm_sweep_sampled.sh
+#   ./scripts/run_slurm_sweep_sampled.sh (for local test)
 # ==============================================================================
+
+# Ensure working directory is the repository root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 SECONDS=0
@@ -49,7 +54,6 @@ declare -A FIXED_MODEL_DIRS=(
     ["MountainCar-v0"]="ground_truth/20260823_123519"
 )
 
-
 mkdir -p slurm
 
 echo "======================================================================"
@@ -61,6 +65,7 @@ echo "Algorithms: ${SAMPLED_ALGOS[*]}"
 echo "LR Grid: $LR_GRID"
 echo "Lambda Grid: $LAMBDA_GRID"
 echo "Config Overrides: $CONFIG"
+echo "Working Directory: $REPO_ROOT"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
@@ -76,7 +81,7 @@ for env in "${ENVS[@]}"; do
         fi
         echo "======================================================================"
 
-        CMD="$PYTHON sweep_pipeline.py \
+        CMD="$PYTHON scripts/sweep_pipeline.py \
             --policy $policy \
             --env-name $env \
             --algos ${SAMPLED_ALGOS[*]} \

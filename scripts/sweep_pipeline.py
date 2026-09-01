@@ -4,17 +4,24 @@ A unified, modular hyperparameter sweep and cross-algorithm comparison pipeline.
 
 Usage Examples:
     # 1. Run full sweep over all core algorithms for fixed policy on FourRooms-misc:
-    python sweep_pipeline.py --policy fixed --env-name FourRooms-misc --n-seeds 3 --total-timesteps 1000
+    python scripts/sweep_pipeline.py --policy fixed --env-name FourRooms-misc --n-seeds 3 --total-timesteps 1000
 
     # 2. Run sweep for specific algorithms:
-    python sweep_pipeline.py --policy fixed --algos exact_td exact_mc --n-seeds 5
+    python scripts/sweep_pipeline.py --policy fixed --algos exact_td exact_mc --n-seeds 5
 
     # 3. Use custom learning rate grid:
-    python sweep_pipeline.py --policy random --lr-grid 0.05 0.01 0.005 0.001 0.0005 0.0001
+    python scripts/sweep_pipeline.py --policy random --lr-grid 0.05 0.01 0.005 0.001 0.0005 0.0001
 """
 
 import os
 import sys
+
+# Ensure repository root is in sys.path when running from scripts/ or anywhere
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_current_dir, ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 import json
 import importlib
 import datetime
@@ -25,7 +32,7 @@ import matplotlib.pyplot as plt
 
 import core.config as default_cfg
 from core.sweep import tune
-from analyze_sweeps import plot_algorithm_comparison, summarize_algorithm_comparison
+from notebooks.analyze_sweeps import plot_algorithm_comparison, summarize_algorithm_comparison
 
 
 # Map algorithm shorthand names to module paths
@@ -35,8 +42,8 @@ ALGO_REGISTRY = {
         "exact_mc": "fixed_policy.exact_mc",
         "exact_E_gd": "fixed_policy.exact_E_gd",
         "exact_E": "fixed_policy.exact_E_gd",
-        "exact_Etd": "fixed_policy.exact_Etd",
-        "exact_E_td": "fixed_policy.exact_Etd",
+        "exact_E_td": "fixed_policy.exact_E_td",
+        "exact_Etd": "fixed_policy.exact_E_td",
         "exact_td_lambda": "fixed_policy.exact_td_lambda",
         "exact_td_symmetric": "fixed_policy.exact_td_symmetric",
         "td": "fixed_policy.td",
@@ -50,8 +57,8 @@ ALGO_REGISTRY = {
         "exact_mc": "random_policy.exact_mc",
         "exact_E_gd": "random_policy.exact_E_gd",
         "exact_E": "random_policy.exact_E_gd",
-        "exact_Etd": "random_policy.exact_Etd",
-        "exact_E_td": "random_policy.exact_Etd",
+        "exact_E_td": "random_policy.exact_E_td",
+        "exact_Etd": "random_policy.exact_E_td",
         "exact_td_lambda": "random_policy.exact_td_lambda",
         "exact_td_symmetric": "random_policy.exact_td_symmetric",
         "td": "random_policy.td",
@@ -68,7 +75,7 @@ ALGO_REGISTRY = {
     },
 }
 
-DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_Etd"]
+DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_E_td"]
 DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo"]
 
 
@@ -365,7 +372,7 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
     
     custom_grids = None
@@ -402,3 +409,7 @@ if __name__ == "__main__":
         config_overrides=config_overrides,
         use_geom_mean=args.use_geom_mean,
     )
+
+
+if __name__ == "__main__":
+    main()

@@ -10,9 +10,14 @@
 # Runs for both Fixed Policy and Random Policy on MountainCar and FourRooms.
 #
 # Usage:
-#   sbatch run_slurm_sweep_exact.sh
-#   ./run_slurm_sweep_exact.sh (for local test)
+#   sbatch scripts/run_slurm_sweep_exact.sh
+#   ./scripts/run_slurm_sweep_exact.sh (for local test)
 # ==============================================================================
+
+# Ensure working directory is the repository root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 SECONDS=0
@@ -29,7 +34,7 @@ N_SEEDS=3
 TOTAL_TIMESTEPS=2000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
-EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda" "exact_Etd")
+EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda" "exact_E_td")
 
 # Per-environment evaluation policy placeholders for fixed policy evaluation.
 # Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").
@@ -48,6 +53,7 @@ echo "Environments: ${ENVS[*]}"
 echo "Policies: ${POLICIES[*]}"
 echo "Algorithms: ${EXACT_ALGOS[*]}"
 echo "Seeds: $N_SEEDS | Timesteps: $TOTAL_TIMESTEPS"
+echo "Working Directory: $REPO_ROOT"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
@@ -63,7 +69,7 @@ for env in "${ENVS[@]}"; do
         fi
         echo "======================================================================"
 
-        CMD="$PYTHON sweep_pipeline.py \
+        CMD="$PYTHON scripts/sweep_pipeline.py \
             --policy $policy \
             --env-name $env \
             --algos ${EXACT_ALGOS[*]} \

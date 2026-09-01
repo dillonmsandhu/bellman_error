@@ -3,17 +3,23 @@ analyze_sweeps.py
 Modular analysis, extraction, and visualization tools for hyperparameter sweeps
 and cross-algorithm comparisons.
 
-
 Example Usage:
-python analyze_sweeps.py \
+python notebooks/analyze_sweeps.py \
     --sweep-dir results/fixed/sweeps/fixed_FourRooms-misc_20260826_155346 \
     --metric nn_greedy_correct \
     --rank-by final_window \
     --higher-is-better
-    
 """
 
+import sys
 import os
+
+# Ensure repository root is on sys.path when imported from notebooks/ or run directly
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_current_dir, ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 # Force JAX to CPU to prevent GPU VRAM allocation/OOM during analysis
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
@@ -62,11 +68,16 @@ def find_latest_run_dir(base_dir):
     if os.path.exists(os.path.join(sub_path, "config.json")):
         return latest_sub, "default", sub_path
 
+
 def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_results_dir="results"):
     """
     Finds the latest sweep runs for each algorithm under policy sweeps or standalone tuning dirs.
     """
-    from analyze_runs import find_results_dir
+    try:
+        from notebooks.analyze_runs import find_results_dir
+    except ImportError:
+        from analyze_runs import find_results_dir
+
     base_results_dir = find_results_dir(base_results_dir)
     found = {}
     
@@ -480,7 +491,7 @@ def summarize_algorithm_comparison(
     return summary_df
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="Analyze and compare hyperparameter sweeps.")
     parser.add_argument("--sweep-dir", type=str, default=None,
@@ -526,7 +537,7 @@ if __name__ == "__main__":
 
     if not target_dict:
         print("No algorithm sweep runs found.")
-        exit(0)
+        return
 
     print(f"Found {len(target_dict)} algorithm runs: {list(target_dict.keys())}")
     print(f"Metric: '{args.metric}' | Rank By: '{args.rank_by}' ({rank_order} is better)")
@@ -565,3 +576,7 @@ if __name__ == "__main__":
     )
     print(f"\nSaved summary to: {summary_path}")
     print(f"Saved comparison plot to: {plot_path}\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -20,10 +20,12 @@ def _():
     import os
 
     current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath('.')
-    repo_root = os.path.abspath(os.path.join(current_dir, '..')) if os.path.basename(current_dir) == 'notebooks' else current_dir
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-    import os
+    notebooks_dir = current_dir if os.path.basename(current_dir) == 'notebooks' else os.path.join(current_dir, 'notebooks')
+    repo_root = os.path.abspath(os.path.join(notebooks_dir, '..'))
+    for p in [repo_root, notebooks_dir]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
     # Force JAX to CPU to prevent GPU VRAM exhaustion when unpickling sweep files
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["JAX_PLATFORMS"] = "cpu"
@@ -34,12 +36,20 @@ def _():
     import pandas as pd
     import matplotlib.pyplot as plt
     import marimo as mo
-    from analyze_sweeps import (
-        load_sweep_data,
-        extract_best_configuration,
-        find_latest_run_dir,
-        discover_algorithm_sweeps,
-    )
+    try:
+        from notebooks.analyze_sweeps import (
+            load_sweep_data,
+            extract_best_configuration,
+            find_latest_run_dir,
+            discover_algorithm_sweeps,
+        )
+    except ImportError:
+        from analyze_sweeps import (
+            load_sweep_data,
+            extract_best_configuration,
+            find_latest_run_dir,
+            discover_algorithm_sweeps,
+        )
 
     return (
         discover_algorithm_sweeps,

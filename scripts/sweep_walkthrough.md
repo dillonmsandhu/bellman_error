@@ -15,7 +15,7 @@ We have implemented an end-to-end, modular, and interpretable hyperparameter swe
   - `best_config_seeds.png`: Visualizes all individual random seed learning curves for the winning configuration.
   - `all_configs_seeds_grid.png`: Small-multiples subplot grid showing seed trajectories for every configuration in the grid.
 
-### 2. Modular Multi-Algorithm Sweep Pipeline ([`sweep_pipeline.py`](file:///Users/dillonsandhu/Documents/Research/bellman_error/sweep_pipeline.py))
+### 2. Modular Multi-Algorithm Sweep Pipeline ([`scripts/sweep_pipeline.py`](file:///Users/dillonsandhu/Documents/Research/bellman_error/scripts/sweep_pipeline.py))
 - Evaluates a fixed task across your core suite: `exact_td`, `exact_mc`, `exact_E_gd`, `exact_td_lambda`, etc.
 - Works across all policy regimes: `--policy fixed`, `--policy random`, or `--policy ppo`.
 - Automatically tailors parameter grids (e.g. 2D grid over $\alpha$ and $\lambda$ for TD($\lambda$)).
@@ -24,21 +24,21 @@ We have implemented an end-to-end, modular, and interpretable hyperparameter swe
   - `comparison_best_configs.png`: Plots the best configuration of every algorithm on the same graph with mean curves and error bands (arithmetic ±1 std or geometric mean).
   - `comparison_summary.csv` & `comparison_summary.json`: Unified ranking table of all algorithms.
 
-### 3. Modular Sweep Analysis Library ([`analyze_sweeps.py`](file:///Users/dillonsandhu/Documents/Research/bellman_error/analyze_sweeps.py))
+### 3. Modular Sweep Analysis Library ([`notebooks/analyze_sweeps.py`](file:///Users/dillonsandhu/Documents/Research/bellman_error/notebooks/analyze_sweeps.py))
 - `discover_algorithm_sweeps(policy, env_name)`: Finds the latest sweep runs across batch sweeps and standalone tuning directories.
 - `load_sweep_data(path)`: Loads configuration, metrics, summary DataFrame, and `best_config.json`.
 - `extract_best_configuration(sweep_data)`: Extracts winning hyperparameters and 2D seed trajectories `(n_seeds, time_steps)`.
 - `plot_algorithm_comparison(...)`: Generates cross-algorithm comparison graphs.
 - `summarize_algorithm_comparison(...)`: Compares and ranks all algorithms.
 
-### 4. Interactive / Standalone Plotting Script ([`over_engineered_plot_tune_script.py`](file:///Users/dillonsandhu/Documents/Research/bellman_error/over_engineered_plot_tune_script.py))
-- Replaced the ad-hoc script with a clean CLI / module that discovers the latest runs, generates seed plots for each algorithm's best configuration, and plots the cross-algorithm comparison.
+### 4. Standalone Evaluation Script ([`notebooks/evaluate_sweeps.py`](file:///Users/dillonsandhu/Documents/Research/bellman_error/notebooks/evaluate_sweeps.py))
+- Quick CLI / module that discovers the latest runs, generates seed plots for each algorithm's best configuration, and plots the cross-algorithm comparison.
 
 ---
 
 ## 📁 Output Folder Structure
 
-When you run a sweep via `sweep_pipeline.py` or individual scripts, the outputs are organized in an interpretable hierarchy:
+When you run a sweep via `scripts/sweep_pipeline.py` or SLURM scripts (`scripts/run_slurm_sweep_exact.sh`), the outputs are organized in an interpretable hierarchy:
 
 ```
 results/fixed/sweeps/fixed_FourRooms-misc_<timestamp>/
@@ -73,29 +73,32 @@ results/fixed/sweeps/fixed_FourRooms-misc_<timestamp>/
 
 ```bash
 # Sweep all 4 main algorithms on FourRooms-misc (fixed policy evaluation, 5 seeds, 1000 timesteps)
-python sweep_pipeline.py --policy fixed --env-name FourRooms-misc --n-seeds 5 --total-timesteps 1000
+python scripts/sweep_pipeline.py --policy fixed --env-name FourRooms-misc --n-seeds 5 --total-timesteps 1000
 
 # Sweep specific algorithms with custom learning rates
-python sweep_pipeline.py --policy fixed --algos exact_td exact_mc --lr-grid 0.05 0.01 0.005 0.001 0.0005
+python scripts/sweep_pipeline.py --policy fixed --algos exact_td exact_mc --lr-grid 0.05 0.01 0.005 0.001 0.0005
 
 # Sweep random policy algorithms
-python sweep_pipeline.py --policy random --env-name FourRooms-misc --n-seeds 5 --total-timesteps 2000
+python scripts/sweep_pipeline.py --policy random --env-name FourRooms-misc --n-seeds 5 --total-timesteps 2000
+
+# Or submit via SLURM:
+sbatch scripts/run_slurm_sweep_exact.sh
 ```
 
 ### Analyzing & Plotting Existing Runs
 
 ```bash
 # Analyze and plot latest fixed policy sweeps
-python over_engineered_plot_tune_script.py --policy fixed --env-name FourRooms-misc
+python notebooks/evaluate_sweeps.py --policy fixed --env-name FourRooms-misc
 
 # Analyze using geometric mean error bands
-python analyze_sweeps.py --policy fixed --env-name FourRooms-misc --use-geom-mean
+python notebooks/analyze_sweeps.py --policy fixed --env-name FourRooms-misc --use-geom-mean
 ```
 
 ### Python / Notebook API
 
 ```python
-from analyze_sweeps import discover_algorithm_sweeps, plot_algorithm_comparison, summarize_algorithm_comparison
+from notebooks.analyze_sweeps import discover_algorithm_sweeps, plot_algorithm_comparison, summarize_algorithm_comparison
 
 # 1. Discover latest sweeps
 runs = discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc")
