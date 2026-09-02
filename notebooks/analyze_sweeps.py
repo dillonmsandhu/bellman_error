@@ -109,6 +109,7 @@ def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_re
         "exact_td_lambda": [f"{base_results_dir}/{policy}/td_lambda_exact/tuning", f"{base_results_dir}/{policy}/td_lambda_exact"],
         "exact_td_symmetric": [f"{base_results_dir}/{policy}/td_exact_symmetric/tuning", f"{base_results_dir}/{policy}/td_exact_symmetric"],
         "sampled_E": [f"{base_results_dir}/{policy}/sampled_E/tuning", f"{base_results_dir}/{policy}/sampled_E"],
+        "unbiased_sampled_E": [f"{base_results_dir}/{policy}/sampled_E/tuning", f"{base_results_dir}/{policy}/unbiased_sampled_E"],
         "td": [f"{base_results_dir}/{policy}/td/tuning", f"{base_results_dir}/{policy}/td"],
         "td0": [f"{base_results_dir}/{policy}/td0/tuning", f"{base_results_dir}/{policy}/td0"],
         "mc": [f"{base_results_dir}/{policy}/mc/tuning", f"{base_results_dir}/{policy}/mc"],

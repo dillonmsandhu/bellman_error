@@ -51,6 +51,7 @@ ALGO_REGISTRY = {
         "mc": "fixed_policy.mc",
         "monte_carlo": "fixed_policy.mc",
         "sampled_E": "fixed_policy.sampled_E",
+        "unbiased_sampled_E": "fixed_policy.unbiased_sampled_E",
     },
     "random": {
         "exact_td": "random_policy.exact_td",
@@ -66,6 +67,7 @@ ALGO_REGISTRY = {
         "mc": "random_policy.mc",
         "monte_carlo": "random_policy.mc",
         "sampled_E": "random_policy.sampled_E",
+        "unbiased_sampled_E": "random_policy.unbiased_sampled_E",
     },
     "ppo": {
         "exact_td": "ppo.exact_td",
@@ -75,8 +77,8 @@ ALGO_REGISTRY = {
     },
 }
 
-DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda", "exact_E_td"]
-DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo"]
+DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda"]
+DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo", "unbiased_sampled_E"]
 
 
 def get_default_param_grid(algo_name, lr_list=None, lambda_list=None):
