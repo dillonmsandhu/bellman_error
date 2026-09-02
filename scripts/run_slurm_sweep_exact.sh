@@ -13,12 +13,6 @@
 #   sbatch scripts/run_slurm_sweep_exact.sh
 #   ./scripts/run_slurm_sweep_exact.sh (for local test)
 # ==============================================================================
-
-# Ensure working directory is the repository root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
-
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 SECONDS=0
 
@@ -30,11 +24,11 @@ else
 fi
 
 # Configuration
-N_SEEDS=3
-TOTAL_TIMESTEPS=2000
+N_SEEDS=5
+TOTAL_TIMESTEPS=1500
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
-EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda" "exact_E_td")
+EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda" "exact_E_td", "exact_E_sampling_form")
 
 # Per-environment evaluation policy placeholders for fixed policy evaluation.
 # Replace with your trained policy run directories for each environment (e.g. "ground_truth/20260821_164541" or "short_run").
@@ -77,9 +71,9 @@ for env in "${ENVS[@]}"; do
             --total-timesteps $TOTAL_TIMESTEPS \
             --model-dir '$MODEL_DIR' \
             --use-geom-mean \
-            --rank-by 'final_window' \
-            --window-size 400"
-
+            --rank-by 'auc' \
+            --higher-is-better \
+            --metric nn_greedy_performance"
         echo "Command: $CMD"
         eval "$CMD"
     done

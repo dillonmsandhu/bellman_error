@@ -16,11 +16,6 @@
 #   ./scripts/run_slurm_sweep_sampled.sh (for local test)
 # ==============================================================================
 
-# Ensure working directory is the repository root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$REPO_ROOT"
-
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 SECONDS=0
 
@@ -41,7 +36,7 @@ SAMPLED_ALGOS=("td" "td0" "sampled_E" "monte_carlo")
 CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 1024, "NUM_EPOCHS": 1}'
 
 # Common Learning Rate Grid to sweep over for TD, TD(0), Sampled E, and Monte Carlo
-LR_GRID="0.005 0.001 0.0005 0.0001 0.00005 0.00001 0.000005 0.000001"
+LR_GRID="0.001 0.0005 0.0001 0.00005 0.00001 0.000005 0.000001"
 
 # Lambda Grid to sweep over for TD (GAE_LAMBDA)
 LAMBDA_GRID="0.5 0.9 0.95"
@@ -90,10 +85,11 @@ for env in "${ENVS[@]}"; do
             --n-seeds $N_SEEDS \
             --model-dir '$MODEL_DIR' \
             --config '$CONFIG' \
-            --rank-by 'final_window' \
-            --window-size 40 \
+            --rank-by 'auc' \
+            --higher-is-better \
+            --metric nn_greedy_performance \
             --use-geom-mean"
-
+            
         echo "Command: $CMD"
         eval "$CMD"
     done
