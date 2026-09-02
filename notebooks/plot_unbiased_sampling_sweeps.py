@@ -107,6 +107,7 @@ def _():
         "exact_td_symmetric": "#9467bd", # Purple
         "td": "#cb8144ff",              # Blue
         "sampled_E": "#1f741fff",        # Green
+        "unbiased_sampled_E": "#2ec4b6", # Teal
         "monte_carlo": "#492d14ff",     # Orange
         "mc": "#492d14ff",              # Orange
         "td0": "#1f77b4",             # Purple
@@ -153,12 +154,14 @@ def _(
 
                 sweep_data = runs_dict[algo]
                 try:
-                    # Single selection based on greedy accuracy
+                    # Single selection based on greedy accuracy (unbiased_sampled_E inherits sampled_E config)
                     best_idx, best_label, _ = get_selected_config_idx(
                         sweep_data,
                         selection_metric=selection_metric,
                         window_size=window_size,
                         rank_by="final_window",
+                        algo=algo,
+                        runs_dict=runs_dict,
                     )
 
                     seed_trajectories, _, _, _ = extract_best_configuration(
@@ -325,18 +328,41 @@ def _(
 
 
 @app.cell
-def _(extract_best_configuration):
+def _(extract_best_configuration, np):
     def get_selected_config_idx(
         sweep_data,
         selection_metric="nn_greedy_correct",
         window_size=1000,
         rank_by="final_window",
+        algo=None,
+        runs_dict=None,
     ):
         """
         Selects the single best configuration index once for this sweep run based on greedy accuracy.
         Uses rank_by='final_window', window_size=1000, rank_order='higher'.
         Falls back to 'nn_weighted_VE' (rank_order='lower') if selection_metric is not available.
+
+        If algo is 'unbiased_sampled_E' and 'sampled_E' is present in runs_dict,
+        uses the winning config idx from 'sampled_E'.
         """
+        if algo == "unbiased_sampled_E" and runs_dict is not None and "sampled_E" in runs_dict:
+            sampled_E_idx, _, _ = get_selected_config_idx(
+                runs_dict["sampled_E"],
+                selection_metric=selection_metric,
+                window_size=window_size,
+                rank_by=rank_by,
+            )
+            first_metric = list(sweep_data.get("metrics", {}).keys())[0]
+            arr = np.asarray(sweep_data["metrics"][first_metric])
+            n_combos = arr.shape[0] if arr.ndim == 3 else 1
+            if sampled_E_idx < n_combos:
+                _, label, idx, hparams = extract_best_configuration(
+                    sweep_data,
+                    metric_key=first_metric,
+                    config_idx=sampled_E_idx,
+                )
+                return idx, label, hparams
+
         metrics = sweep_data.get("metrics", {})
         if selection_metric in metrics:
             metric_to_use = selection_metric
@@ -416,12 +442,14 @@ def _(
 
                 sweep_data = runs_dict[algo]
                 try:
-                    # 1. Select the single winning configuration once based on greedy accuracy
+                    # 1. Select winning configuration (unbiased_sampled_E inherits sampled_E config)
                     best_idx, best_label, _ = get_selected_config_idx(
                         sweep_data,
                         selection_metric=selection_metric,
                         window_size=selection_window,
                         rank_by="final_window",
+                        algo=algo,
+                        runs_dict=runs_dict,
                     )
 
                     # 2. Extract trajectory for the requested metric_key for that exact best_idx
@@ -538,12 +566,15 @@ def _(
                 display_name = ALGO_DISPLAY_NAMES.get(algo, algo)
 
                 # Select single best run once based on greedy accuracy
+                # (unbiased_sampled_E inherits sampled_E config)
                 try:
                     best_idx, best_label, _ = get_selected_config_idx(
                         sweep_data,
                         selection_metric=selection_metric,
                         window_size=selection_window,
                         rank_by="final_window",
+                        algo=algo,
+                        runs_dict=runs_dict,
                     )
                 except Exception:
                     continue
