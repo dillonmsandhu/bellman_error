@@ -59,6 +59,12 @@ def compute_greedy_policy(P, R_env, γ, v):
     Qs = R_expected + γ * expected_v
     return jnp.argmax(Qs, axis=-1)
 
+def evaluate_greedy_policy(evaluator, v):
+    greedy_actions = compute_greedy_policy(evaluator.P, evaluator.R, evaluator.gamma, v)
+    pi_greedy = jax.nn.one_hot(greedy_actions, evaluator.num_actions)
+    V_greedy = evaluator.compute_true_values_raw(pi_greedy)
+    return V_greedy[evaluator.start_idx]
+
 def weighted_PCA(D, Φ):
     # 1. Weight the features
     sqrt_d_weights = jnp.sqrt(jnp.diag(D))
@@ -187,9 +193,11 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     if not light:
         V_lstd, w_lstd = LSTD_Exact(D, Φ, P_π, R_π, γ)
         V_vr, w_vr = LeastSquaresValue(D, Φ, V_pi)
+        V_br, w_br = Bellman_Residual_Exact(D, Φ, P_π, R_π, γ)
         val_configs = {
             "LSTD": (V_lstd, D, w_lstd),
             "VR": (V_vr, D, w_vr),
+            "BR": (V_br, D, w_br),
             "nn": (V_nn, D, None) 
         }
     else:
@@ -245,7 +253,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     non_normality = jnp.linalg.norm(S@K-K@S)
     K_Phi = Φ.T @ K @ Φ
     S_Phi = Φ.T @ S @ Φ
-    phi_space_non_normality = jnp.linalg.norm(S_Phi @ K_Phi - K_Phi - S_Phi)
+    phi_space_non_normality = jnp.linalg.norm(S_Phi @ K_Phi - K_Phi @ S_Phi)
 
     Ke = jnp.linalg.norm(K @ e) # Degree to which TD is not SGD.    
 
@@ -320,6 +328,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
         greedy_pol = compute_greedy_policy(P, evaluator.R, γ, V)
         metrics[f"{prefix}_greedy_correct"] = jnp.mean(true_greedy_policy == greedy_pol)
+        metrics[f"{prefix}_greedy_performance"] = evaluate_greedy_policy(evaluator, V)
 
     return metrics
 

@@ -80,7 +80,8 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "entropy": "entropy",
         "V_mean": "V_mean",
         "SA_min_eigenvalue": "SA_min_eigenvalue",
-        "non_reversible_coeff": "non_reversible_coeff"
+        "non_reversible_coeff": "non_reversible_coeff",
+        "nn_greedy_performance": "nn_greedy_performance",
     }
     data = get_metric("E", 1)
     E_local = get_metric("E_local", 1)
