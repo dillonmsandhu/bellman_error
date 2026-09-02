@@ -260,6 +260,27 @@ xxxxxxxxxxxxx"""
         # We now place them correctly into grid[row, col]
         return grid.at[self.coords[:, 0], self.coords[:, 1]].set(values)
 
+    def get_optimal_value_function(self, tol=1e-6, max_iters=1000):
+        V = jnp.zeros(self.num_total_states)
+        R_expected = jnp.einsum("sam,sam->sa", self.P, self.R)
+        
+        def body_fun(val):
+            i, V, delta = val
+            expected_v = jnp.einsum("sam,m->sa", self.P, V)
+            Q = R_expected + self.gamma * expected_v
+            V_new = jnp.max(Q, axis=-1)
+            # Ensure terminal state value remains 0
+            V_new = V_new.at[self.terminal_idx].set(0.0)
+            delta = jnp.max(jnp.abs(V_new - V))
+            return (i + 1, V_new, delta)
+        
+        def cond_fun(val):
+            i, V, delta = val
+            return jnp.logical_and(i < max_iters, delta > tol)
+        
+        _, V_star, _ = jax.lax.while_loop(cond_fun, body_fun, (0, V, 1.0))
+        return V_star
+
     def compute_true_values_raw(self, pi: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
         "returns vector"
         V_pi = self.solve_linear_system(pi, self.P, self.R)
