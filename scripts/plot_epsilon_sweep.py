@@ -43,6 +43,10 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
             tuning_csv = csv_files[0]
             df = pd.read_csv(tuning_csv)
             
+            if metric not in df.columns:
+                print(f"skipping sweep {s_dir} due to lack of key {metric}.")
+                continue
+            
             # Check for lambda column (GAE_LAMBDA for TD, VALUE_LAMBDA for exact TD)
             lambda_col = None
             for col in ["GAE_LAMBDA", "VALUE_LAMBDA", "lambda"]:
