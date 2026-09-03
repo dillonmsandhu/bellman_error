@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir_filter, allowed_algos):
+def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir_filter, allowed_algos, plot_column):
     # 1. Find all sweep directories
     sweep_dirs = glob.glob(os.path.join(results_dir, "*"))
     
@@ -43,9 +43,17 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
             tuning_csv = csv_files[0]
             df = pd.read_csv(tuning_csv)
             
-            if metric not in df.columns:
-                print(f"skipping sweep {s_dir} due to lack of key {metric}.")
-                continue
+            plot_col = plot_column if plot_column else f"auc_{metric}"
+            
+            if plot_col not in df.columns:
+                # fallback for some older formats
+                if metric in df.columns:
+                    plot_col = metric
+                else:
+                    print(f"skipping sweep {s_dir} due to lack of key {plot_col}.")
+                    continue
+
+                
             
             # Check for lambda column (GAE_LAMBDA for TD, VALUE_LAMBDA for exact TD)
             lambda_col = None
@@ -58,9 +66,9 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
             if lambda_col is not None:
                 for lam_val, group in df.groupby(lambda_col):
                     if rank_order == "lower":
-                        best_val = group[metric].min()
+                        best_val = group[plot_col].min()
                     else:
-                        best_val = group[metric].max()
+                        best_val = group[plot_col].max()
                     
                     data.append({
                         "epsilon": epsilon,
@@ -70,9 +78,9 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
             else:
                 # No lambda (e.g. Sampled E)
                 if rank_order == "lower":
-                    best_val = df[metric].min()
+                    best_val = df[plot_col].min()
                 else:
-                    best_val = df[metric].max()
+                    best_val = df[plot_col].max()
                     
                 data.append({
                     "epsilon": epsilon,
@@ -109,6 +117,7 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", type=str, default="results/fixed/sweeps")
     parser.add_argument("--env-name", type=str, default="FourRooms-misc")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE")
+    parser.add_argument("--plot-column", type=str, default=None, help="Exact column to plot (e.g. auc_nn_advantage_cossim_uniform). Defaults to auc_{metric}")
     parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"])
     parser.add_argument("--dir-filter", type=str, default="", help="Only include sweep directories containing this string.")
     parser.add_argument("--algos", nargs="+", default=None, help="List of specific algorithms to plot.")
@@ -123,5 +132,6 @@ if __name__ == "__main__":
         rank_order=args.rank_order,
         save_path=args.save_path,
         dir_filter=args.dir_filter,
-        allowed_algos=args.algos
+        allowed_algos=args.algos,
+        plot_column=args.plot_column
     )
