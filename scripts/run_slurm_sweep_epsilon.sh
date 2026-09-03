@@ -22,14 +22,14 @@ fi
 # Configuration
 N_SEEDS=5
 ENVS=("FourRooms-misc" "MountainCar-v0")
-SAMPLED_ALGOS=("td" "sampled_E")
+SAMPLED_ALGOS=("td" "unbiased_sampled_E")
 EPSILON_VALUES=(0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0)
 
-CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 1024, "NUM_EPOCHS": 1}'
+CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 1024, "NUM_EPOCHS": 1, "FAIL_PROB": 0.0}'
 
 # The sweep_pipeline will test ALL of these LRs and Lambdas, automatically selecting 
 # the best performing LR for EACH individual epsilon and lambda combination!
-LR_GRID="0.001 0.0005 0.0001 0.00005 0.00001 0.000005 0.000001"
+LR_GRID="0.001 0.0005 0.0001 0.00001"
 LAMBDA_GRID="0.5 0.9 0.95"
 
 mkdir -p slurm
@@ -59,7 +59,7 @@ for env in "${ENVS[@]}"; do
             --config '$CONFIG' \
             --rank-by 'auc' \
             --higher-is-better \
-            --metric nn_greedy_performance \
+            --metric nn_advantage_cossim_uniform \
             --use-geom-mean \
             --use-greedy-policy \
             --policy-epsilon $epsilon"

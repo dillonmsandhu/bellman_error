@@ -359,6 +359,11 @@ def inject_weights(train_state, w):
         return train_state.replace(params=freeze(new_params))
 
 def get_evaluation_policies(base_config, evaluator):
+    """Gets a target policy for evaluation. Returns (policy_fn, policy_matrix):
+        - policy_fn: a function from obs to action distribution
+        - policy_matrix: a matrix of size |S| x |A| of the policy
+        This function constructs these functions for either an epsilon-optimal policy or a trained actor network.
+    """
     if base_config.get("USE_GREEDY_POLICY", False):
         import core.bellman_error as bellman_error
         import distrax
