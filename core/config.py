@@ -8,7 +8,7 @@ config = {
     "k": 16,
     "MAX_STEPS_IN_EPISODE": 1e6,
     "LAYER_NORM": False,
-    "LR": 0.01,
+    "LR": 0.001,
     "LR_END": 0.00001,
     "ACTOR_LR": 0.0001,
     "ACTOR_LR_END": 0.00001,
@@ -34,12 +34,6 @@ config = {
     "NETWORK_TYPE": "cnn",
     "NORMALIZE_OBS": False,
     "CALC_TRUE_VALUES": True,
-    # IV settings:
-    "FORWARD_COEFF": 0.0,
-    "REWARD_COEFF": 0.0,
-    "DONE_COEFF": 0.0,
-    "POLICY_COEFF": 1.0,
-    "V_LOSS_SHARED": True,  # whether the TD / MC can update the final weights w.
     "BATCH_SIZE": 104,
     # For the fixed:
     # 'MODEL_LOAD_DIR': "cont",

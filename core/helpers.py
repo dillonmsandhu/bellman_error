@@ -118,21 +118,6 @@ def _loss_fn(params, network, traj_batch, gae, targets, config):
     )
     return total_loss, (value_loss, loss_actor, entropy)
 
-def _loss_fn_cd(params, network, traj_batch, gae, targets, config):
-    
-    # Critic loss
-    value_loss = coordinate_descent_v_loss_fn(params, network, traj_batch, gae, targets, config)
-
-    # Actor loss
-    loss_actor, entropy = pi_loss_fn(params, network, traj_batch, gae, config)
-
-    total_loss = (
-        loss_actor
-        + config["VF_COEF"] * value_loss
-        - config["ENT_COEF"] * entropy
-    )
-    return total_loss, (value_loss, loss_actor, entropy)
-
 def _loss_fn_no_w(params, network, traj_batch, gae, targets, config):
     # Critic loss
     value_loss = no_w_v_loss_fn(params, network, traj_batch, gae, targets, config)
@@ -372,3 +357,50 @@ def inject_weights(train_state, w):
         return train_state.replace(params=new_params)
     else:
         return train_state.replace(params=freeze(new_params))
+
+def get_evaluation_policies(base_config, evaluator):
+    if base_config.get("USE_GREEDY_POLICY", False):
+        import core.bellman_error as bellman_error
+        import distrax
+        if hasattr(evaluator, "get_optimal_value_function"):
+            V_star = evaluator.get_optimal_value_function()
+        else:
+            V_star = jnp.zeros(evaluator.num_total_states)
+        
+        greedy_actions = bellman_error.compute_greedy_policy(evaluator.P, evaluator.R, evaluator.gamma, V_star)
+        pi_greedy = jax.nn.one_hot(greedy_actions, evaluator.num_actions)
+        epsilon = base_config.get("POLICY_EPSILON", 0.0)
+        pi_eps = (1 - epsilon) * pi_greedy + (epsilon / evaluator.num_actions) * jnp.ones_like(pi_greedy)
+        
+        def policy_fn(obs):
+            obs_flat = obs.reshape((obs.shape[0], -1)) if obs.ndim > 1 else obs.flatten()[None, :]
+            stack_flat = evaluator.obs_stack.reshape((evaluator.obs_stack.shape[0], -1))
+            diffs = jnp.sum((obs_flat[:, None, :] - stack_flat[None, :, :])**2, axis=-1)
+            state_indices = jnp.argmin(diffs, axis=-1)
+            probs = pi_eps[state_indices]
+            return distrax.Categorical(probs=probs)
+            
+        terminal_policy = jnp.ones([1, evaluator.num_actions], dtype=pi_eps.dtype) / evaluator.num_actions
+        policy_matrix = jnp.vstack([pi_eps, terminal_policy])
+        return policy_fn, policy_matrix
+    else:
+        import core.utils as utils
+        model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']
+        _, out = utils.load_run_data(model_dir, base_config['ENV_NAME'], 'results') 
+        policy_train_state = out['runner_state'][0]
+        policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
+        
+        def policy_fn(obs):
+            pi, _ = policy_train_state.apply_fn(policy_params, obs)
+            # handle cases where apply_fn returns a tuple (pi, value) or just pi
+            if isinstance(pi, tuple):
+                pi = pi[0]
+            return pi
+            
+        # build the matrix
+        pi_dist = policy_fn(evaluator.obs_stack)
+        pi_probs = pi_dist.probs
+        terminal_policy = jnp.ones([1, evaluator.num_actions], dtype=pi_probs.dtype) / evaluator.num_actions
+        policy_matrix = jnp.vstack([pi_probs, terminal_policy])
+        
+        return policy_fn, policy_matrix

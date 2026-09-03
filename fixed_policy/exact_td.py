@@ -21,23 +21,11 @@ def make_train(base_config):
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
-    
-    # Policy to be evaluated
-    # model saved under ./results/{alg}/{sub_dir}
-    model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']
-    _, out = utils.load_run_data(model_dir, base_config['ENV_NAME'], 'results') 
-    policy_train_state = out['runner_state'][0]
-    policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
-    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)[0]
-    def get_policy_matrix():
-        "produces pi(.|S) where S is all states"
-        pi_dist, _ = policy_train_state.apply_fn(policy_params, evaluator.obs_stack)
-        pi = pi_dist.probs
-        terminal_policy = jnp.ones( [1,n_actions], dtype=pi.dtype) / n_actions
-        pi = jnp.vstack([pi, terminal_policy])
-        return pi
 
-    Pi = get_policy_matrix()
+    policy_fn, policy_matrix = helpers.get_evaluation_policies(base_config, evaluator)
+    
+
+    Pi = policy_matrix
 
     # Get the Markov Chain
     S = evaluator.obs_stack
@@ -82,12 +70,12 @@ def make_train(base_config):
             train_state, loss = jax.lax.scan(td_step, train_state, None, config["NUM_EPOCHS"])
             # 2. Get value metrics and logging
             metric = bellman_error.value_metrics_light(
-                evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy
+                evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn
             )
             if config.get("LOG_FEATURE_METRICS", False):
                 from core.feature_metrics import feature_metrics
                 metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy)
+                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn)
                 )
             metric.update({"total_loss": loss.mean(), "value_loss": loss.mean()})
             runner_state = (train_state, idx + 1)

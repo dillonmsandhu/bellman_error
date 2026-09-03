@@ -1,0 +1,113 @@
+import os
+import glob
+import json
+import argparse
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path):
+    # 1. Find all sweep directories
+    sweep_dirs = glob.glob(os.path.join(results_dir, "*"))
+    
+    data = []
+    
+    for s_dir in sweep_dirs:
+        config_path = os.path.join(s_dir, "pipeline_config.json")
+        if not os.path.exists(config_path):
+            continue
+            
+        with open(config_path, 'r') as f:
+            meta = json.load(f)
+            
+        # Only look at greedy policy sweeps for the correct environment
+        base_config = meta.get("base_config", {})
+        if not base_config.get("USE_GREEDY_POLICY", False):
+            continue
+        if meta.get("env_name") != env_name:
+            continue
+            
+        epsilon = base_config.get("POLICY_EPSILON", 0.0)
+        algos = meta.get("algos", [])
+        
+        for algo in algos:
+            tuning_csv = os.path.join(s_dir, algo, "tuning", "tuning_results.csv")
+            if not os.path.exists(tuning_csv):
+                continue
+                
+            df = pd.read_csv(tuning_csv)
+            
+            # Check for lambda column (GAE_LAMBDA for TD, VALUE_LAMBDA for exact TD)
+            lambda_col = None
+            for col in ["GAE_LAMBDA", "VALUE_LAMBDA", "lambda"]:
+                if col in df.columns:
+                    lambda_col = col
+                    break
+            
+            # 2. Group by Lambda (if applicable) and find the best LR for the requested metric
+            if lambda_col is not None:
+                for lam_val, group in df.groupby(lambda_col):
+                    if rank_order == "lower":
+                        best_val = group[metric].min()
+                    else:
+                        best_val = group[metric].max()
+                    
+                    data.append({
+                        "epsilon": epsilon,
+                        "algorithm": f"{algo} (λ={lam_val})",
+                        "best_metric": best_val
+                    })
+            else:
+                # No lambda (e.g. Sampled E)
+                if rank_order == "lower":
+                    best_val = df[metric].min()
+                else:
+                    best_val = df[metric].max()
+                    
+                data.append({
+                    "epsilon": epsilon,
+                    "algorithm": algo,
+                    "best_metric": best_val
+                })
+
+    if not data:
+        print(f"No epsilon sweep data found in {results_dir} for env {env_name}.")
+        return
+        
+    df_plot = pd.DataFrame(data)
+    
+    # 3. Plotting
+    plt.figure(figsize=(10, 6))
+    
+    # Group by algorithm and sort by epsilon
+    for algo_name, group in df_plot.groupby("algorithm"):
+        group = group.sort_values("epsilon")
+        plt.plot(group["epsilon"], group["best_metric"], marker='o', linewidth=2, label=algo_name)
+        
+    plt.xlabel("Policy Epsilon (Noise)", fontsize=12)
+    plt.ylabel(f"Best {metric} (over all LRs)", fontsize=12)
+    plt.title(f"Epsilon Sweep on {env_name}: {metric}", fontsize=14)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    plt.savefig(save_path, dpi=300)
+    print(f"Saved epsilon sweep plot to {save_path}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--results-dir", type=str, default="results/fixed/sweeps")
+    parser.add_argument("--env-name", type=str, default="FourRooms-misc")
+    parser.add_argument("--metric", type=str, default="nn_weighted_VE")
+    parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"])
+    parser.add_argument("--save-path", type=str, default="epsilon_sweep_plot.png")
+    
+    args = parser.parse_args()
+    
+    plot_epsilon_sweep(
+        results_dir=args.results_dir,
+        env_name=args.env_name,
+        metric=args.metric,
+        rank_order=args.rank_order,
+        save_path=args.save_path
+    )
