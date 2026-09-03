@@ -684,7 +684,7 @@ def _():
 
 @app.cell
 def _(mo):
-    base_dir_input = mo.ui.text(value="results", label="Base Results Dir")
+    base_dir_input = mo.ui.text(value="../results", label="Base Results Dir")
     window_size_slider = mo.ui.slider(start=10, stop=20000, step=10, value=1800, label="Selection Tail Window Size")
     selection_metric_dropdown = mo.ui.dropdown(
         options=["nn_greedy_correct", "nn_weighted_VE", "E"],
