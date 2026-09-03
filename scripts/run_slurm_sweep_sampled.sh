@@ -30,7 +30,7 @@ fi
 N_SEEDS=5
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
-SAMPLED_ALGOS=("td" "td0" "sampled_E" "monte_carlo", "unbiased_sampled_E")
+SAMPLED_ALGOS=("td" "td0" "sampled_E" "monte_carlo" "unbiased_sampled_E")
 
 # Base config overrides for sampled algorithms (NUM_ENVS, NUM_STEPS, TOTAL_TIMESTEPS, MINIBATCH_SIZE, etc.)
 CONFIG='{"NUM_ENVS": 64, "NUM_STEPS": 256, "TOTAL_TIMESTEPS": 1000000, "MINIBATCH_SIZE": 1024, "NUM_EPOCHS": 1}'

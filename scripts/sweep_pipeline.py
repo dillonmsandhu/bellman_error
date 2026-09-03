@@ -178,10 +178,13 @@ def run_sweep_pipeline(
         model_load_dir = resolve_model_load_dir(model_load_dir, env_name, base_save_dir)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    sweep_batch_name = f"{policy_type}_{env_name}_{timestamp}"
-    if sweep_suffix:
-        sweep_batch_name += f"_{sweep_suffix}"
-    sweep_root_dir = os.path.join(base_save_dir, policy_type, "sweeps", sweep_batch_name)
+    if sweep_root_dir_arg:
+        sweep_root_dir = sweep_root_dir_arg
+    else:
+        sweep_batch_name = f"{policy_type}_{env_name}_{timestamp}"
+        if sweep_suffix:
+            sweep_batch_name += f"_{sweep_suffix}"
+        sweep_root_dir = os.path.join(base_save_dir, policy_type, "sweeps", sweep_batch_name)
     os.makedirs(sweep_root_dir, exist_ok=True)
 
     if algos is None or algos == ["exact"]:
@@ -374,6 +377,7 @@ def parse_args():
                         help="JSON string or path to JSON file with additional config overrides")
     parser.add_argument("--use-geom-mean", action="store_true",
                         help="Use geometric mean for error bands in comparison plot")
+    parser.add_argument("--sweep-root-dir", type=str, default=None, help="Explicit root directory to save this sweep run.")
     parser.add_argument("--sweep-suffix", type=str, default="", help="Optional suffix for the sweep directory name.")
     parser.add_argument("--use-greedy-policy", action="store_true",
                         help="Evaluate epsilon-greedy optimal policy instead of a loaded PPO network")
