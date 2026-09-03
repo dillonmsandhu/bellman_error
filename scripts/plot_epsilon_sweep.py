@@ -6,13 +6,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path):
+def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir_filter, allowed_algos):
     # 1. Find all sweep directories
     sweep_dirs = glob.glob(os.path.join(results_dir, "*"))
     
     data = []
     
     for s_dir in sweep_dirs:
+        if dir_filter and dir_filter not in os.path.basename(s_dir):
+            continue
         config_path = os.path.join(s_dir, "pipeline_config.json")
         if not os.path.exists(config_path):
             continue
@@ -31,6 +33,8 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path):
         algos = meta.get("algos", [])
         
         for algo in algos:
+            if allowed_algos is not None and algo not in allowed_algos:
+                continue
             tuning_csv = os.path.join(s_dir, algo, "tuning", "tuning_results.csv")
             if not os.path.exists(tuning_csv):
                 continue
@@ -100,6 +104,8 @@ if __name__ == "__main__":
     parser.add_argument("--env-name", type=str, default="FourRooms-misc")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE")
     parser.add_argument("--rank-order", type=str, default="lower", choices=["lower", "higher"])
+    parser.add_argument("--dir-filter", type=str, default="", help="Only include sweep directories containing this string.")
+    parser.add_argument("--algos", nargs="+", default=None, help="List of specific algorithms to plot.")
     parser.add_argument("--save-path", type=str, default="epsilon_sweep_plot.png")
     
     args = parser.parse_args()
@@ -109,5 +115,7 @@ if __name__ == "__main__":
         env_name=args.env_name,
         metric=args.metric,
         rank_order=args.rank_order,
-        save_path=args.save_path
+        save_path=args.save_path,
+        dir_filter=args.dir_filter,
+        allowed_algos=args.algos
     )
