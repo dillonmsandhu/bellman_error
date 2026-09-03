@@ -380,9 +380,10 @@ def get_evaluation_policies(base_config, evaluator):
             probs = pi_eps[state_indices]
             return distrax.Categorical(probs=probs)
             
-        terminal_policy = jnp.ones([1, evaluator.num_actions], dtype=pi_eps.dtype) / evaluator.num_actions
-        policy_matrix = jnp.vstack([pi_eps, terminal_policy])
-        return policy_fn, policy_matrix
+        # pi_eps already has shape (num_total_states, A), we just need to ensure the terminal state is uniform
+        pi_eps = pi_eps.at[-1, :].set(jnp.ones(evaluator.num_actions) / evaluator.num_actions)
+        return policy_fn, pi_eps
+    
     else:
         import core.utils as utils
         model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']

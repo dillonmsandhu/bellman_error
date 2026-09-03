@@ -141,6 +141,38 @@ def get_lstd_weights(evaluator, network, params, random_policy, target_policy_fn
     return w_lstd    
 
 
+
+def compute_advantage_metrics(P, R_env, γ, v_true, v_pred, mu, pi):
+    R_expected = jnp.einsum("sam,sam->sa", P, R_env)
+    
+    Q_true = R_expected + γ * jnp.einsum("sam,m->sa", P, v_true)
+    A_true = Q_true - v_true[:, None]
+    
+    Q_pred = R_expected + γ * jnp.einsum("sam,m->sa", P, v_pred)
+    A_pred = Q_pred - v_pred[:, None]
+    
+    # 1. On-Policy Advantage MSE
+    A_mse = jnp.sum(mu * jnp.sum(pi * (A_true - A_pred)**2, axis=-1))
+    
+    # 2. Uniform Advantage MSE (Uniform over states and actions)
+    uniform_mu = jnp.ones_like(mu) / len(mu)
+    uniform_pi = jnp.ones_like(pi) / pi.shape[-1]
+    A_mse_uniform = jnp.sum(uniform_mu * jnp.sum(uniform_pi * (A_true - A_pred)**2, axis=-1))
+    
+    # Vector dot products for Cosine Similarity
+    dot = jnp.sum(A_true * A_pred, axis=-1)
+    norm_t = jnp.linalg.norm(A_true, axis=-1)
+    norm_p = jnp.linalg.norm(A_pred, axis=-1)
+    valid_mask = (norm_t > 1e-6)
+    
+    # 3. On-Policy Cosine Similarity
+    cos_sim = jnp.sum(mu * valid_mask * (dot / (norm_t * norm_p + 1e-8))) / (jnp.sum(mu * valid_mask) + 1e-8)
+    
+    # 4. Uniform Cosine Similarity
+    cos_sim_uniform = jnp.sum(uniform_mu * valid_mask * (dot / (norm_t * norm_p + 1e-8))) / (jnp.sum(uniform_mu * valid_mask) + 1e-8)
+    
+    return A_mse, cos_sim, A_mse_uniform, cos_sim_uniform
+
 def value_metrics(evaluator, network, params, random_policy=False, target_policy_fn = None, light=False):
     m = evaluator.num_actions
     def get_policy_matrix():
@@ -329,6 +361,11 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         greedy_pol = compute_greedy_policy(P, evaluator.R, γ, V)
         metrics[f"{prefix}_greedy_correct"] = jnp.mean(true_greedy_policy == greedy_pol)
         metrics[f"{prefix}_greedy_performance"] = evaluate_greedy_policy(evaluator, V)
+        A_mse, A_cos, A_mse_uni, A_cos_uni = compute_advantage_metrics(P, evaluator.R, γ, V_pi, V, mu, pi)
+        metrics[f"{prefix}_advantage_mse"] = A_mse
+        metrics[f"{prefix}_advantage_cossim"] = A_cos
+        metrics[f"{prefix}_advantage_mse_uniform"] = A_mse_uni
+        metrics[f"{prefix}_advantage_cossim_uniform"] = A_cos_uni
 
     return metrics
 
