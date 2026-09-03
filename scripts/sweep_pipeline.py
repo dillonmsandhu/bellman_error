@@ -165,6 +165,7 @@ def run_sweep_pipeline(
     base_save_dir="results",
     log_scale=True,
     use_geom_mean=False,
+    sweep_suffix="",
 ):
     """
     Runs a parallel hyperparameter sweep for multiple algorithms on a fixed task,
@@ -178,8 +179,8 @@ def run_sweep_pipeline(
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     sweep_batch_name = f"{policy_type}_{env_name}_{timestamp}"
-    if args.sweep_suffix:
-        sweep_batch_name += f"_{args.sweep_suffix}"
+    if sweep_suffix:
+        sweep_batch_name += f"_{sweep_suffix}"
     sweep_root_dir = os.path.join(base_save_dir, policy_type, "sweeps", sweep_batch_name)
     os.makedirs(sweep_root_dir, exist_ok=True)
 
@@ -423,6 +424,7 @@ def main():
         custom_grids=custom_grids,
         config_overrides=config_overrides,
         use_geom_mean=args.use_geom_mean,
+        sweep_suffix=args.sweep_suffix,
     )
 
 
