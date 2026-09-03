@@ -178,6 +178,8 @@ def run_sweep_pipeline(
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     sweep_batch_name = f"{policy_type}_{env_name}_{timestamp}"
+    if args.sweep_suffix:
+        sweep_batch_name += f"_{args.sweep_suffix}"
     sweep_root_dir = os.path.join(base_save_dir, policy_type, "sweeps", sweep_batch_name)
     os.makedirs(sweep_root_dir, exist_ok=True)
 
@@ -371,6 +373,7 @@ def parse_args():
                         help="JSON string or path to JSON file with additional config overrides")
     parser.add_argument("--use-geom-mean", action="store_true",
                         help="Use geometric mean for error bands in comparison plot")
+    parser.add_argument("--sweep-suffix", type=str, default="", help="Optional suffix for the sweep directory name.")
     parser.add_argument("--use-greedy-policy", action="store_true",
                         help="Evaluate epsilon-greedy optimal policy instead of a loaded PPO network")
     parser.add_argument("--policy-epsilon", type=float, default=0.0,
