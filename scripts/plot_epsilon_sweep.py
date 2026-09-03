@@ -35,10 +35,12 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
         for algo in algos:
             if allowed_algos is not None and algo not in allowed_algos:
                 continue
-            tuning_csv = os.path.join(s_dir, algo, "tuning", "tuning_results.csv")
-            if not os.path.exists(tuning_csv):
+            csv_pattern = os.path.join(s_dir, algo, "tuning", "*", env_name, "tuning_summary.csv")
+            csv_files = glob.glob(csv_pattern)
+            if not csv_files:
                 continue
                 
+            tuning_csv = csv_files[0]
             df = pd.read_csv(tuning_csv)
             
             # Check for lambda column (GAE_LAMBDA for TD, VALUE_LAMBDA for exact TD)
