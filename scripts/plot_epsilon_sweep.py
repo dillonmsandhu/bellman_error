@@ -98,8 +98,10 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
     plt.figure(figsize=(10, 6))
     
     # Group by algorithm and sort by epsilon
-    for algo_name, group in df_plot.groupby("algorithm"):
-        group = group.sort_values("epsilon")
+    # Sort algorithm names so that E-minimization always comes first for consistent coloring
+    algo_names = sorted(df_plot["algorithm"].unique(), key=lambda x: (not ('E' in x or 'e_gd' in x), x))
+    for algo_name in algo_names:
+        group = df_plot[df_plot["algorithm"] == algo_name].sort_values("epsilon")
         plt.plot(group["epsilon"], group["best_metric"], marker='o', linewidth=2, label=algo_name)
         
     plt.xlabel("Policy Epsilon (Noise)", fontsize=12)
