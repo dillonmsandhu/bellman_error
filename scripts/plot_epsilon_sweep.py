@@ -11,6 +11,7 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
     sweep_dirs = glob.glob(os.path.join(results_dir, "*"))
     
     data = []
+    used_dirs = set()
     
     for s_dir in sweep_dirs:
         if dir_filter and dir_filter not in os.path.basename(s_dir):
@@ -92,7 +93,18 @@ def plot_epsilon_sweep(results_dir, env_name, metric, rank_order, save_path, dir
         print(f"No epsilon sweep data found in {results_dir} for env {env_name}.")
         return
         
+    print(f"Plotting data aggregated from {len(used_dirs)} sweep directories:")
+    for d in sorted(used_dirs):
+        print(f"  - {d}")
+
+        
     df_plot = pd.DataFrame(data)
+    
+    # If multiple directories had the same (algorithm, epsilon), take the best overall
+    if rank_order == "lower":
+        df_plot = df_plot.groupby(["algorithm", "epsilon"], as_index=False)["best_metric"].min()
+    else:
+        df_plot = df_plot.groupby(["algorithm", "epsilon"], as_index=False)["best_metric"].max()
     
     # 3. Plotting
     plt.figure(figsize=(10, 6))
