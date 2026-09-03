@@ -44,9 +44,7 @@ def make_train(base_config):
     # --- Precompute True Value Function for Fixed Policy ---
     n_states = len(evaluator.obs_stack)
     policy_fn, policy_matrix = helpers.get_evaluation_policies(base_config, evaluator)
-    pi_active = get_policy(evaluator.obs_stack).probs
-    pi_terminal = jnp.ones((1, n_actions)) / n_actions
-    Pi = jnp.vstack([pi_active, pi_terminal])
+    Pi = policy_matrix
     V_true = evaluator.compute_true_values_raw(Pi)
     V_active = V_true[:n_states]
     flat_stack = evaluator.obs_stack.reshape(n_states, -1)
