@@ -59,7 +59,7 @@ for env in "${ENVS[@]}"; do
             --config '$CONFIG' \
             --rank-by 'auc' \
             --higher-is-better \
-            --metric nn_greedy_performance \
+            --metric nn_advantage_cossim_uniform \
             --use-geom-mean \
             --use-greedy-policy \
             --policy-epsilon $epsilon"
