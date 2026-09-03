@@ -82,7 +82,10 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "SA_min_eigenvalue": "SA_min_eigenvalue",
         "non_reversible_coeff": "non_reversible_coeff",
         "nn_greedy_performance": "nn_greedy_performance",
+        "nn_advantage_cossim_uniform": "nn_advantage_cossim_uniform",
+        "nn_advantage_cossim": "nn_advantage_cossim",
     }
+
     data = get_metric("E", 1)
     E_local = get_metric("E_local", 1)
     # a few log plots:
