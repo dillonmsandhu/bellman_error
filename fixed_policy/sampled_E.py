@@ -25,20 +25,6 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 def make_train(base_config):
-    # Load the fixed policy we will evaluate:
-    # model saved under ./results/{alg}/{sub_dir}
-    model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']
-    _, out = utils.load_run_data(model_dir, base_config['ENV_NAME'], 'results') 
-    policy_train_state = out['runner_state'][0]
-    
-    # The saved train state is batched over N_SEEDS (which is 1 by default).
-    # We need to extract the parameters for the first seed to remove this extra dimension.
-    policy_params = jax.tree_util.tree_map(lambda x: x[0], policy_train_state.params)
-    get_policy = lambda obs: policy_train_state.apply_fn(policy_params, obs)[0]
-    def fixed_policy_fn(obs):
-        "The fixed policy this script will sample from."       
-        pi, _ = policy_train_state.apply_fn(policy_params, obs)
-        return pi
 
     # Ensure GAE_LAMBDA defaults to 1.0 for Monte Carlo returns unless specified
     if "GAE_LAMBDA" not in base_config or base_config["GAE_LAMBDA"] == 0.0:
@@ -54,6 +40,8 @@ def make_train(base_config):
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
     n_actions = env.action_space(env_params).n
+
+    policy_fn, policy_matrix = helpers.get_evaluation_policies(base_config, evaluator)
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
@@ -76,7 +64,7 @@ def make_train(base_config):
 
                 rng, _rng = jax.random.split(rng)
                 value = network.apply(train_state.params, last_obs)
-                pi = fixed_policy_fn(last_obs)
+                pi = policy_fn(last_obs)
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action)
 
@@ -168,12 +156,12 @@ def make_train(base_config):
             metric.update({k: v.mean() for k, v in losses.items()})
             metric.update({"mean_rew": traj_batch.reward.mean()})
             value_metrics = bellman_error.value_metrics_light(
-                evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy
+                evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn
             )
             metric.update(value_metrics)
             if config.get("LOG_FEATURE_METRICS", False):
                 metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=get_policy,
+                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn,
                 ))
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric

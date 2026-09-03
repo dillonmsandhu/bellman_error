@@ -371,6 +371,10 @@ def parse_args():
                         help="JSON string or path to JSON file with additional config overrides")
     parser.add_argument("--use-geom-mean", action="store_true",
                         help="Use geometric mean for error bands in comparison plot")
+    parser.add_argument("--use-greedy-policy", action="store_true",
+                        help="Evaluate epsilon-greedy optimal policy instead of a loaded PPO network")
+    parser.add_argument("--policy-epsilon", type=float, default=0.0,
+                        help="Epsilon noise for the greedy policy (default: 0.0)")
     return parser.parse_args()
 
 
@@ -389,6 +393,12 @@ def main():
                 config_overrides = json.load(f)
         else:
             config_overrides = json.loads(args.config)
+
+    if args.use_greedy_policy:
+        if config_overrides is None:
+            config_overrides = {}
+        config_overrides["USE_GREEDY_POLICY"] = True
+        config_overrides["POLICY_EPSILON"] = args.policy_epsilon
 
     rank_order = "higher" if args.higher_is_better else args.rank_order
 
