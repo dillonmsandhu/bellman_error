@@ -430,6 +430,7 @@ def main():
         config_overrides=config_overrides,
         use_geom_mean=args.use_geom_mean,
         sweep_suffix=args.sweep_suffix,
+        sweep_root_dir_arg=args.sweep_root_dir,
     )
 
 
