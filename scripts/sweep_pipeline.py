@@ -166,6 +166,7 @@ def run_sweep_pipeline(
     log_scale=True,
     use_geom_mean=False,
     sweep_suffix="",
+    sweep_root_dir_arg=None,
 ):
     """
     Runs a parallel hyperparameter sweep for multiple algorithms on a fixed task,
