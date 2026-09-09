@@ -5,6 +5,7 @@ import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
+from core.policy_metrics import compute_policy_metrics
 
 SAVE_DIR = "ppo/exact_mc"
 
@@ -62,13 +63,36 @@ def make_train(base_config):
             # True value function as the value net target
             V_true = evaluator.compute_true_values_raw(old_pi_full)
 
-            # 2. Compute Advantages using ESTIMATED values
+            P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
+            R_pi = jnp.einsum("sa,sam,sam->s", old_pi_full, P, evaluator.R)
+            I = jnp.eye(len(S) + 1)
+            λ_pi = config.get("POLICY_LAMBDA", 0.6)
+
+            def T(v):
+                return R_pi + γ * P_pi @ v
+            # 2. Compute GAE Advantages
+            # GAE(gamma, lambda_pi) formulation:
+            # delta_gae = (I - gamma * lambda_pi * P_pi)^(-1) (T(v) - v) represents the on-policy
+            # discounted sum of TD errors from step 1 onward.
+            # At step 0, action a has immediate TD error delta_0(s, a) = R(s, a) + gamma * v(s') - v(s).
+            # Future TD errors from step 1 onward are discounted by gamma * lambda_pi:
+            # A^GAE(s, a) = delta_0 + gamma * lambda_pi * E_{s'}[delta_gae(s')]
+            #             = R(s, a) + gamma * E_{s'}[v(s') + lambda_pi * delta_gae(s')] - v(s)
+            L_pi = jnp.linalg.inv(I - γ * λ_pi * P_pi)
+            delta_gae = L_pi @ (T(old_v_full) - old_v_full)
+            v_target = old_v_full + λ_pi * delta_gae
+
             R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
-            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
+            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], v_target)
 
             A = Q_sa - old_v[:, None]
-            A -= A.mean()
-            A /= A.std() + 1e-8
+            # Normalize over on-policy state-action visitation distribution (mu * old_pi)
+            w = mu[:-1, None] * old_pi
+            w = w / jnp.sum(w)
+            mean_A = jnp.sum(w * A)
+            var_A = jnp.sum(w * (A - mean_A) ** 2)
+            std_A = jnp.sqrt(var_A)
+            A = (A - mean_A) / (std_A + 1e-8)
             A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
@@ -111,7 +135,7 @@ def make_train(base_config):
 
             # Metrics
             value_loss, actor_loss, entropy = epoch_metrics
-            metric = bellman_error.value_metrics_light(evaluator, network, train_state.params, random_policy=True)
+            metric = bellman_error.value_metrics_light(evaluator, network, train_state.params, random_policy=False)
             if config.get("LOG_FEATURE_METRICS", False):
                 from core.feature_metrics import feature_metrics
 
@@ -120,16 +144,21 @@ def make_train(base_config):
                         evaluator,
                         network,
                         train_state.params,
-                        random_policy=True,
+                        random_policy=False,
                     )
                 )
+            # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)
+            new_pi = network.apply(train_state.params, S)[0].probs
+            new_mu = evaluator.compute_stationary_distribution_raw(new_pi)[0]
+            metric.update(compute_policy_metrics(new_pi, old_pi, new_mu, mu[:-1]))
             metric.update(
                 {
                     "total_loss": (value_loss + actor_loss - entropy).mean(),
                     "value_loss": value_loss.mean(),
                     "actor_loss": actor_loss.mean(),
                     "entropy": entropy.mean(),
-                    "V_start": V_true[evaluator.start_idx],
+                    "v_pred_start": old_v[evaluator.start_idx],
+                    "Mean_A": A.mean(),
                 }
             )
 

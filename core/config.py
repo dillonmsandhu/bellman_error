@@ -23,7 +23,6 @@ config = {
     # "NUM_EPOCHS": 1,
     # "MINIBATCH_SIZE": 1,
     "VALUE_LAMBDA": 0.0,
-    "POLICY_LAMBDA": 0.6,
     "GAE_LAMBDA": 0.0,
     "LAPLACE_SMOOTHING_COEFF": 0.9,
     "CLIP_EPS": 0.05,

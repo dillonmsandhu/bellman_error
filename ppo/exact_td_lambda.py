@@ -4,6 +4,7 @@ import core.networks as networks
 import core.utils as utils
 from flax.training.train_state import TrainState
 import core.bellman_error as bellman_error
+from core.policy_metrics import compute_policy_metrics
 
 SAVE_DIR = "ppo/exact_td_lambda"
 
@@ -60,24 +61,44 @@ def make_train(base_config):
             mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
             mu = jnp.append(mu, 0.0)
 
-            # 2. Compute Advantages
-            R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
-            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], old_v_full)
-            
-            A = Q_sa - old_v[:, None]
-            A -= A.mean()
-            A/= A.std() + 1e-8
-            A = jax.lax.stop_gradient(A)
-
-            # Define TD Lambda
-            I = jnp.eye(len(S)+1) # terminal state.
-            L = jnp.linalg.inv(I - γ * λ * P_pi)
+            # Define Bellman Operator and Resolvent operators
+            I = jnp.eye(len(S) + 1)
+            λ_val = config.get("VALUE_LAMBDA", 0.0)
+            λ_pi = config.get("GAE_LAMBDA", 0.6)
 
             def T(v):
                 return R_pi + γ * P_pi @ v
 
+            # 2. Compute GAE Advantages
+            # GAE(gamma, lambda_pi) formulation:
+            # delta_gae = (I - gamma * lambda_pi * P_pi)^(-1) (T(v) - v) represents the on-policy
+            # discounted sum of TD errors from step 1 onward.
+            # At step 0, action a has immediate TD error delta_0(s, a) = R(s, a) + gamma * v(s') - v(s).
+            # Future TD errors from step 1 onward are discounted by gamma * lambda_pi:
+            # A^GAE(s, a) = delta_0 + gamma * lambda_pi * E_{s'}[delta_gae(s')]
+            #             = R(s, a) + gamma * E_{s'}[v(s') + lambda_pi * delta_gae(s')] - v(s)
+            L_pi = jnp.linalg.inv(I - γ * λ_pi * P_pi)
+            delta_gae = L_pi @ (T(old_v_full) - old_v_full)
+            v_target = old_v_full + λ_pi * delta_gae
+
+            R_sa = jnp.einsum("sam,sam->sa", P[:-1], evaluator.R[:-1])
+            Q_sa = R_sa + γ * jnp.einsum("sam,m->sa", P[:-1], v_target)
+            
+            A = Q_sa - old_v[:, None]
+            # Normalize over on-policy state-action visitation distribution (mu * old_pi)
+            w = mu[:-1, None] * old_pi
+            w = w / jnp.sum(w)
+            mean_A = jnp.sum(w * A)
+            var_A = jnp.sum(w * (A - mean_A) ** 2)
+            std_A = jnp.sqrt(var_A)
+            A = (A - mean_A) / (std_A + 1e-8)
+            A = jax.lax.stop_gradient(A)
+
+            # 3. Critic TD(lambda) Target using VALUE_LAMBDA
+            L_val = jnp.linalg.inv(I - γ * λ_val * P_pi)
+
             def t_lambda(v):
-                return v + L @ (T(v) - v)
+                return v + L_val @ (T(v) - v)
 
             def loss_fn(params, network):
                 # A shape is (num_states, num_actions)
@@ -125,6 +146,10 @@ def make_train(base_config):
                 metric.update(feature_metrics(
                     evaluator, network, train_state.params, random_policy=False,)
                 )
+            # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)
+            new_pi = network.apply(train_state.params, S)[0].probs
+            new_mu = evaluator.compute_stationary_distribution_raw(new_pi)[0]
+            metric.update(compute_policy_metrics(new_pi, old_pi, new_mu, mu[:-1]))
             metric.update({
                 "total_loss": (value_loss + actor_loss - entropy).mean(),
                 "value_loss": value_loss.mean(),

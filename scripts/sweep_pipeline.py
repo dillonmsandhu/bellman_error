@@ -73,6 +73,7 @@ ALGO_REGISTRY = {
         "exact_td": "ppo.exact_td",
         "exact_mc": "ppo.exact_mc",
         "exact_E": "ppo.exact_E",
+        "exact_E_gd": "ppo.exact_E",
         "exact_td_lambda": "ppo.exact_td_lambda",
     },
 }
@@ -323,7 +324,7 @@ def run_sweep_pipeline(
         rank_order=rank_order,
         window_size=window_size,
         save_path=plot_path,
-        title=f"{policy_type.capitalize()} Policy Evaluation ({env_name}) - Algorithm Comparison",
+        title=f"PPO Policy Improvement ({env_name}) - Algorithm Comparison" if policy_type == "ppo" else f"{policy_type.capitalize()} Policy Evaluation ({env_name}) - Algorithm Comparison",
     )
 
     print("\n" + "=" * 70)
@@ -378,6 +379,10 @@ def parse_args():
                         help="JSON string or path to JSON file with additional config overrides")
     parser.add_argument("--use-geom-mean", action="store_true",
                         help="Use geometric mean for error bands in comparison plot")
+    parser.add_argument("--log-scale", dest="log_scale", action="store_true", default=None,
+                        help="Force log scale on y-axis for curve plots")
+    parser.add_argument("--no-log-scale", dest="log_scale", action="store_false",
+                        help="Disable log scale on y-axis (recommended for performance metrics like V_start, reward)")
     parser.add_argument("--sweep-root-dir", type=str, default=None, help="Explicit root directory to save this sweep run.")
     parser.add_argument("--sweep-suffix", type=str, default="", help="Optional suffix for the sweep directory name.")
     parser.add_argument("--use-greedy-policy", action="store_true",
@@ -411,6 +416,16 @@ def main():
 
     rank_order = "higher" if args.higher_is_better else args.rank_order
 
+    # Automatically choose sensible default for log_scale based on metric:
+    # Error metrics (VE, MSE) default to log scale; performance metrics (V_start, reward) default to linear.
+    if args.log_scale is None:
+        if args.metric in ["V_start", "reward", "return", "nn_greedy_correct", "nn_greedy_accuracy"] or args.higher_is_better:
+            log_scale = False
+        else:
+            log_scale = True
+    else:
+        log_scale = args.log_scale
+
     run_sweep_pipeline(
         policy_type=args.policy,
         env_name=args.env_name,
@@ -428,6 +443,7 @@ def main():
         lambda_grid=args.lambda_grid,
         custom_grids=custom_grids,
         config_overrides=config_overrides,
+        log_scale=log_scale,
         use_geom_mean=args.use_geom_mean,
         sweep_suffix=args.sweep_suffix,
         sweep_root_dir_arg=args.sweep_root_dir,

@@ -84,6 +84,12 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "nn_greedy_performance": "nn_greedy_performance",
         "nn_advantage_cossim_uniform": "nn_advantage_cossim_uniform",
         "nn_advantage_cossim": "nn_advantage_cossim",
+        "policy_tv": "policy_tv",
+        "policy_tv_on_policy": "policy_tv_on_policy",
+        "policy_tv_max": "policy_tv_max",
+        "mu_tv": "mu_tv",
+        "state_coverage": "state_coverage",
+        "state_entropy_coverage": "state_entropy_coverage",
     }
 
     data = get_metric("E", 1)
@@ -116,6 +122,11 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         save_heatmap(env_dir, run_config["ENV_NAME"], metrics["V_grid"][0, -1], "V_grid")
     except Exception as e:
         print("failed to save value grid", e)
+
+    try:
+        save_heatmap(env_dir, run_config["ENV_NAME"], metrics["state_dist_grid"][0, -1], "state_dist_grid")
+    except Exception as e:
+        pass
 
     try:
         save_heatmap_stack(
@@ -195,6 +206,25 @@ def evaluate(run_config, make_train, run_dir, args, rng):
                 title=title,
                 ylabel=ylabel,
                 log_scale=logscale,
+            )
+
+    if "policy_tv" in metrics:
+        policy_tv_dict = {
+            "Uniform Mean": get_metric("policy_tv", 1),
+            "On-Policy Mean": get_metric("policy_tv_on_policy", 1),
+            "Max State": get_metric("policy_tv_max", 1),
+        }
+        # Filter out None values if any
+        policy_tv_dict = {k: v for k, v in policy_tv_dict.items() if v is not None}
+        if len(policy_tv_dict) > 0:
+            save_multi_plot(
+                env_dir=env_dir,
+                env_name=run_config["ENV_NAME"],
+                steps_per_pi=steps_per_pi,
+                metrics_dict=policy_tv_dict,
+                title="Policy Total Variation",
+                ylabel="Total Variation Distance",
+                log_scale=False,
             )
 
     if hasattr(args, "save_video") and args.save_video:

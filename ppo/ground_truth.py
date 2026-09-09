@@ -74,8 +74,13 @@ def make_train(base_config):
 
             # 4. Compute the Advantage
             A = Q_sa - V[:-1, None]
-            A -= A.mean()
-            A /= A.std() + 1e-8
+            # Normalize over on-policy state-action visitation distribution (mu * old_pi)
+            w = mu[:-1, None] * old_pi
+            w = w / jnp.sum(w)
+            mean_A = jnp.sum(w * A)
+            var_A = jnp.sum(w * (A - mean_A) ** 2)
+            std_A = jnp.sqrt(var_A)
+            A = (A - mean_A) / (std_A + 1e-8)
             A = jax.lax.stop_gradient(A)
 
             def loss_fn(params, network):
