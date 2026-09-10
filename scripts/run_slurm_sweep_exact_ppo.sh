@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sweep_exact_ppo
 #SBATCH --output=slurm/%j.out
-#SBATCH --time=4:00:00
+#SBATCH --time=8:00:00
 #SBATCH --partition compsci-gpu
 #SBATCH --gres=gpu:a5000:1
 
@@ -27,10 +27,16 @@ else
 fi
 
 # Configuration
-N_SEEDS=5
-TOTAL_TIMESTEPS=5000
-ENVS=("FourRooms-misc" "MountainCar-v0")
-EXACT_ALGOS=("exact_E" "exact_td_lambda")
+N_SEEDS=10
+TOTAL_TIMESTEPS=3000
+ENVS=("FourRooms-misc" "MountainCar-v0" "Whirlpool")
+EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
+
+
+FIXED_GAE_LAMBDA=0.01
+# Grids
+LR_GRID="0.005 0.001 0.0005"
+VALUE_LAMBDA_GRID="0.5 0.9"
 
 mkdir -p slurm
 
@@ -49,11 +55,14 @@ for env in "${ENVS[@]}"; do
     echo "======================================================================"
     echo "Running PPO Control Sweep: Environment=$env"
     echo "======================================================================"
-
+    
     CMD="$PYTHON scripts/sweep_pipeline.py \
         --policy ppo \
         --env-name $env \
         --algos ${EXACT_ALGOS[*]} \
+        --lr-grid $LR_GRID \
+        --lambda-grid $VALUE_LAMBDA_GRID \
+        --config '{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA, \"k\": 16}' \
         --n-seeds $N_SEEDS \
         --total-timesteps $TOTAL_TIMESTEPS \
         --metric V_start \
