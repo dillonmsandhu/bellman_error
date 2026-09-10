@@ -13,50 +13,108 @@ from envs.whirlpool_env import Whirlpool
 from gymnax.environments import spaces
 from flax.core import unfreeze, freeze
 
-def initialize_evaluator(config, env, env_params):
-    # for computing the true value
+def create_evaluator(config, env=None, env_params=None):
     from envs.fourrooms import FourRoomsExactValue
     from envs.fourrooms_continuing import ContinuingFourRooms
+    from envs.eightrooms import EightRoomsExactValue, ContinuingEightRooms
     from envs.boyan_chain import ContinuingBoyanRing
+    from envs.whirlpool import WhirlpoolExactValue, ContinuingWhirlpool
     from envs.mountaincar_exact import MountainCarExactValue
+
+    env_name = config['ENV_NAME'].lower()
+
+    if env_name == 'fourrooms-misc':
+        return FourRoomsExactValue(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (11, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.1)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name == 'fourrooms-cont':
+        return ContinuingFourRooms(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (11, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.1)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name in ['eightrooms', 'eightrooms-misc']:
+        return EightRoomsExactValue(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (23, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.01)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name in ['eightrooms-cont']:
+        return ContinuingEightRooms(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (23, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.01)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name == 'boyan':
+        return ContinuingBoyanRing(
+            size=config.get('ENV_SIZE', 20),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name in ['whirlpool', 'whirlpool-misc']:
+        return WhirlpoolExactValue(
+            size=config.get('ENV_SIZE', 13),
+            gamma=config['GAMMA'],
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
+            start_pos=getattr(env, 'pos_fixed', None),
+            goal_pos=getattr(env, 'goal_fixed', None),
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name in ['whirlpool-cont']:
+        return ContinuingWhirlpool(
+            size=config.get('ENV_SIZE', 13),
+            gamma=config['GAMMA'],
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
+            start_pos=getattr(env, 'pos_fixed', None),
+            goal_pos=getattr(env, 'goal_fixed', None),
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name == 'mountaincar-v0':
+        return MountainCarExactValue(gamma=config['GAMMA'])
+    return None
+
+def initialize_evaluator(config, env, env_params):
     if not config.get("CALC_TRUE_VALUES", False):
         return None
-    
-    evaluator = None
-    if config['ENV_NAME'] == 'FourRooms-misc':
-        evaluator = FourRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob,gamma=config['GAMMA']) 
-    elif config['ENV_NAME'] == 'FourRooms-cont':
-        evaluator = ContinuingFourRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
-    elif config['ENV_NAME'].lower() in ['eightrooms', 'eightrooms-misc']:
-        from envs.eightrooms import EightRoomsExactValue
-        evaluator = EightRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
-    elif config['ENV_NAME'].lower() in ['eightrooms-cont']:
-        from envs.eightrooms import ContinuingEightRooms
-        evaluator = ContinuingEightRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
-    elif config['ENV_NAME'] == 'boyan':
-        evaluator = ContinuingBoyanRing(gamma=config['GAMMA'], use_visual_obs=True)
-    elif config['ENV_NAME'].lower() in ['whirlpool', 'whirlpool-misc']:
-        evaluator = WhirlpoolExactValue(
-            gamma=config['GAMMA'],
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
-            start_pos=getattr(env, 'pos_fixed', None),
-            goal_pos=getattr(env, 'goal_fixed', None),
-        )
-    elif config['ENV_NAME'].lower() in ['whirlpool-cont']:
-        from envs.whirlpool import ContinuingWhirlpool
-        evaluator = ContinuingWhirlpool(
-            gamma=config['GAMMA'],
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
-            start_pos=getattr(env, 'pos_fixed', None),
-            goal_pos=getattr(env, 'goal_fixed', None),
-        )
-    elif config['ENV_NAME'] == 'MountainCar-v0':
-        evaluator = MountainCarExactValue(gamma=config['GAMMA'])
-    return evaluator 
+    if hasattr(env, "evaluator") and env.evaluator is not None:
+        return env.evaluator
+    return create_evaluator(config, env, env_params)
 
 def make_env(config):
+    env_name = config['ENV_NAME'].lower()
+    use_tabular = config.get("USE_TABULAR_SIMULATOR", True)
 
-    if config['ENV_NAME'] == 'MountainCar-v0':
+    tabular_env_names = [
+        'whirlpool', 'whirlpool-misc', 'whirlpool-cont',
+        'fourrooms-misc', 'fourrooms-cont',
+        'eightrooms', 'eightrooms-misc', 'eightrooms-cont',
+        'boyan'
+    ]
+
+    if use_tabular and env_name in tabular_env_names:
+        from envs.tabular_matrix_env import TabularMatrixEnv, TabularParams
+        evaluator = create_evaluator(config)
+        env = TabularMatrixEnv(evaluator, name=config['ENV_NAME'])
+        env_params = TabularParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
+            fail_prob=getattr(evaluator, 'fail_prob', 0.0),
+        )
+        env = TerminalInfoWrapper(env)
+        if '-cont' in env_name:
+            from envs.wrappers import ContinuingWrapper
+            env = ContinuingWrapper(env)
+
+    elif config['ENV_NAME'] == 'MountainCar-v0':
         env, env_params = gymnax.make(config["ENV_NAME"])
         env_params = env_params.replace(
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
@@ -113,7 +171,7 @@ def make_env(config):
         )
     elif config['ENV_NAME'].lower() in ['whirlpool', 'whirlpool-misc']:
         from envs.whirlpool_env import Whirlpool, EnvParams
-        env = Whirlpool(size=config.get('ENV_SIZE', 10), use_visual_obs=True)
+        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
         env_params = EnvParams(
             fail_prob=config.get('FAIL_PROB', 0.9),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
@@ -123,7 +181,7 @@ def make_env(config):
     elif config['ENV_NAME'].lower() in ['whirlpool-cont']:
         from envs.whirlpool_env import Whirlpool, EnvParams
         from envs.wrappers import ContinuingWrapper
-        env = Whirlpool(size=config.get('ENV_SIZE', 20), use_visual_obs=True)
+        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
         env_params = EnvParams(
             fail_prob=config.get('FAIL_PROB', 0.9),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
