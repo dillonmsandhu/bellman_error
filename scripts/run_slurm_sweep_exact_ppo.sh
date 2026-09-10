@@ -29,7 +29,7 @@ fi
 # Configuration
 N_SEEDS=10
 TOTAL_TIMESTEPS=3000
-ENVS=("FourRooms-misc" "MountainCar-v0" "Whirlpool")
+ENVS=("EightRooms-misc" "FourRooms-misc" "MountainCar-v0" "Whirlpool")
 EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
 
 

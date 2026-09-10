@@ -27,6 +27,12 @@ def initialize_evaluator(config, env, env_params):
         evaluator = FourRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob,gamma=config['GAMMA']) 
     elif config['ENV_NAME'] == 'FourRooms-cont':
         evaluator = ContinuingFourRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
+    elif config['ENV_NAME'].lower() in ['eightrooms', 'eightrooms-misc']:
+        from envs.eightrooms import EightRoomsExactValue
+        evaluator = EightRoomsExactValue(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
+    elif config['ENV_NAME'].lower() in ['eightrooms-cont']:
+        from envs.eightrooms import ContinuingEightRooms
+        evaluator = ContinuingEightRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
     elif config['ENV_NAME'] == 'boyan':
         evaluator = ContinuingBoyanRing(gamma=config['GAMMA'], use_visual_obs=True)
     elif config['ENV_NAME'] == 'Whirlpool':
@@ -61,6 +67,26 @@ def make_env(config):
         env_params = env_params.replace(
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
             fail_prob=config['FAIL_PROB']
+        )
+        env = TerminalInfoWrapper(env)
+        env = ContinuingWrapper(env)
+
+    elif config['ENV_NAME'].lower() in ['eightrooms', 'eightrooms-misc']:
+        from envs.eightrooms import EightRooms, EightRoomsParams
+        env = EightRooms(use_visual_obs=True, goal_fixed=(23, 11), pos_fixed=(3, 1))
+        env_params = EightRoomsParams(
+            max_steps_in_episode=config.get('MAX_STEPS_IN_EPISODE', 1e6),
+            fail_prob=config.get('FAIL_PROB', 0.01)
+        )
+        env = TerminalInfoWrapper(env)
+
+    elif config['ENV_NAME'].lower() in ['eightrooms-cont']:
+        from envs.eightrooms import EightRooms, EightRoomsParams
+        from envs.wrappers import ContinuingWrapper
+        env = EightRooms(use_visual_obs=True, goal_fixed=(23, 11), pos_fixed=(3, 1))
+        env_params = EightRoomsParams(
+            max_steps_in_episode=config.get('MAX_STEPS_IN_EPISODE', 1e6),
+            fail_prob=config.get('FAIL_PROB', 0.01)
         )
         env = TerminalInfoWrapper(env)
         env = ContinuingWrapper(env)
