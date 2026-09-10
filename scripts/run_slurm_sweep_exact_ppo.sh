@@ -29,13 +29,13 @@ fi
 # Configuration
 N_SEEDS=10
 TOTAL_TIMESTEPS=3000
-ENVS=("EightRooms-misc" "FourRooms-misc" "MountainCar-v0" "Whirlpool")
+ENVS=("EightRooms-misc" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
 
 
-FIXED_GAE_LAMBDA=0.01
+FIXED_GAE_LAMBDA=0.1
 # Grids
-LR_GRID="0.005 0.001 0.0005"
+LR_GRID="0.005 0.001" # use a fixed LR to keep the critic standard...
 VALUE_LAMBDA_GRID="0.5 0.9"
 
 mkdir -p slurm
@@ -62,7 +62,7 @@ for env in "${ENVS[@]}"; do
         --algos ${EXACT_ALGOS[*]} \
         --lr-grid $LR_GRID \
         --lambda-grid $VALUE_LAMBDA_GRID \
-        --config '{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA, \"k\": 16}' \
+        --config '{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}' \
         --n-seeds $N_SEEDS \
         --total-timesteps $TOTAL_TIMESTEPS \
         --metric V_start \
