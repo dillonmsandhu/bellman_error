@@ -2,8 +2,6 @@ config = {
     "N_SEEDS": 1,
     # "ENV_NAME": "Whirlpool",
     "ENV_NAME": "FourRooms-misc",
-    "FAIL_PROB": 0.15,
-    # "FAIL_PROB": 0.9,
     "GAMMA": 0.99,
     "k": 16,
     "MAX_STEPS_IN_EPISODE": 1e6,

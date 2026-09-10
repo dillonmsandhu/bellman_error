@@ -18,7 +18,7 @@ class EightRoomsExactValue:
         self,
         height: int = 25,
         width: int = 13,
-        fail_prob: float = 0.01,
+        fail_prob: float = 0.1,
         gamma: float = 0.999,
         episodic: bool = True,
         use_visual_obs: bool = True,

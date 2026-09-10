@@ -35,8 +35,21 @@ def initialize_evaluator(config, env, env_params):
         evaluator = ContinuingEightRooms(start_pos = env.pos_fixed, goal_pos = env.goal_fixed, fail_prob= env_params.fail_prob, gamma=config['GAMMA'])
     elif config['ENV_NAME'] == 'boyan':
         evaluator = ContinuingBoyanRing(gamma=config['GAMMA'], use_visual_obs=True)
-    elif config['ENV_NAME'] == 'Whirlpool':
-        evaluator = WhirlpoolExactValue(gamma = config['GAMMA'], fail_prob=env_params.fail_prob)
+    elif config['ENV_NAME'].lower() in ['whirlpool', 'whirlpool-misc']:
+        evaluator = WhirlpoolExactValue(
+            gamma=config['GAMMA'],
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
+            start_pos=getattr(env, 'pos_fixed', None),
+            goal_pos=getattr(env, 'goal_fixed', None),
+        )
+    elif config['ENV_NAME'].lower() in ['whirlpool-cont']:
+        from envs.whirlpool import ContinuingWhirlpool
+        evaluator = ContinuingWhirlpool(
+            gamma=config['GAMMA'],
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
+            start_pos=getattr(env, 'pos_fixed', None),
+            goal_pos=getattr(env, 'goal_fixed', None),
+        )
     elif config['ENV_NAME'] == 'MountainCar-v0':
         evaluator = MountainCarExactValue(gamma=config['GAMMA'])
     return evaluator 
@@ -57,7 +70,7 @@ def make_env(config):
         env, env_params = gymnax.make(config["ENV_NAME"], use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
         env_params = env_params.replace(
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
-            fail_prob=config['FAIL_PROB']
+            fail_prob=config.get('FAIL_PROB', 0.1)
         )
         env = TerminalInfoWrapper(env)
         
@@ -66,7 +79,7 @@ def make_env(config):
         env, env_params = gymnax.make('FourRooms-misc', use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
         env_params = env_params.replace(
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE'], 
-            fail_prob=config['FAIL_PROB']
+            fail_prob=config.get('FAIL_PROB', 0.1)
         )
         env = TerminalInfoWrapper(env)
         env = ContinuingWrapper(env)
@@ -98,13 +111,25 @@ def make_env(config):
             fail_prob=0.0, 
             max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
         )
-    elif config['ENV_NAME'] == 'Whirlpool':
-        from envs.whirlpool_env import EnvParams
-        env = Whirlpool(size = 13, use_visual_obs=True)
-        env_params = EnvParams(fail_prob = config['FAIL_PROB'])
+    elif config['ENV_NAME'].lower() in ['whirlpool', 'whirlpool-misc']:
+        from envs.whirlpool_env import Whirlpool, EnvParams
+        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
+        env_params = EnvParams(
+            fail_prob=config.get('FAIL_PROB', 0.9),
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
+        )
         env = TerminalInfoWrapper(env)
-        # We skip TerminalInfoWrapper/ContinuingWrapper since it's a pure matrix evaluator,
-        # but it will safely pick up the downstream wrappers (LogWrapper, etc.) via its properties!
+
+    elif config['ENV_NAME'].lower() in ['whirlpool-cont']:
+        from envs.whirlpool_env import Whirlpool, EnvParams
+        from envs.wrappers import ContinuingWrapper
+        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
+        env_params = EnvParams(
+            fail_prob=config.get('FAIL_PROB', 0.9),
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
+        )
+        env = TerminalInfoWrapper(env)
+        env = ContinuingWrapper(env)
 
     else:
         env, env_params = gymnax.make(config["ENV_NAME"])
