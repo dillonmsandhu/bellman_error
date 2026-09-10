@@ -82,14 +82,14 @@ DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda"]
 DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo", "unbiased_sampled_E"]
 
 
-def get_default_param_grid(algo_name, lr_list=None, lambda_list=None):
+def get_default_param_grid(algo_name, lr_list=None, lambda_list=None, actor_lr_list=None):
     """Returns sensible default parameter grids for standard and multi-param algorithms."""
     standard_lrs = lr_list if lr_list is not None else [1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
     
     if algo_name in ["td", "td_lambda"]:
         # Sample-based TD sweeps over both LR and GAE_LAMBDA
         lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
-        return {
+        grid = {
             "LR": standard_lrs,
             "GAE_LAMBDA": lambdas,
         }
@@ -97,12 +97,17 @@ def get_default_param_grid(algo_name, lr_list=None, lambda_list=None):
         # Exact TD(lambda) requires grid over both LR and VALUE_LAMBDA
         reduced_lrs = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
         lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
-        return {
+        grid = {
             "LR": reduced_lrs,
             "VALUE_LAMBDA": lambdas,
         }
     else:
-        return {"LR": standard_lrs}
+        grid = {"LR": standard_lrs}
+
+    if actor_lr_list is not None:
+        grid["ACTOR_LR"] = actor_lr_list
+
+    return grid
 
 
 def resolve_model_load_dir(model_load_dir, env_name, base_results_dir="results"):
@@ -160,6 +165,7 @@ def run_sweep_pipeline(
     rank_order="higher",
     window_size=40,
     lr_grid=None,
+    actor_lr_grid=None,
     lambda_grid=None,
     custom_grids=None,
     config_overrides=None,
@@ -266,7 +272,9 @@ def run_sweep_pipeline(
         if custom_grids and algo_name in custom_grids:
             param_grid = custom_grids[algo_name]
         else:
-            param_grid = get_default_param_grid(algo_name, lr_list=lr_grid, lambda_list=lambda_grid)
+            param_grid = get_default_param_grid(
+                algo_name, lr_list=lr_grid, lambda_list=lambda_grid, actor_lr_list=actor_lr_grid
+            )
 
         # Output folder for this specific algorithm inside the sweep root
         algo_save_dir = os.path.join(sweep_root_dir, algo_name, "tuning")
@@ -371,6 +379,8 @@ def parse_args():
                         help="Number of final steps to average when using final_window ranking (default: 20)")
     parser.add_argument("--lr-grid", nargs="+", type=float, default=None,
                         help="Custom learning rate grid (e.g. --lr-grid 0.01 0.001 0.0001)")
+    parser.add_argument("--actor-lr-grid", nargs="+", type=float, default=None,
+                        help="Custom actor learning rate grid for policy algorithms (e.g. --actor-lr-grid 0.001 0.0001)")
     parser.add_argument("--lambda-grid", nargs="+", type=float, default=None,
                         help="Custom lambda grid for TD algorithms (e.g. --lambda-grid 0.0 0.3 0.6 0.9 0.95 1.0)")
     parser.add_argument("--custom-grids-json", type=str, default=None,
@@ -440,6 +450,7 @@ def main():
         rank_order=rank_order,
         window_size=args.window_size,
         lr_grid=args.lr_grid,
+        actor_lr_grid=args.actor_lr_grid,
         lambda_grid=args.lambda_grid,
         custom_grids=custom_grids,
         config_overrides=config_overrides,

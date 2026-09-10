@@ -34,9 +34,10 @@ EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
 
 
 FIXED_GAE_LAMBDA=0.1
-# Grids
-LR_GRID="0.005 0.001" # use a fixed LR to keep the critic standard...
-VALUE_LAMBDA_GRID="0.5 0.9"
+# Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
+LR_GRID="0.005 0.001"
+ACTOR_LR_GRID="0.0005 0.0001"
+VALUE_LAMBDA_GRID="0.9"
 
 mkdir -p slurm
 
@@ -47,6 +48,7 @@ echo "Start Time: $START_TIME"
 echo "Environments: ${ENVS[*]}"
 echo "Algorithms: ${EXACT_ALGOS[*]}"
 echo "Seeds: $N_SEEDS | Timesteps: $TOTAL_TIMESTEPS"
+echo "Critic LR Grid: $LR_GRID | Actor LR Grid: $ACTOR_LR_GRID | Lambda: $VALUE_LAMBDA_GRID"
 echo "Optimization Metric: V_start (AUC, higher is better)"
 echo "======================================================================"
 
@@ -61,6 +63,7 @@ for env in "${ENVS[@]}"; do
         --env-name $env \
         --algos ${EXACT_ALGOS[*]} \
         --lr-grid $LR_GRID \
+        --actor-lr-grid $ACTOR_LR_GRID \
         --lambda-grid $VALUE_LAMBDA_GRID \
         --config '{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}' \
         --n-seeds $N_SEEDS \

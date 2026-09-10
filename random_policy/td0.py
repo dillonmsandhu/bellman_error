@@ -1,5 +1,5 @@
-# REINFORCE / GRPO-style policy gradient (for intrinsic value)
-# uses a timestep dependent variant, based on batch index i.
+# SARSA-style TD(0), which updates the target during learning
+# this is in contrast to td.py which uses ppo-style partially fitted td learning.
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
