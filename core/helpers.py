@@ -113,7 +113,7 @@ def make_env(config):
         )
     elif config['ENV_NAME'].lower() in ['whirlpool', 'whirlpool-misc']:
         from envs.whirlpool_env import Whirlpool, EnvParams
-        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
+        env = Whirlpool(size=config.get('ENV_SIZE', 10), use_visual_obs=True)
         env_params = EnvParams(
             fail_prob=config.get('FAIL_PROB', 0.9),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
@@ -123,7 +123,7 @@ def make_env(config):
     elif config['ENV_NAME'].lower() in ['whirlpool-cont']:
         from envs.whirlpool_env import Whirlpool, EnvParams
         from envs.wrappers import ContinuingWrapper
-        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
+        env = Whirlpool(size=config.get('ENV_SIZE', 20), use_visual_obs=True)
         env_params = EnvParams(
             fail_prob=config.get('FAIL_PROB', 0.9),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
