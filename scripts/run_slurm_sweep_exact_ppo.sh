@@ -27,13 +27,13 @@ else
 fi
 
 # Configuration
-N_SEEDS=5
-TOTAL_TIMESTEPS=3000
+N_SEEDS=7
+TOTAL_TIMESTEPS=2000
 ENVS=("EightRooms-misc" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
 
 
-FIXED_GAE_LAMBDA=0.2
+FIXED_GAE_LAMBDA=0.05
 # Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
 LR_GRID="0.005 0.001"
 ACTOR_LR_GRID="0.0005 0.0001 0.00005"

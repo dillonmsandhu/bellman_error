@@ -28,16 +28,17 @@ else
 fi
 
 # Configuration
-N_SEEDS=10
+N_SEEDS=5
 TOTAL_TIMESTEPS=3000
 ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 HYBRID_ALGOS=("hybrid_exact_E" "hybrid_exact_td_lambda" "hybrid_exact_mc")
 
-FIXED_GAE_LAMBDA=0.1
+FIXED_GAE_LAMBDA=0.4
 # Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
 LR_GRID="0.005 0.001"
-ACTOR_LR_GRID="0.0005 0.0001"
+ACTOR_LR_GRID="0.001 0.0005 0.0001"
 VALUE_LAMBDA_GRID="0.9"
+CONFIG="{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA, \"NUM_STEPS\": 256, \"NUM_ENVS\": 64, \"MINIBATCH_SIZE\": 256, \"TOTAL_TIMESTEPS\": 1000000}"
 
 mkdir -p slurm
 
@@ -65,7 +66,7 @@ for env in "${ENVS[@]}"; do
         --lr-grid $LR_GRID \
         --actor-lr-grid $ACTOR_LR_GRID \
         --lambda-grid $VALUE_LAMBDA_GRID \
-        --config '{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}' \
+        --config $CONFIG \
         --n-seeds $N_SEEDS \
         --total-timesteps $TOTAL_TIMESTEPS \
         --metric mean_rew \
