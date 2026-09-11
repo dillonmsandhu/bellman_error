@@ -60,6 +60,7 @@ ALGO_REGISTRY = {
         "exact_E": "random_policy.exact_E_gd",
         "exact_E_td": "random_policy.exact_E_td",
         "exact_Etd": "random_policy.exact_E_td",
+        "exact_E_sampling_form": "random_policy.exact_E_sampling_form",
         "exact_td_lambda": "random_policy.exact_td_lambda",
         "exact_td_symmetric": "random_policy.exact_td_symmetric",
         "td": "random_policy.td",
@@ -74,6 +75,9 @@ ALGO_REGISTRY = {
         "exact_mc": "ppo.exact_mc",
         "exact_E": "ppo.exact_E",
         "exact_E_gd": "ppo.exact_E",
+        "exact_E_sampling_form": "ppo.exact_E_sampling_form",
+        "exact_dirichlet_E": "ppo.exact_E_sampling_form",
+        "exact_E_dirichlet": "ppo.exact_E_sampling_form",
         "exact_td_lambda": "ppo.exact_td_lambda",
         "hybrid_exact_E": "ppo.hybrid_exact_E",
         "hybrid_exact_E_gd": "ppo.hybrid_exact_E",
@@ -82,6 +86,15 @@ ALGO_REGISTRY = {
         "hybrid_td_lambda": "ppo.hybrid_exact_td_lambda",
         "hybrid_exact_mc": "ppo.hybrid_exact_mc",
         "hybrid_mc": "ppo.hybrid_exact_mc",
+        "sampled_E": "ppo.sampled_E",
+        "sampled_E_gd": "ppo.sampled_E",
+        "E_min": "ppo.sampled_E",
+        "td_lambda": "ppo.sampled_td_lambda",
+        "td": "ppo.sampled_td_lambda",
+        "sampled_td_lambda": "ppo.sampled_td_lambda",
+        "mc": "ppo.sampled_mc",
+        "monte_carlo": "ppo.sampled_mc",
+        "sampled_mc": "ppo.sampled_mc",
     },
     "hybrid": {
         "hybrid_exact_E": "ppo.hybrid_exact_E",
@@ -103,27 +116,43 @@ DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo", "unbiased_samp
 DEFAULT_HYBRID_ALGOS = ["hybrid_exact_E", "hybrid_exact_td_lambda", "hybrid_exact_mc"]
 
 
-def get_default_param_grid(algo_name, lr_list=None, lambda_list=None, actor_lr_list=None):
+def get_default_param_grid(
+    algo_name,
+    lr_list=None,
+    lambda_list=None,
+    actor_lr_list=None,
+    gae_lambda_list=None,
+    value_lambda_list=None,
+):
     """Returns sensible default parameter grids for standard and multi-param algorithms."""
     standard_lrs = lr_list if lr_list is not None else [1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
-    
-    if algo_name in ["td", "td_lambda"]:
-        # Sample-based TD sweeps over both LR and GAE_LAMBDA
-        lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
-        grid = {
-            "LR": standard_lrs,
-            "GAE_LAMBDA": lambdas,
-        }
-    elif "td_lambda" in algo_name:
-        # Exact and hybrid TD(lambda) requires grid over both LR and VALUE_LAMBDA
+    grid = {"LR": standard_lrs}
+
+    mc_algos = ["mc", "monte_carlo", "exact_mc", "sampled_mc", "hybrid_mc", "hybrid_exact_mc"]
+
+    # 1. GAE lambda grid (for policy advantages)
+    if gae_lambda_list is not None and algo_name not in mc_algos:
+        grid["GAE_LAMBDA"] = gae_lambda_list
+    elif lambda_list is not None and algo_name in [
+        "td", "td_lambda", "sampled_td_lambda", "sampled_E", "sampled_E_gd", "E_min"
+    ]:
+        grid["GAE_LAMBDA"] = lambda_list
+
+    # 2. Value lambda grid (for critic returns)
+    if value_lambda_list is not None and algo_name not in mc_algos:
+        grid["VALUE_LAMBDA"] = value_lambda_list
+    elif lambda_list is not None and "td_lambda" in algo_name and "GAE_LAMBDA" not in grid:
         reduced_lrs = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
-        lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
-        grid = {
-            "LR": reduced_lrs,
-            "VALUE_LAMBDA": lambdas,
-        }
-    else:
-        grid = {"LR": standard_lrs}
+        grid["LR"] = reduced_lrs
+        grid["VALUE_LAMBDA"] = lambda_list
+
+    # 3. Defaults if neither was specified
+    if "GAE_LAMBDA" not in grid and "VALUE_LAMBDA" not in grid:
+        if algo_name in ["td", "sampled_td_lambda"]:
+            grid["GAE_LAMBDA"] = [0.1, 0.5, 0.9]
+        elif "td_lambda" in algo_name and algo_name not in ["mc", "monte_carlo"]:
+            grid["LR"] = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
+            grid["VALUE_LAMBDA"] = [0.1, 0.5, 0.9]
 
     if actor_lr_list is not None:
         grid["ACTOR_LR"] = actor_lr_list
@@ -188,6 +217,8 @@ def run_sweep_pipeline(
     lr_grid=None,
     actor_lr_grid=None,
     lambda_grid=None,
+    gae_lambda_grid=None,
+    value_lambda_grid=None,
     custom_grids=None,
     config_overrides=None,
     base_save_dir="results",
@@ -298,7 +329,12 @@ def run_sweep_pipeline(
             param_grid = custom_grids[algo_name]
         else:
             param_grid = get_default_param_grid(
-                algo_name, lr_list=lr_grid, lambda_list=lambda_grid, actor_lr_list=actor_lr_grid
+                algo_name,
+                lr_list=lr_grid,
+                lambda_list=lambda_grid,
+                actor_lr_list=actor_lr_grid,
+                gae_lambda_list=gae_lambda_grid,
+                value_lambda_list=value_lambda_grid,
             )
 
         # Output folder for this specific algorithm inside the sweep root
@@ -408,6 +444,10 @@ def parse_args():
                         help="Custom actor learning rate grid for policy algorithms (e.g. --actor-lr-grid 0.001 0.0001)")
     parser.add_argument("--lambda-grid", nargs="+", type=float, default=None,
                         help="Custom lambda grid for TD algorithms (e.g. --lambda-grid 0.0 0.3 0.6 0.9 0.95 1.0)")
+    parser.add_argument("--gae-lambda-grid", nargs="+", type=float, default=None,
+                        help="Custom GAE lambda grid for policy advantages (e.g. --gae-lambda-grid 0.9 0.99 1.0)")
+    parser.add_argument("--value-lambda-grid", nargs="+", type=float, default=None,
+                        help="Custom value lambda grid for critic returns (e.g. --value-lambda-grid 0.9 0.99 1.0)")
     parser.add_argument("--custom-grids-json", type=str, default=None,
                         help="Path to JSON file specifying custom grids per algorithm")
     parser.add_argument("--config", type=str, default=None,
@@ -477,6 +517,8 @@ def main():
         lr_grid=args.lr_grid,
         actor_lr_grid=args.actor_lr_grid,
         lambda_grid=args.lambda_grid,
+        gae_lambda_grid=args.gae_lambda_grid,
+        value_lambda_grid=args.value_lambda_grid,
         custom_grids=custom_grids,
         config_overrides=config_overrides,
         log_scale=log_scale,
