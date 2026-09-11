@@ -57,13 +57,13 @@ def create_evaluator(config, env=None, env_params=None):
         )
     elif env_name == 'boyan':
         return ContinuingBoyanRing(
-            size=config.get('ENV_SIZE', 20),
+            size=config.get('ENV_SIZE', 21),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
     elif env_name in ['whirlpool', 'whirlpool-misc']:
         return WhirlpoolExactValue(
-            size=config.get('ENV_SIZE', 20),
+            size=config.get('ENV_SIZE', 21),
             gamma=config['GAMMA'],
             fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
             start_pos=getattr(env, 'pos_fixed', None),
@@ -171,9 +171,9 @@ def make_env(config):
         )
     elif config['ENV_NAME'].lower() in ['whirlpool', 'whirlpool-misc']:
         from envs.whirlpool_env import Whirlpool, EnvParams
-        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
+        env = Whirlpool(size=config.get('ENV_SIZE', 21), use_visual_obs=True)
         env_params = EnvParams(
-            fail_prob=config.get('FAIL_PROB', 0.9),
+            fail_prob=config.get('FAIL_PROB', 0.95),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
         )
         env = TerminalInfoWrapper(env)
@@ -181,9 +181,9 @@ def make_env(config):
     elif config['ENV_NAME'].lower() in ['whirlpool-cont']:
         from envs.whirlpool_env import Whirlpool, EnvParams
         from envs.wrappers import ContinuingWrapper
-        env = Whirlpool(size=config.get('ENV_SIZE', 13), use_visual_obs=True)
+        env = Whirlpool(size=config.get('ENV_SIZE', 21), use_visual_obs=True)
         env_params = EnvParams(
-            fail_prob=config.get('FAIL_PROB', 0.9),
+            fail_prob=config.get('FAIL_PROB', 0.95),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
         )
         env = TerminalInfoWrapper(env)
