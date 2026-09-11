@@ -27,16 +27,16 @@ else
 fi
 
 # Configuration
-N_SEEDS=7
-TOTAL_TIMESTEPS=2000
-ENVS=("EightRooms-misc" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
+N_SEEDS=8
+TOTAL_TIMESTEPS=3000
+ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
 
 
-FIXED_GAE_LAMBDA=0.05
+FIXED_GAE_LAMBDA=0.2
 # Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
-LR_GRID="0.005 0.001"
-ACTOR_LR_GRID="0.0005 0.0001 0.00005"
+LR_GRID="0.01 0.005 0.001 0.0003"
+ACTOR_LR_GRID="0.001 0.0003"
 VALUE_LAMBDA_GRID="0.9"
 
 mkdir -p slurm
@@ -71,6 +71,7 @@ for env in "${ENVS[@]}"; do
         --metric V_start \
         --rank-by auc \
         --higher-is-better \
+        --sweep-suffix exact \
         --no-log-scale"
     echo "Command: $CMD"
     eval "$CMD"

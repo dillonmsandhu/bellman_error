@@ -29,18 +29,18 @@ else
 fi
 
 # Configuration
-N_SEEDS=5
+N_SEEDS=10
 TOTAL_TIMESTEPS=1000000
 ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
-SAMPLED_ALGOS=("sampled_E" "sampled_td_lambda" "sampled_mc")
+SAMPLED_ALGOS=("sampled_E" "sampled_td_lambda")
 
 # Fixed GAE lambda for policy advantage estimation (held separate from value lambda)
-FIXED_GAE_LAMBDA=0.95
+FIXED_GAE_LAMBDA=0.8
 
 # Hyperparameter Grids
-LR_GRID="0.00005"
-ACTOR_LR_GRID="0.00005"
-VALUE_LAMBDA_GRID="0.9 0.99 1.0"
+LR_GRID="0.0003"
+ACTOR_LR_GRID="0.0003"
+VALUE_LAMBDA_GRID="0.9 0.99 1.0" # also sweeps the value lambda for sampled E
 
 # Base configuration overrides (VALUE_LAMBDA swept via grid; GAE_LAMBDA kept separate)
 CONFIG="{\"NUM_ENVS\": 64, \"NUM_STEPS\": 256, \"MINIBATCH_SIZE\": 256, \"TOTAL_TIMESTEPS\": 1000000, \"NUM_EPOCHS\": 1, \"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}"
@@ -80,7 +80,8 @@ for env in "${ENVS[@]}"; do
         --metric mean_rew \
         --rank-by auc \
         --higher-is-better \
-        --no-log-scale"
+        --sweep-suffix sampled \
+        --no-log-scale"  
     echo "Command: $CMD"
     eval "$CMD"
 done
