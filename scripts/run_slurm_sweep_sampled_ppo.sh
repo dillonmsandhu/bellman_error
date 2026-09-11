@@ -1,0 +1,95 @@
+#!/bin/bash
+#SBATCH --job-name=sweep_sampled_ppo
+#SBATCH --output=slurm/%j.out
+#SBATCH --time=8:00:00
+#SBATCH --partition compsci-gpu
+#SBATCH --gres=gpu:a5000:1
+
+# ==============================================================================
+# Hyperparameter Sweep over Sampled PPO Control Algorithms
+# Compares: Sampled E Minimization vs TD(lambda) vs Monte Carlo
+# Sweeping over Value lambda: [0.9, 0.99, 1.0] for E min and TD(lambda)
+# Note: VALUE_LAMBDA and GAE_LAMBDA are strictly separated across all runs.
+#
+# Environments: EightRooms, FourRooms-misc, Whirlpool, MountainCar-v0
+# Optimization Metric: AUC of mean reward (higher is better)
+#
+# Usage:
+#   sbatch scripts/run_slurm_sweep_sampled_ppo.sh
+#   ./scripts/run_slurm_sweep_sampled_ppo.sh (for local execution)
+# ==============================================================================
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+SECONDS=0
+
+# Python environment (defaults to cluster gymnax environment if present)
+if [ -f "/home/users/ds541/.pyenv/versions/3.10.15/envs/gymnax/bin/python" ]; then
+    PYTHON="/home/users/ds541/.pyenv/versions/3.10.15/envs/gymnax/bin/python"
+else
+    PYTHON="python"
+fi
+
+# Configuration
+N_SEEDS=5
+TOTAL_TIMESTEPS=1000000
+ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
+SAMPLED_ALGOS=("sampled_E" "sampled_td_lambda" "sampled_mc")
+
+# Fixed GAE lambda for policy advantage estimation (held separate from value lambda)
+FIXED_GAE_LAMBDA=0.95
+
+# Hyperparameter Grids
+LR_GRID="0.00005"
+ACTOR_LR_GRID="0.00005"
+VALUE_LAMBDA_GRID="0.9 0.99 1.0"
+
+# Base configuration overrides (VALUE_LAMBDA swept via grid; GAE_LAMBDA kept separate)
+CONFIG="{\"NUM_ENVS\": 64, \"NUM_STEPS\": 256, \"MINIBATCH_SIZE\": 256, \"TOTAL_TIMESTEPS\": 1000000, \"NUM_EPOCHS\": 1, \"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}"
+
+mkdir -p slurm
+
+echo "======================================================================"
+echo "STARTING SLURM SAMPLED PPO CONTROL SWEEP"
+echo "Comparing: Sampled E Minimization vs TD(lambda) vs Monte Carlo"
+echo "Start Time: $START_TIME"
+echo "Environments: ${ENVS[*]}"
+echo "Algorithms: ${SAMPLED_ALGOS[*]}"
+echo "Seeds: $N_SEEDS | Timesteps: $TOTAL_TIMESTEPS"
+echo "Critic LR Grid: $LR_GRID | Actor LR Grid: $ACTOR_LR_GRID"
+echo "Value Lambda Grid: $VALUE_LAMBDA_GRID"
+echo "Fixed GAE Lambda: $FIXED_GAE_LAMBDA"
+echo "Base Config: $CONFIG"
+echo "Optimization Metric: mean_rew (AUC, higher is better)"
+echo "======================================================================"
+
+for env in "${ENVS[@]}"; do
+    echo ""
+    echo "======================================================================"
+    echo "Running Sampled PPO Control Sweep: Environment=$env"
+    echo "======================================================================"
+    
+    CMD="$PYTHON scripts/sweep_pipeline.py \
+        --policy ppo \
+        --env-name $env \
+        --algos ${SAMPLED_ALGOS[*]} \
+        --lr-grid $LR_GRID \
+        --actor-lr-grid $ACTOR_LR_GRID \
+        --value-lambda-grid $VALUE_LAMBDA_GRID \
+        --config '$CONFIG' \
+        --n-seeds $N_SEEDS \
+        --total-timesteps $TOTAL_TIMESTEPS \
+        --metric mean_rew \
+        --rank-by auc \
+        --higher-is-better \
+        --no-log-scale"
+    echo "Command: $CMD"
+    eval "$CMD"
+done
+
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+DURATION=$SECONDS
+echo ""
+echo "======================================================================"
+echo "Sampled PPO Control Sweep Completed!"
+echo "Total runtime: $(($DURATION / 3600))h $((($DURATION % 3600) / 60))m $(($DURATION % 60))s"
+echo "Job finished at: $END_TIME"
+echo "======================================================================"
