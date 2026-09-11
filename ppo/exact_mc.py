@@ -66,7 +66,7 @@ def make_train(base_config):
             P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
             R_pi = jnp.einsum("sa,sam,sam->s", old_pi_full, P, evaluator.R)
             I = jnp.eye(len(S) + 1)
-            λ_pi = config.get("POLICY_LAMBDA", 0.6)
+            λ_pi = config.get("GAE_LAMBDA", 0.6)
 
             def T(v):
                 return R_pi + γ * P_pi @ v

@@ -61,7 +61,7 @@ def make_train(base_config):
             mu = jnp.append(mu, 0.0)
 
             I = jnp.eye(len(S) + 1)
-            λ_pi = config.get("POLICY_LAMBDA", 0.6)
+            λ_pi = config.get("GAE_LAMBDA", 0.6)
 
             def T(v):
                 return R_pi + γ * P_pi @ v
