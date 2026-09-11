@@ -27,7 +27,7 @@ def create_evaluator(config, env=None, env_params=None):
         return FourRoomsExactValue(
             start_pos=getattr(env, 'pos_fixed', (3, 1)),
             goal_pos=getattr(env, 'goal_fixed', (11, 11)),
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.15)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
@@ -35,7 +35,7 @@ def create_evaluator(config, env=None, env_params=None):
         return ContinuingFourRooms(
             start_pos=getattr(env, 'pos_fixed', (3, 1)),
             goal_pos=getattr(env, 'goal_fixed', (11, 11)),
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.15)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
@@ -43,7 +43,7 @@ def create_evaluator(config, env=None, env_params=None):
         return EightRoomsExactValue(
             start_pos=getattr(env, 'pos_fixed', (3, 1)),
             goal_pos=getattr(env, 'goal_fixed', (23, 11)),
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.15)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
@@ -51,7 +51,7 @@ def create_evaluator(config, env=None, env_params=None):
         return ContinuingEightRooms(
             start_pos=getattr(env, 'pos_fixed', (3, 1)),
             goal_pos=getattr(env, 'goal_fixed', (23, 11)),
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.15)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
@@ -65,7 +65,7 @@ def create_evaluator(config, env=None, env_params=None):
         return WhirlpoolExactValue(
             size=config.get('ENV_SIZE', 21),
             gamma=config['GAMMA'],
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.95)),
             start_pos=getattr(env, 'pos_fixed', None),
             goal_pos=getattr(env, 'goal_fixed', None),
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
@@ -74,7 +74,7 @@ def create_evaluator(config, env=None, env_params=None):
         return ContinuingWhirlpool(
             size=config.get('ENV_SIZE', 20),
             gamma=config['GAMMA'],
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.9)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.95)),
             start_pos=getattr(env, 'pos_fixed', None),
             goal_pos=getattr(env, 'goal_fixed', None),
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
