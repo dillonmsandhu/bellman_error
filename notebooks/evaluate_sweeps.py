@@ -146,8 +146,8 @@ def plot_all_latest_sweeps(
 
 def main():
     parser = argparse.ArgumentParser(description="Plot latest tuning sweeps and comparisons")
-    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo"],
-                        help="Filter by policy type (fixed, random, ppo)")
+    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo", "hybrid"],
+                        help="Filter by policy type (fixed, random, ppo, hybrid)")
     parser.add_argument("--env-name", type=str, default="FourRooms-misc", help="Environment name")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE", help="Metric to plot")
     parser.add_argument("--use-geom-mean", action="store_true", help="Use geometric mean for error bands")

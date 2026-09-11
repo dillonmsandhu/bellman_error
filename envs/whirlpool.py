@@ -13,9 +13,9 @@ class WhirlpoolExactValue:
 
     def __init__(
         self,
-        size: int = 13,
+        size: int = 20,
         fail_prob: float = 0.9,
-        gamma: float = 0.999,
+        gamma: float = 0.99,
         episodic: bool = True,
         use_visual_obs: bool = True,
         goal_pos: Tuple[int, int] | None = None,

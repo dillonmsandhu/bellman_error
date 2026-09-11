@@ -302,6 +302,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
     # Initialize shared metrics
     metrics = {
         "value_grid": evaluator.get_value_grid(V_pi),
+        "state_dist_grid": evaluator.get_value_grid(mu),
         "SA_min_eigenvalue": min_eigenvalue,
         "is_SA_positive_definite": is_SA_pos_def,
         "alignment_condition": alignment_condition, 

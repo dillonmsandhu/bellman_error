@@ -75,11 +75,32 @@ ALGO_REGISTRY = {
         "exact_E": "ppo.exact_E",
         "exact_E_gd": "ppo.exact_E",
         "exact_td_lambda": "ppo.exact_td_lambda",
+        "hybrid_exact_E": "ppo.hybrid_exact_E",
+        "hybrid_exact_E_gd": "ppo.hybrid_exact_E",
+        "hybrid_E": "ppo.hybrid_exact_E",
+        "hybrid_exact_td_lambda": "ppo.hybrid_exact_td_lambda",
+        "hybrid_td_lambda": "ppo.hybrid_exact_td_lambda",
+        "hybrid_exact_mc": "ppo.hybrid_exact_mc",
+        "hybrid_mc": "ppo.hybrid_exact_mc",
+    },
+    "hybrid": {
+        "hybrid_exact_E": "ppo.hybrid_exact_E",
+        "hybrid_exact_E_gd": "ppo.hybrid_exact_E",
+        "hybrid_E": "ppo.hybrid_exact_E",
+        "exact_E": "ppo.hybrid_exact_E",
+        "exact_E_gd": "ppo.hybrid_exact_E",
+        "hybrid_exact_td_lambda": "ppo.hybrid_exact_td_lambda",
+        "hybrid_td_lambda": "ppo.hybrid_exact_td_lambda",
+        "exact_td_lambda": "ppo.hybrid_exact_td_lambda",
+        "hybrid_exact_mc": "ppo.hybrid_exact_mc",
+        "hybrid_mc": "ppo.hybrid_exact_mc",
+        "exact_mc": "ppo.hybrid_exact_mc",
     },
 }
 
 DEFAULT_ALGOS = ["exact_td", "exact_mc", "exact_E_gd", "exact_td_lambda"]
 DEFAULT_SAMPLED_ALGOS = ["td", "td0", "sampled_E", "monte_carlo", "unbiased_sampled_E"]
+DEFAULT_HYBRID_ALGOS = ["hybrid_exact_E", "hybrid_exact_td_lambda", "hybrid_exact_mc"]
 
 
 def get_default_param_grid(algo_name, lr_list=None, lambda_list=None, actor_lr_list=None):
@@ -93,8 +114,8 @@ def get_default_param_grid(algo_name, lr_list=None, lambda_list=None, actor_lr_l
             "LR": standard_lrs,
             "GAE_LAMBDA": lambdas,
         }
-    elif "exact_td_lambda" in algo_name:
-        # Exact TD(lambda) requires grid over both LR and VALUE_LAMBDA
+    elif "td_lambda" in algo_name:
+        # Exact and hybrid TD(lambda) requires grid over both LR and VALUE_LAMBDA
         reduced_lrs = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
         lambdas = lambda_list if lambda_list is not None else [0.1, 0.5, 0.9]
         grid = {
@@ -197,8 +218,12 @@ def run_sweep_pipeline(
 
     if algos is None or algos == ["exact"]:
         algos = [a for a in DEFAULT_ALGOS if a in ALGO_REGISTRY.get(policy_type, {})]
+        if not algos and policy_type == "hybrid":
+            algos = DEFAULT_HYBRID_ALGOS
     elif algos == ["sampled"]:
         algos = [a for a in DEFAULT_SAMPLED_ALGOS if a in ALGO_REGISTRY.get(policy_type, {})]
+    elif algos == ["hybrid"]:
+        algos = [a for a in DEFAULT_HYBRID_ALGOS if a in ALGO_REGISTRY.get(policy_type, {})]
     elif algos == ["all"]:
         algos = list(ALGO_REGISTRY.get(policy_type, {}).keys())
 
@@ -332,7 +357,7 @@ def run_sweep_pipeline(
         rank_order=rank_order,
         window_size=window_size,
         save_path=plot_path,
-        title=f"PPO Policy Improvement ({env_name}) - Algorithm Comparison" if policy_type == "ppo" else f"{policy_type.capitalize()} Policy Evaluation ({env_name}) - Algorithm Comparison",
+        title=f"PPO Policy Improvement ({env_name}) - Algorithm Comparison" if policy_type in ["ppo", "hybrid"] else f"{policy_type.capitalize()} Policy Evaluation ({env_name}) - Algorithm Comparison",
     )
 
     print("\n" + "=" * 70)
@@ -351,12 +376,12 @@ def run_sweep_pipeline(
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Modular Hyperparameter Sweep Pipeline")
-    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo"],
-                        help="Policy type to evaluate (fixed, random, ppo)")
+    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo", "hybrid"],
+                        help="Policy type to evaluate (fixed, random, ppo, hybrid)")
     parser.add_argument("--env-name", type=str, default="FourRooms-misc",
                         help="Environment name (e.g. FourRooms-misc, MountainCar-v0)")
     parser.add_argument("--algos", nargs="+", default=None,
-                        help="List of algorithms to sweep (e.g. exact_td exact_mc exact_E_gd exact_td_lambda)")
+                        help="List of algorithms to sweep (e.g. exact_td exact_mc exact_E_gd exact_td_lambda, or group keywords: exact, sampled, hybrid, all)")
     parser.add_argument("--n-seeds", type=int, default=3,
                         help="Number of random seeds to evaluate per configuration")
     parser.add_argument("--total-timesteps", type=int, default=None,

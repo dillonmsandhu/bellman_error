@@ -114,6 +114,9 @@ def discover_algorithm_sweeps(policy="fixed", env_name="FourRooms-misc", base_re
         "td0": [f"{base_results_dir}/{policy}/td0/tuning", f"{base_results_dir}/{policy}/td0"],
         "mc": [f"{base_results_dir}/{policy}/mc/tuning", f"{base_results_dir}/{policy}/mc"],
         "monte_carlo": [f"{base_results_dir}/{policy}/mc/tuning", f"{base_results_dir}/{policy}/mc"],
+        "hybrid_exact_E": [f"{base_results_dir}/{policy}/hybrid_exact_E/tuning", f"{base_results_dir}/{policy}/hybrid_exact_E"],
+        "hybrid_exact_td_lambda": [f"{base_results_dir}/{policy}/hybrid_exact_td_lambda/tuning", f"{base_results_dir}/{policy}/hybrid_exact_td_lambda"],
+        "hybrid_exact_mc": [f"{base_results_dir}/{policy}/hybrid_exact_mc/tuning", f"{base_results_dir}/{policy}/hybrid_exact_mc"],
     }
     for algo, candidate_dirs in standalone_dirs.items():
         if algo in found:
@@ -497,7 +500,7 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze and compare hyperparameter sweeps.")
     parser.add_argument("--sweep-dir", type=str, default=None,
                         help="Path to a batch sweep folder (e.g. results/fixed/sweeps/fixed_FourRooms-misc_...)")
-    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo"], help="Policy category to search if --sweep-dir is not provided")
+    parser.add_argument("--policy", type=str, default="fixed", choices=["fixed", "random", "ppo", "hybrid"], help="Policy category to search if --sweep-dir is not provided")
     parser.add_argument("--env-name", type=str, default="FourRooms-misc", help="Environment name")
     parser.add_argument("--metric", type=str, default="nn_weighted_VE", help="Primary metric key (e.g. nn_weighted_VE, nn_greedy_correct, E, V_start)")
     parser.add_argument("--use-geom-mean", action="store_true", help="Plot geometric mean instead of arithmetic mean")
