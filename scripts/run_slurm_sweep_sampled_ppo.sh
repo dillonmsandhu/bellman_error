@@ -43,7 +43,7 @@ ACTOR_LR_GRID="0.0003"
 VALUE_LAMBDA_GRID="0.9 0.99 1.0" # also sweeps the value lambda for sampled E
 
 # Base configuration overrides (VALUE_LAMBDA swept via grid; GAE_LAMBDA kept separate)
-CONFIG="{\"NUM_ENVS\": 64, \"NUM_STEPS\": 256, \"MINIBATCH_SIZE\": 256, \"TOTAL_TIMESTEPS\": 1000000, \"NUM_EPOCHS\": 1, \"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}"
+CONFIG="{\"NUM_ENVS\": 64, \"NUM_STEPS\": 256, \"MINIBATCH_SIZE\": 1024, \"TOTAL_TIMESTEPS\": 1000000, \"NUM_EPOCHS\": 4, \"GAE_LAMBDA\": $FIXED_GAE_LAMBDA}"
 
 mkdir -p slurm
 
@@ -58,7 +58,7 @@ echo "Critic LR Grid: $LR_GRID | Actor LR Grid: $ACTOR_LR_GRID"
 echo "Value Lambda Grid: $VALUE_LAMBDA_GRID"
 echo "Fixed GAE Lambda: $FIXED_GAE_LAMBDA"
 echo "Base Config: $CONFIG"
-echo "Optimization Metric: mean_rew (AUC, higher is better)"
+echo "Optimization Metric: V_start (AUC, higher is better)"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
@@ -77,7 +77,7 @@ for env in "${ENVS[@]}"; do
         --config '$CONFIG' \
         --n-seeds $N_SEEDS \
         --total-timesteps $TOTAL_TIMESTEPS \
-        --metric mean_rew \
+        --metric V_start \
         --rank-by auc \
         --higher-is-better \
         --sweep-suffix sampled \

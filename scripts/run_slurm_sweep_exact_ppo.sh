@@ -30,12 +30,12 @@ fi
 N_SEEDS=8
 TOTAL_TIMESTEPS=3000
 ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
-EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc")
+EXACT_ALGOS=("exact_E" "exact_td_lambda" "exact_mc", "exact_E_sampling_form")
 
 
 FIXED_GAE_LAMBDA=0.2
 # Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
-LR_GRID="0.01 0.005 0.001 0.0003"
+LR_GRID="0.005 0.001 0.0003"
 ACTOR_LR_GRID="0.001 0.0003"
 VALUE_LAMBDA_GRID="0.9"
 

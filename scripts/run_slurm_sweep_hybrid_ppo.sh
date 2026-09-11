@@ -28,17 +28,17 @@ else
 fi
 
 # Configuration
-N_SEEDS=5
+N_SEEDS=10
 TOTAL_TIMESTEPS=1000000
 ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 HYBRID_ALGOS=("hybrid_exact_E" "hybrid_exact_td_lambda" "hybrid_exact_mc")
 
 FIXED_GAE_LAMBDA=0.8
 # Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
-LR_GRID="0.001 0.0005"
-ACTOR_LR_GRID="0.001 0.0005"
-VALUE_LAMBDA_GRID="0.9"
-CONFIG="{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA, \"NUM_STEPS\": 256, \"NUM_ENVS\": 64, \"MINIBATCH_SIZE\": 256, \"TOTAL_TIMESTEPS\": 1000000, \"NUM_EPOCHS\": 4}"
+LR_GRID="0.001 0.0003"
+ACTOR_LR_GRID="0.001 0.0003"
+VALUE_LAMBDA_GRID="0.9 0.95"
+CONFIG="{\"GAE_LAMBDA\": $FIXED_GAE_LAMBDA, \"NUM_STEPS\": 256, \"NUM_ENVS\": 64, \"MINIBATCH_SIZE\": 1024, \"TOTAL_TIMESTEPS\": 1000000, \"NUM_EPOCHS\": 4}"
 
 mkdir -p slurm
 
@@ -50,7 +50,7 @@ echo "Environments: ${ENVS[*]}"
 echo "Algorithms: ${HYBRID_ALGOS[*]}"
 echo "Seeds: $N_SEEDS | Timesteps: $TOTAL_TIMESTEPS"
 echo "Critic LR Grid: $LR_GRID | Actor LR Grid: $ACTOR_LR_GRID | Lambda: $VALUE_LAMBDA_GRID"
-echo "Optimization Metric: mean_rew (AUC, higher is better)"
+echo "Optimization Metric: V_start (AUC, higher is better)"
 echo "======================================================================"
 
 for env in "${ENVS[@]}"; do
@@ -69,7 +69,7 @@ for env in "${ENVS[@]}"; do
         --config '$CONFIG' \
         --n-seeds $N_SEEDS \
         --total-timesteps $TOTAL_TIMESTEPS \
-        --metric mean_rew \
+        --metric V_start \
         --rank-by auc \
         --higher-is-better \
         --sweep-suffix hybrid \
