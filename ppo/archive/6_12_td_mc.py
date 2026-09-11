@@ -91,7 +91,7 @@ def make_train(config):
 
 
             # --- ADVANTAGE CALCULATION ---
-            advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["POLICY_LAMBDA"])
+            advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"])
             _, target = helpers.calculate_gae(traj_batch, config["GAMMA"], 1.0)
 
             # UPDATE NETWORK
