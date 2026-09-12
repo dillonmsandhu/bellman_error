@@ -27,7 +27,7 @@ else
 fi
 
 # Configuration
-N_SEEDS=6
+N_SEEDS=12
 TOTAL_TIMESTEPS=2000
 ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 EXACT_ALGOS=("exact_E" "exact_td_lambda")
@@ -35,8 +35,8 @@ EXACT_ALGOS=("exact_E" "exact_td_lambda")
 
 FIXED_GAE_LAMBDA=0.1
 # Grids (2 critic LRs, 2 actor LRs, fixed lambda=0.9 -> 4 configs per seed)
-LR_GRID="0.005 0.001 0.0003"
-ACTOR_LR_GRID="0.001 0.0003"
+LR_GRID="0.01 0.005 0.001 0.0003"
+ACTOR_LR_GRID="0.001 0.0003 0.0001"
 VALUE_LAMBDA_GRID="0.9 0.99 1.0"
 
 mkdir -p slurm

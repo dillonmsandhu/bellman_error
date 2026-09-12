@@ -24,8 +24,8 @@ else
 fi
 
 # Configuration
-N_SEEDS=5
-TOTAL_TIMESTEPS=1500
+N_SEEDS=20
+TOTAL_TIMESTEPS=2000
 ENVS=("FourRooms-misc" "MountainCar-v0")
 POLICIES=("random" "fixed")
 EXACT_ALGOS=("exact_td" "exact_mc" "exact_E_gd" "exact_td_lambda" "exact_E_td", "exact_E_sampling_form")
