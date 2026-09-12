@@ -64,8 +64,9 @@ def make_train(base_config):
                 true_next_obs = info["real_next_obs"]
                 next_val = network.apply(train_state.params, true_next_obs, method=network.value)
 
+                clean_info = {k: v for k, v in info.items() if k not in ["real_next_obs", "real_next_state"]}
                 transition = Transition(
-                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, 0.0, info
+                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, 0.0, clean_info
                 )
                 return (train_state, env_state, obsv, rng), transition
 
@@ -92,14 +93,14 @@ def make_train(base_config):
             # 3. UPDATE EPOCHS
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
-                    traj_batch_mb, advantages_mb, targets_mb = batch_info
+                    obs_mb, action_mb, log_prob_mb, next_obs_mb, done_mb, next_target_mb, advantages_mb, targets_mb = batch_info
 
                     def loss_fn(params, network):
                         # A) Actor Loss (PPO clipped surrogate)
-                        pi = network.apply(params, traj_batch_mb.obs, method=network.policy)
-                        log_prob = pi.log_prob(traj_batch_mb.action)
+                        pi = network.apply(params, obs_mb, method=network.policy)
+                        log_prob = pi.log_prob(action_mb)
                         entropy = pi.entropy().mean()
-                        ratio = jnp.exp(log_prob - traj_batch_mb.log_prob)
+                        ratio = jnp.exp(log_prob - log_prob_mb)
 
                         adv_norm = (advantages_mb - advantages_mb.mean()) / (advantages_mb.std() + 1e-8)
                         a_clip = config.get("ADV_CLIP", 3.0)
@@ -110,11 +111,11 @@ def make_train(base_config):
                         actor_loss = -jnp.minimum(surr1, surr2).mean()
 
                         # B) Critic Loss (Sampled E-loss from fixed_policy/sampled_E.py)
-                        v_i = network.apply(params, traj_batch_mb.obs, method=network.value)
+                        v_i = network.apply(params, obs_mb, method=network.value)
                         e_i = targets_mb - v_i
 
-                        v_j = network.apply(params, traj_batch_mb.next_obs, method=network.value)
-                        e_j = (1.0 - traj_batch_mb.done) * (traj_batch_mb.next_target - v_j)
+                        v_j = network.apply(params, next_obs_mb, method=network.value)
+                        e_j = (1.0 - done_mb) * (next_target_mb - v_j)
 
                         magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
                         laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
@@ -141,7 +142,16 @@ def make_train(base_config):
 
                 train_state, traj_batch, advantages, targets, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                batch = (traj_batch, advantages, targets)
+                batch = (
+                    traj_batch.obs,
+                    traj_batch.action,
+                    traj_batch.log_prob,
+                    traj_batch.next_obs,
+                    traj_batch.done,
+                    traj_batch.next_target,
+                    advantages,
+                    targets,
+                )
                 minibatches = helpers.shuffle_and_batch(_rng, batch, config["NUM_MINIBATCHES"])
 
                 train_state, epoch_losses = jax.lax.scan(_update_minbatch, train_state, minibatches)
@@ -152,11 +162,7 @@ def make_train(base_config):
             train_state, _, _, _, rng = update_state
 
             # 4. METRICS
-            metric = {
-                k: v.mean()
-                for k, v in traj_batch.info.items()
-                if k not in ["real_next_obs", "real_next_state"]
-            }
+            metric = {k: v.mean() for k, v in traj_batch.info.items()}
             metric.update({k: v.mean() for k, v in loss_info.items()})
             metric.update({"mean_rew": traj_batch.reward.mean()})
 

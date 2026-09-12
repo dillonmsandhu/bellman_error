@@ -79,8 +79,9 @@ def make_train(base_config):
                 true_next_obs = info['real_next_obs']
                 next_val = network.apply(train_state.params, true_next_obs, method=network.value)
 
+                clean_info = {k: v for k, v in info.items() if k not in ["real_next_obs", "real_next_state"]}
                 transition = Transition(
-                    done, action, value, next_val, reward, log_prob, last_obs, info
+                    done, action, value, next_val, reward, log_prob, last_obs, clean_info
                 )
                 return (train_state, env_state, obsv, rng), transition
 
@@ -89,7 +90,6 @@ def make_train(base_config):
 
             # --- ADVANTAGE CALCULATION (SAMPLED) ---
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"])
-            _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], config["VALUE_LAMBDA"])
 
             # ==========================================
             # 2. EXACT DYNAMICS TARGETS (TD-Lambda)
@@ -121,14 +121,14 @@ def make_train(base_config):
             # ==========================================
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
-                    traj_batch_mb, advantages_mb, targets_mb = batch_info
+                    obs_mb, action_mb, log_prob_mb, advantages_mb = batch_info
 
                     def loss_fn(params, network):
                         # A) Sampled Actor Loss
-                        pi, _ = network.apply(params, traj_batch_mb.obs)
-                        log_prob = pi.log_prob(traj_batch_mb.action)
+                        pi, _ = network.apply(params, obs_mb)
+                        log_prob = pi.log_prob(action_mb)
                         entropy = pi.entropy().mean()
-                        ratio = jnp.exp(log_prob - traj_batch_mb.log_prob)
+                        ratio = jnp.exp(log_prob - log_prob_mb)
                         surr1 = ratio * advantages_mb
                         surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * advantages_mb
                         actor_loss = -jnp.minimum(surr1, surr2).mean()
@@ -147,26 +147,22 @@ def make_train(base_config):
                     train_state = train_state.apply_gradients(grads=grads)
                     return train_state, metrics
 
-                train_state, traj_batch, advantages, targets, rng = update_state
+                train_state, traj_batch, advantages, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                batch = (traj_batch, advantages, targets)
+                batch = (traj_batch.obs, traj_batch.action, traj_batch.log_prob, advantages)
                 minibatches = helpers.shuffle_and_batch(_rng, batch, config["NUM_MINIBATCHES"])
                 
                 train_state, epoch_metrics = jax.lax.scan(_update_minbatch, train_state, minibatches)
-                return (train_state, traj_batch, advantages, targets, rng), epoch_metrics
+                return (train_state, traj_batch, advantages, rng), epoch_metrics
 
-            initial_update_state = (train_state, traj_batch, advantages, targets, rng)
+            initial_update_state = (train_state, traj_batch, advantages, rng)
             update_state, loss_info = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
-            train_state, _, _, _, rng = update_state
+            train_state, _, _, rng = update_state
 
             # ==========================================
             # 4. METRICS
             # ==========================================
-            metric = {
-                k: v.mean() 
-                for k, v in traj_batch.info.items() 
-                if k not in ["real_next_obs", "real_next_state"]
-            }
+            metric = {k: v.mean() for k, v in traj_batch.info.items()}
             # loss_info metrics have shape (NUM_EPOCHS, NUM_MINIBATCHES)
             value_loss, actor_loss, entropy = loss_info
             

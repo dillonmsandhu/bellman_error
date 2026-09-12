@@ -221,7 +221,7 @@ def _loss_fn(params, network, traj_batch, gae, targets, config):
     loss_actor, entropy = pi_loss_fn(params, network, traj_batch, gae, config)
 
     total_loss = (
-        config['POLICY_COEFF'] * loss_actor
+        config.get('POLICY_COEFF', 1.0) * loss_actor
         + config["VF_COEF"] * value_loss
         - config["ENT_COEF"] * entropy
     )

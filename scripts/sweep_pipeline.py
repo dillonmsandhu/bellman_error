@@ -246,6 +246,8 @@ def run_sweep_pipeline(
             sweep_batch_name += f"_{sweep_suffix}"
         sweep_root_dir = os.path.join(base_save_dir, policy_type, "sweeps", sweep_batch_name)
     os.makedirs(sweep_root_dir, exist_ok=True)
+    if algos is not None:
+        algos = [a.rstrip(",").strip() for a in algos if a.rstrip(",").strip()]
 
     if algos is None or algos == ["exact"]:
         algos = [a for a in DEFAULT_ALGOS if a in ALGO_REGISTRY.get(policy_type, {})]

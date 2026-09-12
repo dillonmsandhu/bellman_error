@@ -56,8 +56,9 @@ def make_train(config):
                 true_next_obs = info['real_next_obs']
                 next_val = network.apply(train_state.params, true_next_obs, method=network.value)
 
+                clean_info = {k: v for k, v in info.items() if k not in ["real_next_obs", "real_next_state"]}
                 transition = Transition(
-                    done, action, value, next_val, reward, log_prob, last_obs, info
+                    done, action, value, next_val, reward, log_prob, last_obs, clean_info
                 )
                 return (train_state, env_state, obsv, rng), transition
 
