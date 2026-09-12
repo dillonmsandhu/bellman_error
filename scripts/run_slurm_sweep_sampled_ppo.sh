@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=sweep_sampled_ppo
 #SBATCH --output=slurm/%j.out
-#SBATCH --time=8:00:00
+#SBATCH --time=12:00:00
 #SBATCH --partition compsci-gpu
 #SBATCH --gres=gpu:a5000:1
 
@@ -30,15 +30,15 @@ fi
 
 # Configuration
 N_SEEDS=10
-TOTAL_TIMESTEPS=1000000
+TOTAL_TIMESTEPS=2048000
 ENVS=("EightRooms" "FourRooms-misc" "Whirlpool" "MountainCar-v0")
 SAMPLED_ALGOS=("sampled_E" "sampled_td_lambda")
 
 # Fixed GAE lambda for policy advantage estimation (held separate from value lambda)
-FIXED_GAE_LAMBDA=0.8
+FIXED_GAE_LAMBDA=0.9 # higher GAE lambda to help the policy get somehwere... 
 
 # Hyperparameter Grids
-LR_GRID="0.0003"
+LR_GRID="0.001 0.0003"
 ACTOR_LR_GRID="0.0003"
 VALUE_LAMBDA_GRID="0.9 0.99 1.0" # also sweeps the value lambda for sampled E
 
