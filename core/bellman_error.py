@@ -239,107 +239,104 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
     true_greedy_policy = compute_greedy_policy(P, evaluator.R, γ, V_pi)
 
-    # Consider the symmetry of the key matrix.
     # 1. Key Matrix A (State Space)
     A = D @ (jnp.eye(D.shape[0]) - γ * P_π)
-    
-    # 2. Symmetric and Skew-Symmetric components
-    S = 0.5 * (A + A.T)
-    K = 0.5 * (A - A.T)
-    norm_s = jnp.linalg.norm(S, ord='fro')
-    norm_k = jnp.linalg.norm(K, ord='fro')
-    
-    # 3. Precompute matrices for the alignment condition
-    S_sq = S @ S
-    SK_KS = (S @ K) - (K @ S)
-    SA = S @ A 
-    
-    # 4. Check global positive definiteness of SA 
-    SA_symmetric = 0.5 * (SA + SA.T)
-    
-    # 2. Use 'eigh' to get BOTH eigenvalues and eigenvectors
-    eigenvalues_SA, eigenvectors_SA = jnp.linalg.eigh(SA_symmetric)
-    
-    # 3. Always find the index of the absolute minimum eigenvalue
-    min_eig_idx = jnp.argmin(eigenvalues_SA)
-    
-    # 4. Extract the minimum eigenvalue and its corresponding eigenvector
-    min_eigenvalue = eigenvalues_SA[min_eig_idx]
-    min_eigenvector = eigenvectors_SA[:, min_eig_idx]
-    
-    # 5. Determine positive semi-definiteness
-    is_SA_pos_def = min_eigenvalue >= 0.0
 
     e = V_nn - V_pi
-    term_1 = jnp.dot(e, S_sq @ e)
-    term_2 = 0.5 * jnp.dot(e, SK_KS @ e)
-    alignment_condition = term_1 + term_2 # If > 0, TD update decreases E
-    alignment_condition_sign = alignment_condition > 0 
-
-    e_norm = e/jnp.linalg.norm(e)
-    alignment_condition_normalized = jnp.dot(e_norm, S_sq @ e_norm) + 0.5 * jnp.dot(e_norm, SK_KS @ e_norm)
-
     # Compute the weighted value error E
     E = 0.5 * jnp.dot(e, A @ e)
-    
-    non_normality = jnp.linalg.norm(S@K-K@S)
-    K_Phi = Φ.T @ K @ Φ
-    S_Phi = Φ.T @ S @ Φ
-    phi_space_non_normality = jnp.linalg.norm(S_Phi @ K_Phi - K_Phi @ S_Phi)
 
-    Ke = jnp.linalg.norm(K @ e) # Degree to which TD is not SGD.    
-
-    # Map to the N x N grid
-    stat_dist = evaluator.get_value_grid(mu)
-    min_eigenvector_grid = evaluator.get_value_grid(min_eigenvector)
-    
     mask = (mu > 1e-3).astype(float)
     E_local = 0.5 * jnp.sum(mask * (e * (A @ e)))
 
-    # non_reversible_coeff (degree to which the markov chain is asymmetric)
-    non_reversible_coeff = (4.0 / (evaluator.gamma**2)) * (norm_k**2) / D.shape[0]
-
-    # Initialize shared metrics
+    # Initialize shared scalar metrics (fast metrics common to both light and full modes)
     metrics = {
-        "value_grid": evaluator.get_value_grid(V_pi),
-        "state_dist_grid": evaluator.get_value_grid(mu),
-        "SA_min_eigenvalue": min_eigenvalue,
-        "is_SA_positive_definite": is_SA_pos_def,
-        "alignment_condition": alignment_condition, 
-        "alignment_condition_normalized": alignment_condition_normalized, 
         "E": E,
         "E_local": E_local,
-        "norm_s": norm_s,
-        "norm_k": norm_k,
-        "alignment_condition_sign": alignment_condition_sign,
-        "non_normality": non_normality,
-        "Ke": Ke,
         "stat_dist_error": stat_dist_error,
-        "stat_dist": stat_dist,
-        "min_eigenvector_grid": min_eigenvector_grid,
-        "phi_space_non_normality": phi_space_non_normality,
         "V_start": V_pi[evaluator.start_idx],
-        "V_nn": V_nn,
-        "non_reversible_coeff": non_reversible_coeff,
     }
 
-    # Extract extra heavy computations if light=False
+    # Extract extra heavy computations and spatial grid allocations if light=False
     if not light:
+        stat_dist = evaluator.get_value_grid(mu)
+        metrics.update({
+            "value_grid": evaluator.get_value_grid(V_pi),
+            "state_dist_grid": stat_dist,
+            "stat_dist": stat_dist,
+            "V_nn": V_nn,
+        })
+
+        # Consider the symmetry of the key matrix.
+        # 2. Symmetric and Skew-Symmetric components
+        S = 0.5 * (A + A.T)
+        K = 0.5 * (A - A.T)
+        norm_s = jnp.linalg.norm(S, ord='fro')
+        norm_k = jnp.linalg.norm(K, ord='fro')
+
+        # 3. Precompute matrices for the alignment condition
+        S_sq = S @ S
+        SK_KS = (S @ K) - (K @ S)
+        SA = S @ A
+
+        # 4. Check global positive definiteness of SA
+        SA_symmetric = 0.5 * (SA + SA.T)
+
+        # 5. Use 'eigh' to get BOTH eigenvalues and eigenvectors
+        eigenvalues_SA, eigenvectors_SA = jnp.linalg.eigh(SA_symmetric)
+
+        min_eig_idx = jnp.argmin(eigenvalues_SA)
+        min_eigenvalue = eigenvalues_SA[min_eig_idx]
+        min_eigenvector = eigenvectors_SA[:, min_eig_idx]
+        min_eigenvector_grid = evaluator.get_value_grid(min_eigenvector)
+
+        is_SA_pos_def = min_eigenvalue >= 0.0
+
+        term_1 = jnp.dot(e, S_sq @ e)
+        term_2 = 0.5 * jnp.dot(e, SK_KS @ e)
+        alignment_condition = term_1 + term_2  # If > 0, TD update decreases E
+        alignment_condition_sign = alignment_condition > 0
+
+        e_norm = e / jnp.linalg.norm(e)
+        alignment_condition_normalized = jnp.dot(e_norm, S_sq @ e_norm) + 0.5 * jnp.dot(e_norm, SK_KS @ e_norm)
+
+        non_normality = jnp.linalg.norm(S @ K - K @ S)
+        K_Phi = Φ.T @ K @ Φ
+        S_Phi = Φ.T @ S @ Φ
+        phi_space_non_normality = jnp.linalg.norm(S_Phi @ K_Phi - K_Phi @ S_Phi)
+
+        Ke = jnp.linalg.norm(K @ e)  # Degree to which TD is not SGD.
+
+        # non_reversible_coeff (degree to which the markov chain is asymmetric)
+        non_reversible_coeff = (4.0 / (evaluator.gamma**2)) * (norm_k**2) / D.shape[0]
+
         VE_VR = get_error_vectors(V_pi, val_configs["VR"][0], D, R_π, P_π, γ, Φ)['VE']
         nn_orthogonal_portion = get_error_vectors(V_pi, V_nn, D, R_π, P_π, γ, Φ)['Bellman_Orthogonal_Portion']
 
         alignment_dot_product = jnp.sum(mu * VE_VR * nn_orthogonal_portion)
         negative_alignment = (alignment_dot_product < 0)
-        
+
         norm_VE_VR = jnp.sqrt(jnp.sum(mu * (VE_VR ** 2)))
         norm_nn_ortho = jnp.sqrt(jnp.sum(mu * (nn_orthogonal_portion ** 2)))
         alignment = alignment_dot_product / (norm_VE_VR * norm_nn_ortho + 1e-8)
 
         metrics.update({
+            "SA_min_eigenvalue": min_eigenvalue,
+            "is_SA_positive_definite": is_SA_pos_def,
+            "alignment_condition": alignment_condition,
+            "alignment_condition_normalized": alignment_condition_normalized,
+            "alignment_condition_sign": alignment_condition_sign,
+            "norm_s": norm_s,
+            "norm_k": norm_k,
+            "non_normality": non_normality,
+            "Ke": Ke,
+            "min_eigenvector_grid": min_eigenvector_grid,
+            "phi_space_non_normality": phi_space_non_normality,
+            "non_reversible_coeff": non_reversible_coeff,
             "capacity_angle": jnp.mean(get_capacity_angle(V_pi, val_configs["VR"][0], D)),
             "nn_lstd_diff": jnp.mean((val_configs["LSTD"][0] - V_nn)**2),
             "negative_alignment": negative_alignment,
-            "alignment": alignment, 
+            "alignment": alignment,
             "projection_error_t": norm_nn_ortho,
         })
 
@@ -349,7 +346,7 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         if w is not None:
             metrics[f"{prefix}_weights"] = w
 
-        if prefix in ["LSTD", "VR", "BR", "nn"]:
+        if not light and prefix in ["LSTD", "VR", "BR", "nn"]:
             evaluator.get_value_grid(V)
 
         errs = get_error_vectors(V_pi, V, weight_mat, R_π, P_π, γ, Φ)
