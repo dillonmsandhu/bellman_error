@@ -86,9 +86,7 @@ def make_train(base_config):
             w = mu[:-1, None] * old_pi
             w = w / jnp.sum(w)
             mean_A = jnp.sum(w * A)
-            var_A = jnp.sum(w * (A - mean_A) ** 2)
-            std_A = jnp.sqrt(var_A)
-            A = (A - mean_A) / (std_A + 1e-8)
+            A = A - mean_A
             A = jax.lax.stop_gradient(A)
 
             # Dirichlet energy schedule configuration:
