@@ -226,6 +226,8 @@ def run_sweep_pipeline(
     use_geom_mean=False,
     sweep_suffix="",
     sweep_root_dir_arg=None,
+    lr_end=None,
+    actor_lr_end=None,
 ):
     """
     Runs a parallel hyperparameter sweep for multiple algorithms on a fixed task,
@@ -272,6 +274,10 @@ def run_sweep_pipeline(
         base_config["NUM_ENVS"] = num_envs
     if num_steps is not None:
         base_config["NUM_STEPS"] = num_steps
+    if lr_end is not None:
+        base_config["LR_END"] = lr_end
+    if actor_lr_end is not None:
+        base_config["ACTOR_LR_END"] = actor_lr_end
     if config_overrides:
         base_config.update(config_overrides)
 
@@ -285,6 +291,7 @@ def run_sweep_pipeline(
     print(f"STARTING SWEEP PIPELINE: {policy_type.upper()} POLICY")
     print(f"Environment: {env_name} | Timesteps: {total_timesteps} | Seeds: {n_seeds}")
     print(f"NUM_ENVS: {num_envs} | NUM_STEPS: {num_steps} | MINIBATCH_SIZE: {minibatch_size} | NUM_EPOCHS: {num_epochs}")
+    print(f"Critic LR_END: {base_config.get('LR_END')} | Actor LR_END: {base_config.get('ACTOR_LR_END')}")
     print(f"Algorithms to sweep: {algos}")
     print(f"Ranking: {rank_by} ({'lower' if rank_order in ['lower', 'min', 'asc', 'ascending'] else 'higher'} is better)")
     print(f"Output Root Directory: {sweep_root_dir}")
@@ -444,6 +451,10 @@ def parse_args():
                         help="Custom learning rate grid (e.g. --lr-grid 0.01 0.001 0.0001)")
     parser.add_argument("--actor-lr-grid", nargs="+", type=float, default=None,
                         help="Custom actor learning rate grid for policy algorithms (e.g. --actor-lr-grid 0.001 0.0001)")
+    parser.add_argument("--lr-end", type=float, default=None,
+                        help="Ending learning rate for value/critic net (default: low value from config, e.g. 0.00003)")
+    parser.add_argument("--actor-lr-end", type=float, default=None,
+                        help="Ending learning rate for actor net (default: low value from config, e.g. 0.00003)")
     parser.add_argument("--lambda-grid", nargs="+", type=float, default=None,
                         help="Custom lambda grid for TD algorithms (e.g. --lambda-grid 0.0 0.3 0.6 0.9 0.95 1.0)")
     parser.add_argument("--gae-lambda-grid", nargs="+", type=float, default=None,
@@ -518,6 +529,8 @@ def main():
         window_size=args.window_size,
         lr_grid=args.lr_grid,
         actor_lr_grid=args.actor_lr_grid,
+        lr_end=args.lr_end,
+        actor_lr_end=args.actor_lr_end,
         lambda_grid=args.lambda_grid,
         gae_lambda_grid=args.gae_lambda_grid,
         value_lambda_grid=args.value_lambda_grid,
