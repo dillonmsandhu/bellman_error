@@ -92,16 +92,19 @@ def make_train(base_config):
             A = jax.lax.stop_gradient(A)
 
             # Dirichlet energy schedule configuration:
-            # Ramps coefficient from DIRICHLET_COEF_START (default 0.0) to DIRICHLET_COEF_END (default 1.0)
-            c_start = config.get("DIRICHLET_COEF_START", 0.0)
+            # Default is 1.0 (recovers exact Bellman error loss identically to exact_E.py).
+            # To enable schedule (e.g. 0 -> 1), set DIRICHLET_COEF_START=0.0 in config.
+            c_start = config.get("DIRICHLET_COEF_START", 1.0)
             c_end = config.get("DIRICHLET_COEF_END", 1.0)
             schedule_steps = config.get("DIRICHLET_SCHEDULE_UPDATES", config["NUM_UPDATES"])
             progress = jnp.clip((idx - 1.0) / jnp.maximum(schedule_steps - 1.0, 1.0), 0.0, 1.0)
             dirichlet_coef = c_start + (c_end - c_start) * progress
 
-            # Clipping parameters
+            # Clipping parameters:
+            # Default is False (recovers unclipped exact Bellman error loss identically to exact_E.py).
+            # To enable PPO-style value clipping, set CLIP_DIRICHLET=True in config.
             vf_clip = config.get("VF_CLIP", 0.2)
-            clip_dirichlet = config.get("CLIP_DIRICHLET", True)
+            clip_dirichlet = config.get("CLIP_DIRICHLET", False)
             clip_type = config.get("DIRICHLET_CLIP_TYPE", "max")
             clip_magnitude = config.get("VF_CLIP_MAGNITUDE", False)
 
