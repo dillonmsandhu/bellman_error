@@ -16,7 +16,12 @@ from flax.core import unfreeze, freeze
 def create_evaluator(config, env=None, env_params=None):
     from envs.fourrooms import FourRoomsExactValue
     from envs.fourrooms_continuing import ContinuingFourRooms
-    from envs.eightrooms import EightRoomsExactValue, ContinuingEightRooms
+    from envs.eightrooms import (
+        EightRoomsExactValue,
+        ContinuingEightRooms,
+        EightRoomsDenseExactValue,
+        ContinuingEightRoomsDense,
+    )
     from envs.boyan_chain import ContinuingBoyanRing
     from envs.whirlpool import WhirlpoolExactValue, ContinuingWhirlpool
     from envs.mountaincar_exact import MountainCarExactValue
@@ -54,6 +59,24 @@ def create_evaluator(config, env=None, env_params=None):
             fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name in ['eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense']:
+        return EightRoomsDenseExactValue(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (23, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+    elif env_name in ['eightrooms-dense-cont', 'eightrooms_dense_cont', 'eightroomsdense-cont']:
+        return ContinuingEightRoomsDense(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (23, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
         )
     elif env_name == 'boyan':
         return ContinuingBoyanRing(
@@ -98,6 +121,8 @@ def make_env(config):
         'whirlpool', 'whirlpool-misc', 'whirlpool-cont',
         'fourrooms-misc', 'fourrooms-cont',
         'eightrooms', 'eightrooms-misc', 'eightrooms-cont',
+        'eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense',
+        'eightrooms-dense-cont', 'eightrooms_dense_cont',
         'boyan'
     ]
 
@@ -161,6 +186,42 @@ def make_env(config):
         )
         env = TerminalInfoWrapper(env)
         env = ContinuingWrapper(env)
+
+    elif config['ENV_NAME'].lower() in ['eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense']:
+        from envs.eightrooms import EightRoomsDense, EightRoomsDenseParams
+        env = EightRoomsDense(
+            use_visual_obs=True,
+            goal_fixed=(23, 11),
+            pos_fixed=(3, 1),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 1.0),
+        )
+        env_params = EightRoomsDenseParams(
+            max_steps_in_episode=config.get('MAX_STEPS_IN_EPISODE', 1e6),
+            fail_prob=config.get('FAIL_PROB', 0.01),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 1.0),
+        )
+        env = TerminalInfoWrapper(env)
+
+    elif config['ENV_NAME'].lower() in ['eightrooms-dense-cont', 'eightrooms_dense_cont', 'eightroomsdense-cont']:
+        from envs.eightrooms import EightRoomsDense, EightRoomsDenseParams
+        from envs.wrappers import ContinuingWrapper
+        env = EightRoomsDense(
+            use_visual_obs=True,
+            goal_fixed=(23, 11),
+            pos_fixed=(3, 1),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 1.0),
+        )
+        env_params = EightRoomsDenseParams(
+            max_steps_in_episode=config.get('MAX_STEPS_IN_EPISODE', 1e6),
+            fail_prob=config.get('FAIL_PROB', 0.01),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 1.0),
+        )
+        env = TerminalInfoWrapper(env)
+        env = ContinuingWrapper(env)
         
     elif config['ENV_NAME'] == 'boyan':
         # Create our lightweight mock primitives right here
@@ -200,13 +261,13 @@ def make_env(config):
     if isinstance(env.action_space(env_params), spaces.Box):
         env = ClipAction(env)
     
-    if config["NETWORK_TYPE"] == "mlp":
+    if config.get("NETWORK_TYPE") == "mlp":
         if len(env.observation_space(env_params).shape) > 1:
             env = FlattenObservationWrapper(env)
-    if config["NETWORK_TYPE"] == "cnn":
+    if config.get("NETWORK_TYPE") == "cnn":
         if len(env.observation_space(env_params).shape) < 3:
             env = AddChannelWrapper(env)
-    if config["NORMALIZE_OBS"]:
+    if config.get("NORMALIZE_OBS", False):
         env = NormalizeObservationWrapper(env) 
     
     print('Obs Shape:', env.observation_space(env_params).shape)

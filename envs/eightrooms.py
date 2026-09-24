@@ -1,3 +1,4 @@
+from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -264,9 +265,89 @@ xxxxxxxxxxxxx"""
         mu = self.compute_discounted_visitation_raw(pi)
         return self.get_value_grid(mu)
 
+    def compute_shortest_path_distances(self) -> np.ndarray:
+        """
+        Computes the shortest path distance (geodesic distance on the maze grid)
+        from every state to the goal state using BFS.
+        Returns an array of shape (num_total_states,) where terminal_idx has distance 0.
+        """
+        from collections import deque
+
+        coords_arr = np.array(self.coords)
+        coords_to_idx = {tuple(c): i for i, c in enumerate(coords_arr)}
+        adj = [[] for _ in range(self.num_states)]
+        for i, (y, x) in enumerate(coords_arr):
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                ny, nx = int(y + dy), int(x + dx)
+                if (ny, nx) in coords_to_idx:
+                    adj[i].append(coords_to_idx[(ny, nx)])
+
+        dist = np.zeros(self.num_total_states, dtype=np.float32)
+        dist_states = np.full(self.num_states, -1, dtype=np.int32)
+        dist_states[self.goal_idx] = 0
+        q = deque([self.goal_idx])
+        while q:
+            curr = q.popleft()
+            for nbr in adj[curr]:
+                if dist_states[nbr] == -1:
+                    dist_states[nbr] = dist_states[curr] + 1
+                    q.append(nbr)
+
+        dist[: self.num_states] = dist_states.astype(np.float32)
+        dist[self.terminal_idx] = 0.0
+        return dist
+
 
 class ContinuingEightRooms(EightRoomsExactValue):
     """Continuing variant of Eight Rooms where goal transitions cycle back to start."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.P, self.R = self._build_env_dynamics(continuing=True)
+        self.P_cont = self.P
+
+
+class EightRoomsDenseExactValue(EightRoomsExactValue):
+    """
+    Exact policy evaluation for Eight Rooms with Potential-Based Reward Shaping (PBRS).
+    Uses the negative shortest-path geodesic distance to the goal as potential:
+        Phi(s) = - potential_scale * D(s, goal), with Phi(terminal) = 0.
+        F(s, a, s') = gamma * Phi(s') - Phi(s)
+        R_dense(s, a, s') = R_sparse(s, a, s') + F(s, a, s')
+    Preserves policy ranking, optimal policy, and action advantages while providing
+    a dense reward signal along every transition leading to the goal.
+    """
+
+    def __init__(self, *args, potential_scale: float = 0.03125, **kwargs):
+        self.potential_scale = float(potential_scale)
+        super().__init__(*args, **kwargs)
+
+    def _build_env_dynamics(self, continuing: bool) -> Tuple[jax.Array, jax.Array]:
+        P, R_sparse = super()._build_env_dynamics(continuing=continuing)
+
+        # Compute shortest-path distance to goal
+        self.distances = self.compute_shortest_path_distances()
+
+        # Potential function: Phi(s) = - potential_scale * D(s)
+        phi = - self.potential_scale * self.distances
+        phi[self.terminal_idx] = 0.0
+        self.potential = jnp.asarray(phi, dtype=jnp.float32)
+
+        # Shaping tensor: F(s, a, s') = gamma * Phi(s') - Phi(s)
+        gamma = self.gamma
+        F = gamma * phi[None, None, :] - phi[:, None, None]
+        # Terminal state self-loop has 0 shaping reward
+        F[self.terminal_idx, :, self.terminal_idx] = 0.0
+
+        R_dense = np.array(R_sparse) + F
+        # Mask where P == 0
+        R_dense = np.where(np.array(P) > 0, R_dense, 0.0)
+
+        return P, jnp.asarray(R_dense, dtype=jnp.float32)
+
+
+class ContinuingEightRoomsDense(EightRoomsDenseExactValue):
+    """Continuing variant of Eight Rooms Dense where goal transitions cycle back to start."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -390,3 +471,113 @@ class EightRooms(environment.Environment[EightRoomsState, EightRoomsParams]):
             "goal": spaces.Box(0, max(self.height, self.width) - 1, (2,), jnp.float32),
             "time": spaces.Discrete(params.max_steps_in_episode),
         })
+
+
+@struct.dataclass
+class EightRoomsDenseParams(EightRoomsParams):
+    gamma: float = 0.99
+    potential_scale: float = 1.0
+
+
+class EightRoomsDense(EightRooms):
+    """Gymnax-compatible Environment for EightRooms with potential-based dense reward."""
+
+    def __init__(
+        self,
+        use_visual_obs: bool = True,
+        goal_fixed: Tuple[int, int] = (23, 11),
+        pos_fixed: Tuple[int, int] = (3, 1),
+        gamma: float = 0.99,
+        potential_scale: float = 1.0,
+    ):
+        super().__init__(
+            use_visual_obs=use_visual_obs,
+            goal_fixed=goal_fixed,
+            pos_fixed=pos_fixed,
+        )
+        self.gamma = float(gamma)
+        self.potential_scale = float(potential_scale)
+        self.dist_grid = self._compute_distance_grid()
+
+    def _compute_distance_grid(self) -> jax.Array:
+        from collections import deque
+
+        coords_arr = np.array(self.coords)
+        coords_to_idx = {tuple(c): i for i, c in enumerate(coords_arr)}
+        goal_tuple = tuple(int(x) for x in self.goal_fixed)
+        goal_idx = coords_to_idx[goal_tuple]
+
+        adj = [[] for _ in range(self.num_states)]
+        for i, (y, x) in enumerate(coords_arr):
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                ny, nx = int(y + dy), int(x + dx)
+                if (ny, nx) in coords_to_idx:
+                    adj[i].append(coords_to_idx[(ny, nx)])
+
+        dist_states = np.full(self.num_states, -1, dtype=np.int32)
+        dist_states[goal_idx] = 0
+        q = deque([goal_idx])
+        while q:
+            curr = q.popleft()
+            for nbr in adj[curr]:
+                if dist_states[nbr] == -1:
+                    dist_states[nbr] = dist_states[curr] + 1
+                    q.append(nbr)
+
+        grid = np.zeros((self.height, self.width), dtype=np.float32)
+        for i, (y, x) in enumerate(coords_arr):
+            grid[y, x] = float(dist_states[i])
+        return jnp.asarray(grid, dtype=jnp.float32)
+
+    @property
+    def default_params(self) -> EightRoomsDenseParams:
+        return EightRoomsDenseParams(gamma=self.gamma, potential_scale=self.potential_scale)
+
+    def step_env(
+        self,
+        key: jax.Array,
+        state: EightRoomsState,
+        action: int | float | jax.Array,
+        params: EightRoomsDenseParams,
+    ) -> Tuple[jax.Array, EightRoomsState, jax.Array, jax.Array, dict]:
+        key_prob, key_action = jax.random.split(key)
+        p_roll = jax.random.uniform(key_prob)
+        random_action = jax.random.randint(key_action, (), 0, 4)
+        executed_a = jnp.where(p_roll < params.fail_prob, random_action, action)
+
+        proposed_pos = state.pos + self.directions[executed_a]
+        can_move = self.env_map[proposed_pos[0], proposed_pos[1]]
+        new_pos = jax.lax.select(can_move, proposed_pos, state.pos)
+
+        is_goal = jnp.logical_and(new_pos[0] == state.goal[0], new_pos[1] == state.goal[1])
+        base_reward = is_goal.astype(jnp.float32)
+
+        # Potential-based shaping: F = gamma * Phi(s') - Phi(s)
+        # Phi(s) = - potential_scale * distance(s)
+        # If transitioning to terminal (goal), Phi(s') = 0.0
+        cur_dist = self.dist_grid[state.pos[0], state.pos[1]]
+        next_dist = self.dist_grid[new_pos[0], new_pos[1]]
+
+        scale = getattr(params, "potential_scale", self.potential_scale)
+        gamma = getattr(params, "gamma", self.gamma)
+
+        phi_s = - scale * cur_dist
+        phi_next = jnp.where(is_goal, 0.0, - scale * next_dist)
+        shaping = gamma * phi_next - phi_s
+        reward = base_reward + shaping
+
+        state = EightRoomsState(pos=new_pos, goal=state.goal, time=state.time + 1)
+        done = self.is_terminal(state, params)
+
+        return (
+            jax.lax.stop_gradient(self.get_obs(state)),
+            jax.lax.stop_gradient(state),
+            reward,
+            done,
+            {"discount": self.discount(state, params)},
+        )
+
+    @property
+    def name(self) -> str:
+        return "EightRooms-dense"
+
