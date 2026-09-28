@@ -34,6 +34,16 @@ DRY_RUN=false
 SWEEP_ID=$(date +"%Y%m%d_%H%M%S")
 LAMBDAS="0.0 0.9"
 
+# ==============================================================================
+# Hard-coded Training Hyperparameters for Sampled E
+# ==============================================================================
+NUM_EPOCHS=4
+MINIBATCH_SIZE=1024
+TOTAL_TIMESTEPS=1000000
+NUM_ENVS=64
+NUM_STEPS=256
+CONFIG="{\"NUM_ENVS\":$NUM_ENVS,\"NUM_STEPS\":$NUM_STEPS,\"TOTAL_TIMESTEPS\":$TOTAL_TIMESTEPS,\"MINIBATCH_SIZE\":$MINIBATCH_SIZE,\"NUM_EPOCHS\":$NUM_EPOCHS,\"LIGHT_METRICS\":true}"
+
 for arg in "$@"; do
     case "$arg" in
         --dry-run)
@@ -54,11 +64,12 @@ done
 
 echo "======================================================================"
 echo "SAMPLED E(LAMBDA) SWEEP DISPATCHER"
-echo "Sweep ID: $SWEEP_ID"
+echo "Sweep ID:     $SWEEP_ID"
 echo "Environments: ${DEFAULT_ENVS[*]}"
 echo "Policies:     ${DEFAULT_POLICIES[*]}"
 echo "Algorithms:   ${DEFAULT_ALGOS[*]}"
 echo "Lambdas:      $LAMBDAS"
+echo "Config:       $CONFIG"
 if [ "$DRY_RUN" = true ]; then
     echo "Mode: DRY-RUN"
 else
@@ -99,7 +110,7 @@ for env in "${DEFAULT_ENVS[@]}"; do
                 --time=\"$TIME_LIMIT\" \
                 --partition=\"$PARTITION\" \
                 --gres=\"$GPU_GRES\" \
-                \"$WORKER_SCRIPT\" \"$env\" \"$policy\" \"$algo\" \"$SWEEP_ID\" --lambdas $ALGO_LAMBDAS"
+                \"$WORKER_SCRIPT\" \"$env\" \"$policy\" \"$algo\" \"$SWEEP_ID\" --lambdas $ALGO_LAMBDAS --config '$CONFIG'"
             
             echo "--> Submitting: Env=$env, Policy=$policy, Algo=$algo (lambdas: $ALGO_LAMBDAS)"
             
