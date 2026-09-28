@@ -41,7 +41,7 @@ mkdir -p slurm
 DRY_RUN=false
 SWEEP_ID=$(date +"%Y%m%d_%H%M%S")
 RECIPIENT="ds541@cs.duke.edu"
-LAMBDAS="0.0 0.2 0.5 0.8 0.9 0.95 0.99"
+LAMBDAS="0.0 0.5 0.9 0.95 0.99"
 
 # ==============================================================================
 # Hard-coded Training Hyperparameters for Sampled E
@@ -49,8 +49,8 @@ LAMBDAS="0.0 0.2 0.5 0.8 0.9 0.95 0.99"
 NUM_EPOCHS=4
 MINIBATCH_SIZE=1024
 TOTAL_TIMESTEPS=1000000
-NUM_ENVS=64
-NUM_STEPS=256
+NUM_ENVS=128
+NUM_STEPS=128
 CONFIG="{\"NUM_ENVS\":$NUM_ENVS,\"NUM_STEPS\":$NUM_STEPS,\"TOTAL_TIMESTEPS\":$TOTAL_TIMESTEPS,\"MINIBATCH_SIZE\":$MINIBATCH_SIZE,\"NUM_EPOCHS\":$NUM_EPOCHS,\"LIGHT_METRICS\":true}"
 
 for arg in "$@"; do
