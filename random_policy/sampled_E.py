@@ -80,11 +80,16 @@ def make_train(base_config):
             return_lambda = config["RETURN_LAMBDA"]
             advantages, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
             
+            is_timeout = traj_batch.info["is_timeout"]
+            true_terminal = traj_batch.done & ~is_timeout
+
             # Align next targets G_{t+1}
             next_targets = jnp.roll(targets, shift=-1, axis=0)
             next_targets = next_targets.at[-1].set(traj_batch.next_value[-1])
-            # If done, next state is terminal (return = 0.0)
-            next_targets = (1.0 - traj_batch.done) * next_targets
+            # On timeout, the rollout reset so targets[t+1] is from a new episode; the true continuation target is next_value
+            next_targets = jnp.where(is_timeout, traj_batch.next_value, next_targets)
+            # On true terminal, next absorbing state target is 0.0
+            next_targets = jnp.where(true_terminal, 0.0, next_targets)
             traj_batch = traj_batch._replace(next_target=next_targets)
 
             # LOSS FUNCTION
@@ -92,20 +97,15 @@ def make_train(base_config):
                 gamma = config["GAMMA"]
                 # 1. Current State Predictions & Errors (e_i)
                 v_i = network.apply(params, traj_batch.obs)
-                e_i = targets - v_i
                 
                 # 2. Next State Predictions & Errors (e_j)
                 v_j = network.apply(params, traj_batch.next_obs)
-                # Terminal transitions have e_j = 0
-                e_j = (1.0 - traj_batch.done) * (traj_batch.next_target - v_j)
+                true_term = traj_batch.done & ~traj_batch.info["is_timeout"]
                 
-                # 3. Magnitude (MC) term: (1 - γ) * E[e_i^2]
-                magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
+                value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
+                    v_i, targets, v_j, traj_batch.next_target, true_term, gamma
+                )
                 
-                # 4. Laplacian (Smoothness) term: (γ / 2) * E[(e_i - e_j)^2]
-                laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
-                
-                value_loss = magnitude_loss + laplacian_loss
                 total_loss = config["VF_COEF"] * value_loss
                 return total_loss, {
                     "total_loss": total_loss,

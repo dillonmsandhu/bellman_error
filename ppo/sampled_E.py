@@ -85,16 +85,22 @@ def make_train(base_config):
             return_lambda = config["RETURN_LAMBDA"]
             _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
 
+            is_timeout = traj_batch.info["is_timeout"]
+            true_terminal = traj_batch.done & ~is_timeout
+
             # Align next targets G_{t+1} for adjacent state error calculation
             next_targets = jnp.roll(targets, shift=-1, axis=0)
             next_targets = next_targets.at[-1].set(traj_batch.next_value[-1])
-            next_targets = (1.0 - traj_batch.done) * next_targets
+            # On timeout, the rollout reset so targets[t+1] is from a new episode; the true continuation target is next_value
+            next_targets = jnp.where(is_timeout, traj_batch.next_value, next_targets)
+            # On true terminal, next absorbing state target is 0.0
+            next_targets = jnp.where(true_terminal, 0.0, next_targets)
             traj_batch = traj_batch._replace(next_target=next_targets)
 
             # 3. UPDATE EPOCHS
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
-                    obs_mb, action_mb, log_prob_mb, next_obs_mb, done_mb, next_target_mb, advantages_mb, targets_mb = batch_info
+                    obs_mb, action_mb, log_prob_mb, next_obs_mb, true_terminal_mb, next_target_mb, advantages_mb, targets_mb = batch_info
 
                     def loss_fn(params, network):
                         # A) Actor Loss (PPO clipped surrogate)
@@ -105,21 +111,16 @@ def make_train(base_config):
 
                         adv_norm = helpers.post_process_advantage(advantages_mb, config)
 
-
                         surr1 = ratio * adv_norm
                         surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * adv_norm
                         actor_loss = -jnp.minimum(surr1, surr2).mean()
 
-                        # B) Critic Loss (Sampled E-loss from fixed_policy/sampled_E.py)
+                        # B) Critic Loss (Sampled E-loss)
                         v_i = network.apply(params, obs_mb, method=network.value)
-                        e_i = targets_mb - v_i
-
                         v_j = network.apply(params, next_obs_mb, method=network.value)
-                        e_j = (1.0 - done_mb) * (next_target_mb - v_j)
-
-                        magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
-                        laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
-                        value_loss = magnitude_loss + laplacian_loss
+                        value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
+                            v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma
+                        )
 
                         total_loss = (
                             actor_loss
@@ -147,7 +148,7 @@ def make_train(base_config):
                     traj_batch.action,
                     traj_batch.log_prob,
                     traj_batch.next_obs,
-                    traj_batch.done,
+                    true_terminal,
                     traj_batch.next_target,
                     advantages,
                     targets,

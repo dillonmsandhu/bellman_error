@@ -670,15 +670,15 @@ def e_lambda_fixed_loss_fn(params, network, traj_batch, gae, targets, config):
     return total_loss, losses
 
 
-def e_critic_loss(v_i, targets_i, v_j, targets_j, done, gamma):
+def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma):
     """
     Computes sampled E-loss (magnitude anchor + Dirichlet/Laplacian smoothness).
     - For ongoing transitions and timeouts: smooths e_i against e_j.
-    - For true terminal transitions (done=True): absorbing state error is 0,
-      so (e_i - e_j)^2 = (e_i - 0)^2 = (r_T - v_T)^2, smoothing v_T directly to reward.
+    - For true terminal transitions (true_terminal=True): absorbing state error is 0,
+      so (e_i - e_j)^2 = (e_i - 0)^2 = e_i^2.
     """
     e_i = targets_i - v_i
-    e_j = jnp.where(done, 0.0, targets_j - v_j)
+    e_j = jnp.where(true_terminal, 0.0, targets_j - v_j)
 
     magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
     laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
@@ -694,7 +694,7 @@ def e_loss_fn(
     action,
     log_prob_old,
     next_obs,
-    done,
+    true_terminal,
     next_target,
     advantages,
     targets,
@@ -715,20 +715,20 @@ def e_loss_fn(
     actor_loss = -jnp.minimum(surr1, surr2).mean()
 
     # 2. Critic Loss (Sampled E-loss)
-    gamma = config.get("GAMMA", 0.99)
+    gamma = config["GAMMA"]
     v_i = network.apply(params, obs, method=network.value)
     v_j = network.apply(params, next_obs, method=network.value)
     # Terminal absorbing state has value 0
-    v_j = jnp.where(done, 0.0, v_j)
+    v_j = jnp.where(true_terminal, 0.0, v_j)
 
     value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
-        v_i, targets, v_j, next_target, done, gamma
+        v_i, targets, v_j, next_target, true_terminal, gamma
     )
 
     total_loss = (
-        config.get("POLICY_COEFF", 1.0) * actor_loss
-        + config.get("VF_COEF", 0.5) * value_loss
-        - config.get("ENT_COEF", 0.01) * entropy
+        config["POLICY_COEFF"] * actor_loss
+        + config["VF_COEF"] * value_loss
+        - config["ENT_COEF"] * entropy
     )
     losses = {
         "total_loss": total_loss,
