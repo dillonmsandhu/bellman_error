@@ -153,7 +153,7 @@ def get_default_param_grid(
     if gae_lambda_list is not None and algo_name not in mc_algos:
         grid["GAE_LAMBDA"] = gae_lambda_list
     elif lambda_list is not None and algo_name in [
-        "td", "td_lambda", "sampled_td_lambda", "sampled_E", "sampled_E_gd", "E_min", "E"
+        "td", "td_lambda", "sampled_td_lambda", "E_min", "E"
     ]:
         grid["GAE_LAMBDA"] = lambda_list
 

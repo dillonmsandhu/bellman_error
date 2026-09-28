@@ -25,12 +25,6 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 def make_train(base_config):
-    # Ensure GAE_LAMBDA defaults to 1.0 for Monte Carlo returns unless specified
-    if "GAE_LAMBDA" not in base_config or base_config["GAE_LAMBDA"] == 0.0:
-        base_config["GAE_LAMBDA"] = base_config.get("VALUE_LAMBDA", 1.0)
-        if base_config["GAE_LAMBDA"] == 0.0:
-            base_config["GAE_LAMBDA"] = 1.0
-
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
     base_config["NUM_MINIBATCHES"] = batch_size // base_config["MINIBATCH_SIZE"]
     base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"] // batch_size
@@ -42,7 +36,7 @@ def make_train(base_config):
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
-        k = config.get('k', 32)
+        k = config['k']
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
@@ -82,9 +76,9 @@ def make_train(base_config):
             (_, env_state, last_obs, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
 
             # --- MC RETURN / TARGET CALCULATION ---
-            # Using GAE with lambda=1.0 gives MC returns G_t
-            gae_lambda = config.get("GAE_LAMBDA", 1.0)
-            advantages, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], gae_lambda)
+            # Using GAE with RETURN_LAMBDA (1.0) gives MC returns G_t
+            return_lambda = config["RETURN_LAMBDA"]
+            advantages, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
             
             # Align next targets G_{t+1}
             next_targets = jnp.roll(targets, shift=-1, axis=0)
@@ -111,12 +105,13 @@ def make_train(base_config):
                 # 4. Laplacian (Smoothness) term: (γ / 2) * E[(e_i - e_j)^2]
                 laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
                 
-                total_loss = magnitude_loss + laplacian_loss
+                value_loss = magnitude_loss + laplacian_loss
+                total_loss = config["VF_COEF"] * value_loss
                 return total_loss, {
                     "total_loss": total_loss,
                     "magnitude_loss": magnitude_loss,
                     "laplacian_loss": laplacian_loss,
-                    "value_loss": total_loss,
+                    "value_loss": value_loss,
                 }
 
             # UPDATE NETWORK
@@ -153,10 +148,10 @@ def make_train(base_config):
             metric.update({k: v.mean() for k, v in losses.items()})
             metric.update({"mean_rew": traj_batch.reward.mean()})
             value_metrics = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=True, light=config.get("LIGHT_METRICS", True)
+                evaluator, network, train_state.params, random_policy=True, light=config["LIGHT_METRICS"]
             )
             metric.update(value_metrics)
-            if config.get("LOG_FEATURE_METRICS", False):
+            if config["LOG_FEATURE_METRICS"]:
                 metric.update(feature_metrics(
                     evaluator, network, train_state.params, random_policy=True,
                 ))

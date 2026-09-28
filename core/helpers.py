@@ -930,8 +930,8 @@ def e_lambda_differentiable_loss_fn(
     loss_actor, entropy = pi_loss_fn(params, network, traj_batch, advantages, config)
 
     values = network.apply(params, traj_batch.obs, method=network.value)
-    gamma = config.get("GAMMA", 0.99)
-    e_lambda = config.get("VALUE_LAMBDA", config.get("E_LAMBDA", 0.0))
+    gamma = config["GAMMA"]
+    e_lambda = config["VALUE_LAMBDA"]
 
     # Boundary continuation at step T
     next_value_T = network.apply(params, traj_batch.next_obs[-1], method=network.value)
@@ -953,9 +953,9 @@ def e_lambda_differentiable_loss_fn(
     )
 
     total_loss = (
-        config.get("POLICY_COEFF", 1.0) * loss_actor
-        + config.get("VF_COEF", 0.5) * value_loss
-        - config.get("ENT_COEF", 0.01) * entropy
+        config["POLICY_COEFF"] * loss_actor
+        + config["VF_COEF"] * value_loss
+        - config["ENT_COEF"] * entropy
     )
 
     losses = {
@@ -1064,8 +1064,8 @@ def e_lambda_geometric_loss_fn(
     loss_actor, entropy = pi_loss_fn(params, network, traj_batch, advantages, config)
 
     values = network.apply(params, traj_batch.obs, method=network.value)
-    gamma = config.get("GAMMA", 0.99)
-    e_lambda = config.get("VALUE_LAMBDA", config.get("E_LAMBDA", 0.0))
+    gamma = config["GAMMA"]
+    e_lambda = config["VALUE_LAMBDA"]
 
     # Boundary continuation at step T
     next_value_T = network.apply(params, traj_batch.next_obs[-1], method=network.value)
@@ -1088,9 +1088,9 @@ def e_lambda_geometric_loss_fn(
     )
 
     total_loss = (
-        config.get("POLICY_COEFF", 1.0) * loss_actor
-        + config.get("VF_COEF", 0.5) * value_loss
-        - config.get("ENT_COEF", 0.01) * entropy
+        config["POLICY_COEFF"] * loss_actor
+        + config["VF_COEF"] * value_loss
+        - config["ENT_COEF"] * entropy
     )
 
     losses = {

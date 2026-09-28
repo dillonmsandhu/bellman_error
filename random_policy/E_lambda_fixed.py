@@ -22,7 +22,7 @@ class Transition(NamedTuple):
 
 def make_train(base_config):
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
-    base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config.get("MINIBATCH_SIZE", batch_size))
+    base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config["MINIBATCH_SIZE"])
     base_config["NUM_UPDATES"] = max(1, base_config["TOTAL_TIMESTEPS"] // batch_size)
     
     env, env_params = helpers.make_env(base_config)
@@ -32,7 +32,7 @@ def make_train(base_config):
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
-        k = config.get('k', 32)
+        k = config['k']
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
@@ -72,14 +72,14 @@ def make_train(base_config):
             (_, env_state, last_obs, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
 
             # 2. TARGET CALCULATION
-            e_lambda = config.get("VALUE_LAMBDA", config.get("E_LAMBDA", 0.0))
-            return_lambda = config.get("RETURN_LAMBDA", 1.0)
+            e_lambda = config["VALUE_LAMBDA"]
+            return_lambda = config["RETURN_LAMBDA"]
             targets, _ = helpers.calculate_e_lambda_targets(
                 traj_batch, config["GAMMA"], e_lambda, return_lambda
             )
 
             # 3. UPDATE NETWORK OVER EPOCHS AND MINIBATCHES
-            recompute_targets = config.get("RECOMPUTE_TARGETS_EACH_EPOCH", False)
+            recompute_targets = config["RECOMPUTE_TARGETS_EACH_EPOCH"]
 
             def _update_epoch(update_state, unused):
                 train_state, traj_batch, targets, rng = update_state
@@ -108,7 +108,7 @@ def make_train(base_config):
                     def _loss_fn(params):
                         v_pred = network.apply(params, traj_batch_mb.obs)
                         val_loss = 0.5 * jnp.mean(jnp.square(v_pred - targets_mb))
-                        tot_loss = config.get("VF_COEF", 1.0) * val_loss
+                        tot_loss = config["VF_COEF"] * val_loss
                         return tot_loss, {
                             "total_loss": tot_loss,
                             "value_loss": val_loss,
@@ -141,12 +141,12 @@ def make_train(base_config):
                 "v_pred": traj_batch.value.mean(),
             })
 
-            if evaluator is not None and config.get("CALC_TRUE_VALUES", False):
+            if evaluator is not None and config["CALC_TRUE_VALUES"]:
                 value_metrics = bellman_error.value_metrics(
-                    evaluator, network, train_state.params, random_policy=True, light=config.get("LIGHT_METRICS", True)
+                    evaluator, network, train_state.params, random_policy=True, light=config["LIGHT_METRICS"]
                 )
                 metric.update(value_metrics)
-                if config.get("LOG_FEATURE_METRICS", False):
+                if config["LOG_FEATURE_METRICS"]:
                     metric.update(feature_metrics(
                         evaluator, network, train_state.params, random_policy=True,
                     ))

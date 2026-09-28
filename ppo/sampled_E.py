@@ -32,7 +32,7 @@ def make_train(base_config):
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
         gamma = config["GAMMA"]
-        k = config.get("k", 32)
+        k = config["k"]
 
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config["LAYER_NORM"]
@@ -78,12 +78,12 @@ def make_train(base_config):
 
             # 2. SEPARATE ADVANTAGE AND VALUE TARGET CALCULATIONS
             # GAE_LAMBDA is strictly for policy advantages
-            gae_lambda = config.get("GAE_LAMBDA", 0.95)
+            gae_lambda = config["GAE_LAMBDA"]
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], gae_lambda)
 
-            # VALUE_LAMBDA is strictly for critic targets
-            value_lambda = config.get("VALUE_LAMBDA", 1.0)
-            _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], value_lambda)
+            # RETURN_LAMBDA is strictly for critic targets
+            return_lambda = config["RETURN_LAMBDA"]
+            _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
 
             # Align next targets G_{t+1} for adjacent state error calculation
             next_targets = jnp.roll(targets, shift=-1, axis=0)
@@ -123,8 +123,8 @@ def make_train(base_config):
 
                         total_loss = (
                             actor_loss
-                            + config.get("VF_COEF", 0.5) * value_loss
-                            - entropy * config.get("ENT_COEF", 0.01)
+                            + config["VF_COEF"] * value_loss
+                            - entropy * config["ENT_COEF"]
                         )
                         return total_loss, {
                             "total_loss": total_loss,
@@ -168,11 +168,11 @@ def make_train(base_config):
 
             if evaluator is not None:
                 value_metrics = bellman_error.value_metrics(
-                    evaluator, network, train_state.params, random_policy=False, light=config.get("LIGHT_METRICS", True)
+                    evaluator, network, train_state.params, random_policy=False, light=config["LIGHT_METRICS"]
                 )
                 metric.update(value_metrics)
 
-                if config.get("LOG_FEATURE_METRICS", False):
+                if config["LOG_FEATURE_METRICS"]:
                     from core.feature_metrics import feature_metrics
                     metric.update(feature_metrics(
                         evaluator, network, train_state.params, random_policy=False

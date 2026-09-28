@@ -22,7 +22,7 @@ class Transition(NamedTuple):
 def make_train(base_config):
     base_config = base_config.copy()
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
-    base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config.get("MINIBATCH_SIZE", batch_size))
+    base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config["MINIBATCH_SIZE"])
     base_config["NUM_UPDATES"] = max(1, base_config["TOTAL_TIMESTEPS"] // batch_size)
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
@@ -30,7 +30,7 @@ def make_train(base_config):
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
-        k = config.get("k", 32)
+        k = config["k"]
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config["LAYER_NORM"]
         )
@@ -74,18 +74,18 @@ def make_train(base_config):
 
             # 2. SEPARATE ADVANTAGE AND VALUE TARGET CALCULATIONS
             # GAE_LAMBDA is strictly for policy advantages
-            gae_lambda = config.get("GAE_LAMBDA", 0.8)
+            gae_lambda = config["GAE_LAMBDA"]
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], gae_lambda)
 
             # E(lambda) targets computed via forward and backward error traces
-            e_lambda = config.get("VALUE_LAMBDA", config.get("E_LAMBDA", 0.0))
-            return_lambda = config.get("RETURN_LAMBDA", 1.0)
+            e_lambda = config["VALUE_LAMBDA"]
+            return_lambda = config["RETURN_LAMBDA"]
             targets, e_diag = helpers.calculate_e_lambda_targets(
                 traj_batch, config["GAMMA"], e_lambda, return_lambda
             )
 
             # 3. UPDATE NETWORK OVER EPOCHS AND MINIBATCHES
-            recompute_targets = config.get("RECOMPUTE_TARGETS_EACH_EPOCH", False)
+            recompute_targets = config["RECOMPUTE_TARGETS_EACH_EPOCH"]
 
             def _update_epoch(update_state, unused):
                 train_state, traj_batch, advantages, targets, rng = update_state
