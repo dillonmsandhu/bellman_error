@@ -43,6 +43,14 @@ SWEEP_ID=$(date +"%Y%m%d_%H%M%S")
 RECIPIENT="ds541@cs.duke.edu"
 LAMBDAS="0.0 0.2 0.5 0.8 0.9 0.95 0.99"
 
+# Default training hyperparameters for sampled algorithms
+NUM_EPOCHS=4
+MINIBATCH_SIZE=1024
+TOTAL_TIMESTEPS=1000000
+NUM_ENVS=64
+NUM_STEPS=256
+CUSTOM_CONFIG=""
+
 for arg in "$@"; do
     case "$arg" in
         --dry-run)
@@ -57,25 +65,50 @@ for arg in "$@"; do
         --recipient=*)
             RECIPIENT="${arg#*=}"
             ;;
+        --epochs=*)
+            NUM_EPOCHS="${arg#*=}"
+            ;;
+        --minibatch-size=*)
+            MINIBATCH_SIZE="${arg#*=}"
+            ;;
+        --timesteps=*)
+            TOTAL_TIMESTEPS="${arg#*=}"
+            ;;
+        --num-envs=*)
+            NUM_ENVS="${arg#*=}"
+            ;;
+        --num-steps=*)
+            NUM_STEPS="${arg#*=}"
+            ;;
+        --config=*)
+            CUSTOM_CONFIG="${arg#*=}"
+            ;;
         -h|--help)
-            echo "Usage: $0 [--dry-run] [--sweep-id=ID] [--lambdas=\"0.0 0.2 0.5 0.8 0.9 0.95 0.99\"] [--recipient=EMAIL]"
+            echo "Usage: $0 [--dry-run] [--sweep-id=ID] [--lambdas=\"0.0 0.2 ...\"] [--epochs=4] [--minibatch-size=1024] [--timesteps=1000000] [--config='{...}']"
             exit 0
             ;;
     esac
 done
 
+if [ -n "$CUSTOM_CONFIG" ]; then
+    RUN_CONFIG="$CUSTOM_CONFIG"
+else
+    RUN_CONFIG="{\"NUM_ENVS\":$NUM_ENVS,\"NUM_STEPS\":$NUM_STEPS,\"TOTAL_TIMESTEPS\":$TOTAL_TIMESTEPS,\"MINIBATCH_SIZE\":$MINIBATCH_SIZE,\"NUM_EPOCHS\":$NUM_EPOCHS,\"LIGHT_METRICS\":true}"
+fi
+
 echo "======================================================================"
 echo "SAMPLED E LAMBDA-TUNING SWEEP DISPATCHER"
-echo "Sweep ID:  $SWEEP_ID"
-echo "Envs:      ${DEFAULT_ENVS[*]}"
-echo "Policies:  ${DEFAULT_POLICIES[*]}"
-echo "Algos:     ${DEFAULT_ALGOS[*]}"
-echo "Lambdas:   $LAMBDAS"
-echo "Recipient: $RECIPIENT"
+echo "Sweep ID:   $SWEEP_ID"
+echo "Envs:       ${DEFAULT_ENVS[*]}"
+echo "Policies:   ${DEFAULT_POLICIES[*]}"
+echo "Algos:      ${DEFAULT_ALGOS[*]}"
+echo "Lambdas:    $LAMBDAS"
+echo "Config:     $RUN_CONFIG"
+echo "Recipient:  $RECIPIENT"
 if [ "$DRY_RUN" = true ]; then
-    echo "Mode:      DRY-RUN"
+    echo "Mode:       DRY-RUN"
 else
-    echo "Mode:      SLURM BATCH"
+    echo "Mode:       SLURM BATCH"
 fi
 echo "======================================================================"
 
@@ -112,7 +145,7 @@ for env in "${DEFAULT_ENVS[@]}"; do
                 --time=\"$TIME_LIMIT\" \
                 --partition=\"$PARTITION\" \
                 --gres=\"$GPU_GRES\" \
-                \"$WORKER_SCRIPT\" \"$env\" \"$policy\" \"$algo\" \"$SWEEP_ID\" --lambdas $ALGO_LAMBDAS"
+                \"$WORKER_SCRIPT\" \"$env\" \"$policy\" \"$algo\" \"$SWEEP_ID\" --lambdas $ALGO_LAMBDAS --config '$RUN_CONFIG'"
             
             echo "--> Submitting: Env=$env, Policy=$policy, Algo=$algo (lambdas: $ALGO_LAMBDAS)"
             

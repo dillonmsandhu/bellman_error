@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument("--lambdas", type=float, nargs="+", default=[0.0, 0.5, 0.9, 0.95, 0.99], help="List of VALUE_LAMBDA to sweep")
     parser.add_argument("--lr-grid", type=float, nargs="+", default=[0.01, 0.005, 0.001, 0.0005, 0.0001], help="Learning rate grid")
     parser.add_argument("--actor-lr-grid", type=float, nargs="+", default=[0.005, 0.001, 0.0005, 0.0001], help="Actor learning rate grid for PPO")
+    parser.add_argument("--config", type=str, default=None, help="JSON or dict string of config overrides")
     return parser.parse_args()
 
 def run_lambda_sweep_worker():
@@ -53,6 +54,12 @@ def run_lambda_sweep_worker():
     base_config["ENV_NAME"] = env_name
     base_config["N_SEEDS"] = 5
     base_config["MODEL_LOAD_DIR"] = model_load_dir
+
+    if args.config:
+        from core.utils import parse_config_override
+        overrides = parse_config_override(args.config)
+        base_config.update(overrides)
+        print(f"Applied config overrides: {overrides}")
 
     print("=" * 70)
     print(f"Starting Lambda Sweep Worker")
