@@ -17,15 +17,18 @@ class PQN_CNN(nn.Module):
         else:
             normalize = lambda tensor: tensor
 
-        assert x.ndim in (3, 4), f"Input shape should be (H, W, C) or (B, H, W, C), got {x.shape}"
+        assert x.ndim >= 3, f"Input shape should have at least 3 dimensions (H, W, C), got {x.shape}"
         
         # 2. Extract leading batch dimensions generically (CNNTorso style)
-        # If 3D, batch_dims will be (1,) to preserve your existing init/unbatched code behavior.
-        # If 4D, batch_dims will be (B,) matching the incoming environment batch.
-        batch_dims = (x.shape[0],) if x.ndim == 4 else (1,)
-
         if x.ndim == 3:
+            batch_dims = (1,)
             x = x[None, ...]
+        elif x.ndim == 4:
+            batch_dims = (x.shape[0],)
+        else:
+            batch_dims = x.shape[:-3]
+            x = x.reshape(-1, *x.shape[-3:])
+
         x = nn.Conv(
             features=16,
             kernel_size=(3, 3),
@@ -62,10 +65,8 @@ class MLP(nn.Module):
         else:
             normalize = lambda tensor: tensor
         
-        assert x.ndim in (1, 2, 3), f"Input shape should be (D) or (B, D) or (L, B, D) got {x.shape}"
+        assert x.ndim >= 1, f"Input shape should have at least 1 dimension (D), got {x.shape}"
         
-        batch_dims = (x.shape[0],) if x.ndim == 2 else (1,)
-
         if x.ndim == 1: # add a batch dim.
             x = x[None, ...]
 

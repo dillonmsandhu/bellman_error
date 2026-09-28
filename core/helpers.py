@@ -381,9 +381,12 @@ def pi_loss_fn(params, network, traj_batch, gae, config):
 
 
 def ppo_clipped_v_loss(traj_batch, value_pred, targets, config):
-    e = config["VF_CLIP"]
+    e = config.get("VF_CLIP", None)
+    if e is None or e is False or (isinstance(e, (int, float)) and e <= 0):
+        return 0.5 * jnp.mean(jnp.square(value_pred - targets))
     value_pred_clipped = traj_batch.value + (
-        value_pred - traj_batch.value).clip(-e,e)
+        value_pred - traj_batch.value
+    ).clip(-e, e)
     value_losses = jnp.square(value_pred - targets)
     value_losses_clipped = jnp.square(value_pred_clipped - targets)
     return 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
@@ -614,10 +617,11 @@ def get_evaluation_policies(base_config, evaluator):
         # pi_eps already has shape (num_total_states, A), we just need to ensure the terminal state is uniform
         pi_eps = pi_eps.at[-1, :].set(jnp.ones(evaluator.num_actions) / evaluator.num_actions)
         return policy_fn, pi_eps
-    
     else:
         import core.utils as utils
-        model_dir = 'ppo/' + base_config['MODEL_LOAD_DIR']
+        from scripts.sweep_pipeline import resolve_model_load_dir
+        resolved_dir = resolve_model_load_dir(base_config.get('MODEL_LOAD_DIR'), base_config['ENV_NAME'], 'results')
+        model_dir = 'ppo/' + resolved_dir if not resolved_dir.startswith('ppo/') else resolved_dir
         print(model_dir)
         _, out = utils.load_run_data(model_dir, base_config['ENV_NAME'], 'results') 
         policy_train_state = out['runner_state'][0]
@@ -637,3 +641,472 @@ def get_evaluation_policies(base_config, evaluator):
         policy_matrix = jnp.vstack([pi_probs, terminal_policy])
         
         return policy_fn, policy_matrix
+
+
+# ==============================================================================
+# Sampled E and E(lambda) Critic Losses & Helpers
+# ==============================================================================
+
+def e_lambda_fixed_loss_fn(params, network, traj_batch, gae, targets, config):
+    """
+    Unclipped critic MSE loss + clipped PPO actor loss for E_lambda_fixed.
+    Targets are precomputed symmetrized E(lambda) targets.
+    """
+    value_pred = network.apply(params, traj_batch.obs, method=network.value)
+    value_loss = 0.5 * jnp.mean(jnp.square(value_pred - targets))
+    loss_actor, entropy = pi_loss_fn(params, network, traj_batch, gae, config)
+
+    total_loss = (
+        config.get("POLICY_COEFF", 1.0) * loss_actor
+        + config.get("VF_COEF", 0.5) * value_loss
+        - config.get("ENT_COEF", 0.01) * entropy
+    )
+    losses = {
+        "total_loss": total_loss,
+        "value_loss": value_loss,
+        "actor_loss": loss_actor,
+        "entropy": entropy,
+    }
+    return total_loss, losses
+
+
+def e_critic_loss(v_i, targets_i, v_j, targets_j, done, gamma):
+    """
+    Computes sampled E-loss (magnitude anchor + Dirichlet/Laplacian smoothness).
+    - For ongoing transitions and timeouts: smooths e_i against e_j.
+    - For true terminal transitions (done=True): absorbing state error is 0,
+      so (e_i - e_j)^2 = (e_i - 0)^2 = (r_T - v_T)^2, smoothing v_T directly to reward.
+    """
+    e_i = targets_i - v_i
+    e_j = jnp.where(done, 0.0, targets_j - v_j)
+
+    magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
+    laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
+
+    value_loss = magnitude_loss + laplacian_loss
+    return value_loss, magnitude_loss, laplacian_loss
+
+
+def e_loss_fn(
+    params,
+    network,
+    obs,
+    action,
+    log_prob_old,
+    next_obs,
+    done,
+    next_target,
+    advantages,
+    targets,
+    config,
+):
+    """
+    Combined loss for PPO with Sampled E critic.
+    """
+    # 1. Actor Loss (PPO clipped surrogate)
+    pi = network.apply(params, obs, method=network.policy)
+    log_prob = pi.log_prob(action)
+    entropy = pi.entropy().mean()
+    ratio = jnp.exp(log_prob - log_prob_old)
+
+    adv_norm = post_process_advantage(advantages, config)
+    surr1 = ratio * adv_norm
+    surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * adv_norm
+    actor_loss = -jnp.minimum(surr1, surr2).mean()
+
+    # 2. Critic Loss (Sampled E-loss)
+    gamma = config.get("GAMMA", 0.99)
+    v_i = network.apply(params, obs, method=network.value)
+    v_j = network.apply(params, next_obs, method=network.value)
+    # Terminal absorbing state has value 0
+    v_j = jnp.where(done, 0.0, v_j)
+
+    value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
+        v_i, targets, v_j, next_target, done, gamma
+    )
+
+    total_loss = (
+        config.get("POLICY_COEFF", 1.0) * actor_loss
+        + config.get("VF_COEF", 0.5) * value_loss
+        - config.get("ENT_COEF", 0.01) * entropy
+    )
+    losses = {
+        "total_loss": total_loss,
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "laplacian_loss": laplacian_loss,
+        "actor_loss": actor_loss,
+        "entropy": entropy,
+    }
+    return total_loss, losses
+
+
+def calculate_e_lambda_targets(
+    traj_batch,
+    gamma: float,
+    lmbda: float,
+    return_lambda: float = 1.0,
+    next_value_T: jnp.ndarray = None,
+):
+    """
+    Computes scalar value regression targets for the symmetrized E(lambda) objective
+    using forward and backward error traces:
+        y_t = G_t - sg[ 0.5 * gamma * (1 - lambda) * (e_{>t} + e_{<t}) ]
+    """
+    # 1. Baseline returns G_t and errors e_t = G_t - v_t
+    _, returns = calculate_gae(traj_batch, gamma, return_lambda)
+    errors = returns - traj_batch.value
+    gl = gamma * lmbda
+
+    is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
+    true_terminal = traj_batch.done & ~is_timeout
+    done_f = traj_batch.done.astype(jnp.float32)
+    true_term_f = true_terminal.astype(jnp.float32)
+
+    # Continuation error at rollout buffer boundary step T
+    if next_value_T is None:
+        next_value_T = traj_batch.next_value[-1]
+    e_T = jnp.where(true_terminal[-1], 0.0, traj_batch.next_value[-1] - next_value_T)
+    errors_ext = jnp.concatenate([errors, e_T[None]], axis=0)
+    e_next = errors_ext[1:]
+
+    # 2. Forward Trace: Accumulate future errors backwards in time
+    def _backward_pass(forward_trace, transition):
+        done_t, true_term_t, e_nxt = transition
+        valid_future = 1.0 - done_t
+        trace_t = jnp.where(
+            true_term_t > 0.5,
+            0.0,
+            e_nxt + gl * valid_future * forward_trace,
+        )
+        return trace_t, trace_t
+
+    init_forward = jnp.zeros_like(errors[0])
+    _, forward_traces = jax.lax.scan(
+        _backward_pass,
+        init_forward,
+        (done_f, true_term_f, e_next),
+        reverse=True,
+    )
+
+    # 3. Backward Trace: Accumulate past errors forwards in time
+    prev_done = jnp.roll(done_f, shift=1, axis=0).at[0].set(1.0)
+    e_prev = jnp.roll(errors, shift=1, axis=0).at[0].set(0.0)
+
+    def _forward_pass(backward_trace, transition):
+        p_done, e_prv = transition
+        trace_t = (1.0 - p_done) * (e_prv + gl * backward_trace)
+        return trace_t, trace_t
+
+    init_backward = jnp.zeros_like(errors[0])
+    _, backward_traces = jax.lax.scan(
+        _forward_pass,
+        init_backward,
+        (prev_done, e_prev),
+        reverse=False,
+    )
+
+    # 4. Construct Symmetrized E(lambda) scalar regression targets
+    coeff = 0.5 * gamma * (1.0 - lmbda)
+    smoothing_correction = coeff * (forward_traces + backward_traces)
+    targets = returns - jax.lax.stop_gradient(smoothing_correction)
+
+    diagnostics = {
+        "returns": returns,
+        "errors": errors,
+        "forward_traces": forward_traces,
+        "backward_traces": backward_traces,
+        "correction": smoothing_correction,
+    }
+    return targets, diagnostics
+
+
+def e_lambda_differentiable_critic_loss(
+    values,
+    targets,
+    dones,
+    gamma: float,
+    lmbda: float,
+    true_terminals=None,
+    next_value_T=None,
+    next_target_T=None,
+):
+    """
+    Computes differentiable E(lambda) loss using backward moment traces (Method 2).
+    Backpropagates through both values v(s_t) and future values v(s_{t+k+1}).
+    """
+    if true_terminals is None:
+        true_terminals = dones
+    if next_value_T is None:
+        next_value_T = jnp.zeros_like(values[0])
+    if next_target_T is None:
+        next_target_T = jnp.zeros_like(targets[0])
+
+    errors = targets - values
+    gl = gamma * lmbda
+    done_f = dones.astype(jnp.float32)
+    true_term_f = true_terminals.astype(jnp.float32)
+
+    # Continuation error at rollout buffer boundary step T
+    e_T = jnp.where(true_terminals[-1], 0.0, next_target_T - next_value_T)
+    errors_ext = jnp.concatenate([errors, e_T[None]], axis=0)
+    e_next = errors_ext[1:]
+
+    def _moment_step(traces, transition):
+        w0_future, w1_future, w2_future = traces
+        done_t, true_term_t, e_curr, e_nxt = transition
+
+        valid_future = 1.0 - done_t
+
+        w0_t = jnp.where(true_term_t > 0.5, 1.0, 1.0 + gl * valid_future * w0_future)
+        w1_t = jnp.where(true_term_t > 0.5, 0.0, e_nxt + gl * valid_future * w1_future)
+        w2_t = jnp.where(true_term_t > 0.5, 0.0, (e_nxt ** 2) + gl * valid_future * w2_future)
+
+        # Dirichlet quadratic expansion: w0 * e_t^2 - 2 * w1 * e_t + w2
+        dirichlet_t = w0_t * (e_curr ** 2) - 2.0 * w1_t * e_curr + w2_t
+
+        # Traces passed backward to step t-1 are severed if episode ended (done_t == 1)
+        valid_to_prev = 1.0 - done_t
+        w0_to_prev = valid_to_prev * w0_t
+        w1_to_prev = valid_to_prev * w1_t
+        w2_to_prev = valid_to_prev * w2_t
+
+        return (w0_to_prev, w1_to_prev, w2_to_prev), dirichlet_t
+
+    init_traces = (
+        jnp.zeros_like(errors[0]),
+        jnp.zeros_like(errors[0]),
+        jnp.zeros_like(errors[0]),
+    )
+    _, dirichlet_terms = jax.lax.scan(
+        _moment_step,
+        init_traces,
+        (done_f, true_term_f, errors, e_next),
+        reverse=True,
+    )
+
+    magnitude_weight = (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
+    dirichlet_weight = 0.5 * gamma * (1.0 - lmbda)
+
+    magnitude_loss = magnitude_weight * jnp.mean(errors ** 2)
+    dirichlet_loss = dirichlet_weight * jnp.mean(dirichlet_terms)
+    value_loss = magnitude_loss + dirichlet_loss
+
+    return value_loss, magnitude_loss, dirichlet_loss
+
+
+def shuffle_and_batch_envs(rng, batch, n_minibatches):
+    """
+    Shuffles environments (columns) and splits into minibatches,
+    preserving full trajectory sequences along the time axis (axis 0).
+    """
+    sample_leaf = jax.tree.leaves(batch)[0]
+    num_envs = sample_leaf.shape[1]
+    n_minibatches = max(1, min(n_minibatches, num_envs))
+    env_per_mb = num_envs // n_minibatches
+
+    perm = jax.random.permutation(rng, num_envs)
+
+    def _split_leaf(x):
+        x_shuffled = jnp.take(x, perm, axis=1)
+        x_trimmed = x_shuffled[:, : env_per_mb * n_minibatches]
+        reshaped = x_trimmed.reshape(x.shape[0], n_minibatches, env_per_mb, *x.shape[2:])
+        return jnp.swapaxes(reshaped, 0, 1)
+
+    return jax.tree.map(_split_leaf, batch)
+
+
+def e_lambda_differentiable_loss_fn(
+    params,
+    network,
+    traj_batch,
+    advantages,
+    returns,
+    config,
+):
+    """
+    Combined PPO loss with Method 2 differentiable E(lambda) critic loss.
+    """
+    loss_actor, entropy = pi_loss_fn(params, network, traj_batch, advantages, config)
+
+    values = network.apply(params, traj_batch.obs, method=network.value)
+    gamma = config.get("GAMMA", 0.99)
+    e_lambda = config.get("VALUE_LAMBDA", config.get("E_LAMBDA", 0.0))
+
+    # Boundary continuation at step T
+    next_value_T = network.apply(params, traj_batch.next_obs[-1], method=network.value)
+    next_target_T = traj_batch.next_value[-1]
+
+    # Terminals vs Timeouts
+    is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
+    true_terminal = traj_batch.done & ~is_timeout
+
+    value_loss, magnitude_loss, dirichlet_loss = e_lambda_differentiable_critic_loss(
+        values=values,
+        targets=returns,
+        dones=traj_batch.done,
+        gamma=gamma,
+        lmbda=e_lambda,
+        true_terminals=true_terminal,
+        next_value_T=next_value_T,
+        next_target_T=next_target_T,
+    )
+
+    total_loss = (
+        config.get("POLICY_COEFF", 1.0) * loss_actor
+        + config.get("VF_COEF", 0.5) * value_loss
+        - config.get("ENT_COEF", 0.01) * entropy
+    )
+
+    losses = {
+        "total_loss": total_loss,
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "dirichlet_loss": dirichlet_loss,
+        "actor_loss": loss_actor,
+        "entropy": entropy,
+    }
+    return total_loss, losses
+
+
+def e_lambda_geometric_critic_loss(
+    values,
+    targets,
+    dones,
+    gamma: float,
+    lmbda: float,
+    rng: jax.Array,
+    true_terminals=None,
+    next_value_T=None,
+    next_target_T=None,
+):
+    """
+    Computes sampled E(lambda) critic loss by sampling lookahead horizon skips
+    K ~ Geometric(1 - gamma * lambda) directly from the compound transition matrix
+    P_lambda = (1 - gamma * lambda) * sum_{k=0}^infty (gamma * lambda)^k P^{k+1} (Method 3).
+    """
+    if true_terminals is None:
+        true_terminals = dones
+    if next_value_T is None:
+        next_value_T = jnp.zeros_like(values[0])
+    if next_target_T is None:
+        next_target_T = jnp.zeros_like(targets[0])
+
+    T, B = targets.shape[:2]
+    errors = targets - values
+    gl = gamma * lmbda
+
+    # Continuation error at rollout buffer boundary step T
+    e_T = jnp.where(true_terminals[-1], 0.0, next_target_T - next_value_T)
+    errors_ext = jnp.concatenate([errors, e_T[None]], axis=0)
+
+    # 1. Sample jump lengths K ~ Geometric(1 - gl) with K >= 0
+    # For gl < 1e-6 (e.g. lambda = 0), K = 0 deterministically
+    u = jax.random.uniform(rng, shape=(T, B))
+    safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
+    jumps = jnp.where(
+        gl < 1e-6,
+        jnp.zeros((T, B), dtype=jnp.int32),
+        jnp.floor(jnp.log(jnp.clip(1.0 - u, 1e-8, 1.0)) / jnp.log(safe_gl)).astype(jnp.int32),
+    )
+    jumps = jnp.maximum(jumps, 0)
+
+    # 2. Target lookahead index and episode boundary masking
+    t_arr = jnp.arange(T)[:, None]
+    target_idx = t_arr + jumps + 1
+    within_chunk = target_idx <= T
+    t_clamped = jnp.minimum(target_idx, T)
+
+    t_prev = jnp.minimum(t_arr + jumps, T - 1)
+    done_cumsum = jnp.cumsum(dones.astype(jnp.int32), axis=0)
+    has_reset_between = (
+        jnp.take_along_axis(done_cumsum, t_prev, axis=0) - done_cumsum
+    ) > 0
+
+    valid_jump = within_chunk & (~has_reset_between)
+    e_jump = jnp.take_along_axis(errors_ext, t_clamped, axis=0)
+
+    is_timeout = dones & (~true_terminals)
+    diff_sq = jnp.where(
+        true_terminals,
+        errors ** 2,
+        jnp.where(
+            is_timeout,
+            jnp.where(jumps == 0, (errors - e_jump) ** 2, 0.0),
+            jnp.where(valid_jump, (errors - e_jump) ** 2, 0.0),
+        ),
+    )
+
+    # 4. Weighting
+    tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
+    magnitude_weight = (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
+    dirichlet_weight = 0.5 * tilde_gamma
+
+    magnitude_loss = magnitude_weight * jnp.mean(errors ** 2)
+    dirichlet_loss = dirichlet_weight * jnp.mean(diff_sq)
+    value_loss = magnitude_loss + dirichlet_loss
+
+    return value_loss, magnitude_loss, dirichlet_loss
+
+
+def e_lambda_geometric_loss_fn(
+    params,
+    network,
+    traj_batch,
+    advantages,
+    returns,
+    config,
+    rng,
+):
+    """
+    Combined PPO loss with Method 3 sampled geometric E(lambda) critic loss.
+    """
+    loss_actor, entropy = pi_loss_fn(params, network, traj_batch, advantages, config)
+
+    values = network.apply(params, traj_batch.obs, method=network.value)
+    gamma = config.get("GAMMA", 0.99)
+    e_lambda = config.get("VALUE_LAMBDA", config.get("E_LAMBDA", 0.0))
+
+    # Boundary continuation at step T
+    next_value_T = network.apply(params, traj_batch.next_obs[-1], method=network.value)
+    next_target_T = traj_batch.next_value[-1]
+
+    # Terminals vs Timeouts
+    is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
+    true_terminal = traj_batch.done & ~is_timeout
+
+    value_loss, magnitude_loss, dirichlet_loss = e_lambda_geometric_critic_loss(
+        values=values,
+        targets=returns,
+        dones=traj_batch.done,
+        gamma=gamma,
+        lmbda=e_lambda,
+        rng=rng,
+        true_terminals=true_terminal,
+        next_value_T=next_value_T,
+        next_target_T=next_target_T,
+    )
+
+    total_loss = (
+        config.get("POLICY_COEFF", 1.0) * loss_actor
+        + config.get("VF_COEF", 0.5) * value_loss
+        - config.get("ENT_COEF", 0.01) * entropy
+    )
+
+    losses = {
+        "total_loss": total_loss,
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "dirichlet_loss": dirichlet_loss,
+        "actor_loss": loss_actor,
+        "entropy": entropy,
+    }
+    return total_loss, losses
+
+
+# Re-export compute_runtime_metrics for convenience
+try:
+    from core.runtime_metrics import compute_runtime_metrics
+except ImportError:
+    pass
+

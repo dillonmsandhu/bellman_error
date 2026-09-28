@@ -20,7 +20,7 @@ def _(alpha, theta):
     R = np.array(R)
     gamma = 0.99
     def T(v):
-        R + gamma * P @ v
+        return R + gamma * P @ v
 
     Q = [ 
         [1, 0.5, 1.5 ],
@@ -57,7 +57,7 @@ def _(alpha, theta):
         return scipy.linalg.expm(matrix_exponent) @ v0
 
     # Initial condition v0 = <(1,1,1), J0 > =0, so v0 must sum to 0
-    return A, D, I, P, Q, gamma, get_v, np, plt
+    return A, D, I, P, Q, T, gamma, get_v, np, plt
 
 
 @app.cell
@@ -122,7 +122,67 @@ def _(get_v, np, plt):
 
 
 @app.cell
-def _(A, D, I, P, Q, gamma, get_v, np):
+def _(I, P, Q, gamma, get_v, np, plt):
+    def plot_bellman_opp(eps=0.01, theta_max=6.0, steps=300):
+        # 1. Define v0 orthogonal to [1,1,1] 
+        v0 = np.array([1.0, -1.0, 0.0])
+
+        # 2. Generate the trajectory of v over a range of theta values
+        thetas = np.linspace(-20, theta_max, steps)
+        v_traj = np.array([get_v(theta, eps, v0) for theta in thetas])
+
+        # 3. Create an orthonormal basis for the plane {v in R^3 | e'v = 0}
+        u1 = np.array([1, -1, 0]) / np.sqrt(2)
+        u2 = np.array([1, 1, -2]) / np.sqrt(6)
+
+        # 4. Project the 3D trajectory onto our 2D basis
+        x_proj = v_traj @ u1
+        y_proj = v_traj @ u2
+
+        # Find the index closest to theta = 0 to accurately place the start marker
+        idx_zero = np.argmin(np.abs(thetas))
+
+        # 5. Create a 1x2 grid for the subplots
+        fig, ax1= plt.subplots(1, 1, figsize=(8, 8))
+
+        # --- Plot 1: 2D Spiral Projection ---
+        ax1.plot(x_proj, y_proj, color='blue', label=r'Representable functions $v(\theta)$')
+        ax1.scatter(x_proj[idx_zero], y_proj[idx_zero], color='red', zorder=5, label=r'$v_0$ (Start, $\theta=0$)')
+
+        ax1.set_title('Divergent Spiral of the Nonlinear Function Approximator')
+        ax1.set_xlabel('Orthogonal Basis Direction 1')
+        ax1.set_ylabel('Orthogonal Basis Direction 2')
+        ax1.axhline(0, color='grey', linestyle='--', linewidth=1)
+        ax1.axvline(0, color='grey', linestyle='--', linewidth=1)
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        ax1.axis('equal') 
+
+        v_start = v0
+        x_proj = v0 @ u1
+        y_proj = v0 @ u2
+        # P, Q, I, gamma should be accessible in your broader scope
+        L = np.linalg.inv(I - gamma * 0 * P)
+        delta = -L @ (I - gamma * P) @ v_start
+        dv = (Q + eps * I) @ v_start
+
+        start_2d = np.array([x_proj, y_proj])
+        delta_2d = np.array([delta @ u1, delta @ u2])
+        dv_2d = np.array([dv @ u1, dv @ u2])
+
+        ax1.quiver(*start_2d, *delta_2d, angles='xy', scale_units='xy', scale=1, 
+                       color='purple', label=r'Bellman Error ($\delta$)', zorder=6, width=0.005)
+
+
+        plt.tight_layout()
+        plt.show()
+    # Run the visualization
+    plot_bellman_opp(0.2, 10)
+    return
+
+
+@app.cell
+def _(A, D, I, P, Q, T, gamma, get_v, np):
     def trace_E_grad_descent(theta_init, alpha, lam, eps, v0, steps=1000):
         theta = theta_init
         trajectory_theta = []
@@ -158,6 +218,7 @@ def _(A, D, I, P, Q, gamma, get_v, np):
         trajectory_theta = []
         trajectory_v = []
         trajectory_loss = []
+        trajectory_mc = []
 
         L = np.linalg.inv(I - gamma * lam * P)
         LA = L @ A
@@ -171,11 +232,16 @@ def _(A, D, I, P, Q, gamma, get_v, np):
             dv = (Q + eps * I) @ v
 
             # Expected TD update
+            # expected_update = -dv.T @ LA @ v
             expected_update = -dv.T @ LA @ v
 
-            # Record the MSPBE
-            mspbe = (expected_update ** 2) / (dv.T @ dv)
+            # Record the MSPBE (D-weighted)
+            mspbe = (expected_update ** 2) / (dv.T @ D @ dv)
             trajectory_loss.append(mspbe)
+
+            # Record the MC error: ||v - v*||_D^2 = v^T D v (since v* = 0)
+            mc_err = v.T @ D @ v
+            trajectory_mc.append(mc_err)
 
             theta = theta + alpha * expected_update
 
@@ -183,12 +249,24 @@ def _(A, D, I, P, Q, gamma, get_v, np):
             vt = get_v(t, eps, v0)
             dvt = (Q + eps * I) @ vt
             update = -dvt.T @ LA @ vt
-            return (update ** 2) / (dvt.T @ dvt)
+            return (update ** 2) / (dvt.T @ D @ dvt)
 
-        return trajectory_theta, np.array(trajectory_v), trajectory_loss, loss_fn, "MSPBE"
+        def mc_loss_fn(t):
+            vt = get_v(t, eps, v0)
+            return vt.T @ D @ vt
+
+        return (
+            trajectory_theta,
+            np.array(trajectory_v),
+            trajectory_loss,
+            loss_fn,
+            "MSPBE",
+            trajectory_mc,
+            mc_loss_fn,
+        )
 
 
-    def trace_partially_fitted_vi(theta_init, alpha, lam, eps, v0, steps=1000, inner_steps=20):
+    def trace_partially_fitted_vi(theta_init, alpha, lam, eps, v0, steps=100, inner_steps=200):
         theta = theta_init
         trajectory_theta = []
         trajectory_v = []
@@ -205,7 +283,7 @@ def _(A, D, I, P, Q, gamma, get_v, np):
             if step % inner_steps == 0:
                 v_target = get_v(theta, eps, v0)
                 y = v_target - L @ (I - gamma * P) @ v_target
-    
+
             trajectory_theta.append(theta)
             v = get_v(theta, eps, v0)
             trajectory_v.append(v)
@@ -222,6 +300,46 @@ def _(A, D, I, P, Q, gamma, get_v, np):
             return 0.5 * np.sum((vt - y0)**2)
 
         return trajectory_theta, np.array(trajectory_v), trajectory_loss, loss_fn, "FVI Euclidean Loss (Initial Target)"
+
+    def trace_bem(theta_init, alpha, lam, eps, v0, steps=1000):
+        theta = theta_init
+        trajectory_theta = []
+        trajectory_v = []
+        trajectory_loss = []
+
+        # Resolvent matrix for compound Bellman error (if lam > 0)
+        L = np.linalg.inv(I - gamma * lam * P)
+
+        for step in range(steps):
+            trajectory_theta.append(theta)
+            v = get_v(theta, eps, v0)
+            trajectory_v.append(v)
+
+            # Compound Bellman residual: delta_lam = L @ (T(v) - v)
+            delta = L @ (T(v) - v)
+
+            # D-weighted MSBE loss: delta^T D delta
+            loss = delta.T @ D @ delta
+            trajectory_loss.append(loss)
+
+            # Value derivative w.r.t theta
+            dv = (Q + eps * I) @ v
+
+            # Residual derivative w.r.t theta: d(delta)/d(theta)
+            d_delta = L @ (gamma * P @ dv - dv)
+
+            # True gradient of MSBE: 2 * d(delta)^T D delta
+            grad = 2.0 * d_delta.T @ D @ delta
+
+            theta = theta - alpha * grad
+
+        def loss_fn(t):
+            vt = get_v(t, eps, v0)
+            dt = L @ (T(vt) - vt)
+            return dt.T @ D @ dt
+
+        loss_name = "Bellman Error (MSBE)" if lam == 0 else f"{lam}-Bellman Error"
+        return trajectory_theta, np.array(trajectory_v), trajectory_loss, loss_fn, loss_name
 
 
     def trace_MSPBE_grad_descent(theta_init, alpha, lam, eps, v0, steps=1000):
@@ -275,18 +393,44 @@ def _(A, D, I, P, Q, gamma, get_v, np):
     return (
         trace_E_grad_descent,
         trace_MSPBE_grad_descent,
+        trace_bem,
         trace_expected_td_lambda,
         trace_partially_fitted_vi,
     )
 
 
 @app.cell
-def _(I, P, Q, gamma, get_v, np, plt):
+def _(D, I, P, Q, gamma, get_v, np, plt):
 
-    def visualize_dynamics(update_fn, theta_init=0, alpha=0.1, lam=0, eps=0.1, v0=np.array([1.0, -0.5, -0.5]), steps=10000, show_bellman_error=False, show_projection=False, **kwargs):
+    def visualize_dynamics(
+        update_fn,
+        theta_init=0,
+        alpha=0.1,
+        lam=0,
+        eps=0.1,
+        v0=np.array([1.0, -0.5, -0.5]),
+        steps=10000,
+        show_bellman_error=False,
+        show_projection=False,
+        show_mc_error=None,
+        **kwargs
+    ):
 
-        # Run the numerical trace (unpacking the 5 returned values)
-        thetas, vs, losses, loss_fn, loss_name = update_fn(theta_init, alpha, lam, eps, v0, steps, **kwargs)
+        # Run the numerical trace (unpacking returned values)
+        res = update_fn(theta_init, alpha, lam, eps, v0, steps, **kwargs)
+        thetas, vs, losses, loss_fn, loss_name = res[:5]
+
+        if len(res) >= 7:
+            mc_losses = res[5]
+            mc_loss_fn = res[6]
+        else:
+            mc_losses = [v.T @ D @ v for v in vs]
+            def mc_loss_fn(t):
+                vt = get_v(t, eps, v0)
+                return vt.T @ D @ vt
+
+        if show_mc_error is None:
+            show_mc_error = (loss_name == "MSPBE")
 
         # Projection basis for the 2D spiral plane
         u1 = np.array([1, -1, 0]) / np.sqrt(2)
@@ -296,7 +440,10 @@ def _(I, P, Q, gamma, get_v, np, plt):
         y_proj = vs @ u2
 
         # Plotting
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
+        if show_mc_error:
+            fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(24, 6))
+        else:
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
 
         # --- Plot 1: Theta vs Update Steps ---
         ax1.plot(range(len(thetas)), thetas, color='blue', linewidth=2)
@@ -305,6 +452,7 @@ def _(I, P, Q, gamma, get_v, np, plt):
         ax1.set_ylabel(r'$\theta$')
         ax1.grid(True, alpha=0.3)
         min_theta = min(-20, min(thetas) - 2)
+
         # --- Plot 2: Value Function Trajectory on the Spiral ---
         bg_thetas = np.linspace(min_theta, max(thetas) + 2, 10000)
         bg_vs = np.array([get_v(t, eps, v0) for t in bg_thetas])
@@ -321,12 +469,12 @@ def _(I, P, Q, gamma, get_v, np, plt):
             dv = (Q + eps * I) @ v_start
             scalar_proj = (dv.T @ delta) / (dv.T @ dv)
             pi_delta = scalar_proj * dv
-    
+
             start_2d = np.array([x_proj[0], y_proj[0]])
             delta_2d = np.array([delta @ u1, delta @ u2])
             pi_delta_2d = np.array([pi_delta @ u1, pi_delta @ u2])
             dv_2d = np.array([dv @ u1, dv @ u2])
-    
+
             if show_bellman_error:
                 ax2.quiver(*start_2d, *delta_2d, angles='xy', scale_units='xy', scale=1, 
                            color='purple', label=r'Bellman Error ($\delta$)', zorder=6, width=0.005)
@@ -351,7 +499,9 @@ def _(I, P, Q, gamma, get_v, np, plt):
         # Cap upper bound for visualization if standard TD/FVI shoots to infinity
         if max_t_plot > 20: 
             max_t_plot = 20 
-    
+        if min_t_plot < -25:
+            min_t_plot = -25
+
         grid_thetas = np.linspace(min_t_plot, max_t_plot, 1000)
         grid_losses = [loss_fn(t) for t in grid_thetas]
 
@@ -368,45 +518,177 @@ def _(I, P, Q, gamma, get_v, np, plt):
         ax3.legend()
         ax3.grid(True, alpha=0.3)
 
+        # --- Plot 4: MC Error Loss Landscape (Optional) ---
+        if show_mc_error:
+            grid_mc = [mc_loss_fn(t) for t in grid_thetas]
+
+            ax4.plot(grid_thetas, grid_mc, color='green', alpha=0.5, linewidth=2, label='MC Error Surface')
+            ax4.plot(thetas, mc_losses, color='purple', linewidth=2, marker='.', markersize=4, label='Algorithm Path')
+            ax4.scatter(thetas[0], mc_losses[0], color='black', zorder=5, s=50, label='Start')
+
+            ax4.set_title(r'Loss Landscape: MC Error ($\|v-v^*\|_D^2$)')
+            ax4.set_xlabel(r'$\theta$')
+            ax4.set_ylabel('Objective Value')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
         plt.tight_layout()
         plt.show()
 
-    return (visualize_dynamics,)
+
+
+    def visualize_dynamics_no_loss(
+        update_fn,
+        theta_init=0,
+        alpha=0.1,
+        lam=0,
+        eps=0.1,
+        v0=np.array([1.0, -0.5, -0.5]),
+        steps=10000,
+        show_bellman_error=False,
+        show_projection=False,
+        show_mc_error=None,
+        **kwargs
+    ):
+
+        # Run the numerical trace (unpacking returned values)
+        res = update_fn(theta_init, alpha, lam, eps, v0, steps, **kwargs)
+        thetas, vs, losses, loss_fn, loss_name = res[:5]
+
+        if len(res) >= 7:
+            mc_losses = res[5]
+            mc_loss_fn = res[6]
+        else:
+            mc_losses = [v.T @ D @ v for v in vs]
+            def mc_loss_fn(t):
+                vt = get_v(t, eps, v0)
+                return vt.T @ D @ vt
+
+        if show_mc_error is None:
+            show_mc_error = (loss_name == "MSPBE")
+
+        # Projection basis for the 2D spiral plane
+        u1 = np.array([1, -1, 0]) / np.sqrt(2)
+        u2 = np.array([1, 1, -2]) / np.sqrt(6)
+
+        x_proj = vs @ u1
+        y_proj = vs @ u2
+
+        # Plotting
+        if show_mc_error:
+            fig, (ax1, ax2, ax4) = plt.subplots(1, 3, figsize=(24, 6))
+        else:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+
+        # --- Plot 1: Theta vs Update Steps ---
+        ax1.plot(range(len(thetas)), thetas, color='blue', linewidth=2)
+        ax1.set_title(r'Parameter $\theta$ over Time')
+        ax1.set_xlabel('Expected Update Steps')
+        ax1.set_ylabel(r'$\theta$')
+        ax1.grid(True, alpha=0.3)
+        min_theta = min(-20, min(thetas) - 2)
+
+        # --- Plot 2: Value Function Trajectory on the Spiral ---
+        bg_thetas = np.linspace(min_theta, max(thetas) + 2, 10000)
+        bg_vs = np.array([get_v(t, eps, v0) for t in bg_thetas])
+
+        ax2.plot(bg_vs @ u1, bg_vs @ u2, color='gray', linestyle='--', alpha=0.5, label='Representable Space')
+        ax2.plot(x_proj, y_proj, color='red', linewidth=2, label='Algorithm Path')
+        ax2.scatter(x_proj[0], y_proj[0], color='black', zorder=5, label='Start')
+
+        if show_bellman_error or show_projection:
+            v_start = vs[0]
+            # P, Q, I, gamma should be accessible in your broader scope
+            L = np.linalg.inv(I - gamma * lam * P)
+            delta = -L @ (I - gamma * P) @ v_start
+            dv = (Q + eps * I) @ v_start
+            scalar_proj = (dv.T @ delta) / (dv.T @ dv)
+            pi_delta = scalar_proj * dv
+
+            start_2d = np.array([x_proj[0], y_proj[0]])
+            delta_2d = np.array([delta @ u1, delta @ u2])
+            pi_delta_2d = np.array([pi_delta @ u1, pi_delta @ u2])
+            dv_2d = np.array([dv @ u1, dv @ u2])
+
+            if show_bellman_error:
+                ax2.quiver(*start_2d, *delta_2d, angles='xy', scale_units='xy', scale=1, 
+                           color='purple', label=r'Bellman Error ($\delta$)', zorder=6, width=0.005)
+            if show_projection:
+                ax2.quiver(*start_2d, *dv_2d, angles='xy', scale_units='xy', scale=1, 
+                           color='orange', alpha=0.3, label=r'Tangent ($dv$)', zorder=4, width=0.003)
+                ax2.quiver(*start_2d, *pi_delta_2d, angles='xy', scale_units='xy', scale=1, 
+                           color='green', label=r'Projected Error ($\Pi \delta$)', zorder=7, width=0.006)
+
+        ax2.set_title('Value Function on the Plane')
+        ax2.set_xlabel('Basis Direction 1')
+        ax2.set_ylabel('Basis Direction 2')
+        ax2.axis('equal')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+
+        # --- Plot 3: Objective Loss Landscape ---
+        # Define bounds to render a clean background landscape curve
+        min_t_plot = min(np.min(thetas) - 2, -15)
+        max_t_plot = max(np.max(thetas) + 2, 10)
+
+        # Cap upper bound for visualization if standard TD/FVI shoots to infinity
+        if max_t_plot > 20: 
+            max_t_plot = 20 
+        if min_t_plot < -25:
+            min_t_plot = -25
+
+        grid_thetas = np.linspace(min_t_plot, max_t_plot, 1000)
+        grid_losses = [loss_fn(t) for t in grid_thetas]
+
+        # --- Plot 4: MC Error Loss Landscape (Optional) ---
+        if show_mc_error:
+            grid_mc = [mc_loss_fn(t) for t in grid_thetas]
+
+            ax4.plot(grid_thetas, grid_mc, color='green', alpha=0.5, linewidth=2, label='MC Error Surface')
+            ax4.plot(thetas, mc_losses, color='purple', linewidth=2, marker='.', markersize=4, label='Algorithm Path')
+            ax4.scatter(thetas[0], mc_losses[0], color='black', zorder=5, s=50, label='Start')
+
+            ax4.set_title(r'Loss Landscape: MC Error ($\|v-v^*\|_D^2$)')
+            ax4.set_xlabel(r'$\theta$')
+            ax4.set_ylabel('Objective Value')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+    return visualize_dynamics, visualize_dynamics_no_loss
 
 
 @app.cell
-def _(trace_expected_td_lambda, visualize_dynamics):
+def _(trace_bem, visualize_dynamics):
+    # BEM
+    trace_bem
     #TD 0:
     # Run with updated defaults
-    visualize_dynamics(trace_expected_td_lambda, lam=0, alpha=0.01, steps = 1000, show_bellman_error=True, show_projection=True)
+    visualize_dynamics(trace_bem, lam=0, show_bellman_error=True, show_projection=True,show_mc_error=False)
     return
 
 
 @app.cell
-def _(trace_expected_td_lambda, visualize_dynamics):
-    # TD(lambda)
+def _(trace_expected_td_lambda, visualize_dynamics_no_loss):
+    #TD 0:
     # Run with updated defaults
-    visualize_dynamics(trace_expected_td_lambda, lam=0.9)
+    visualize_dynamics_no_loss(trace_expected_td_lambda, lam=0, alpha=0.01, steps = 1000, show_bellman_error=True, show_projection=True,show_mc_error=False)
     return
 
 
 @app.cell
-def _(trace_expected_td_lambda, visualize_dynamics):
+def _(trace_expected_td_lambda, visualize_dynamics_no_loss):
     #MC:
     # Run with updated defaults
-    visualize_dynamics(trace_expected_td_lambda, lam=1)
+    visualize_dynamics_no_loss(trace_expected_td_lambda, lam=1, show_mc_error=True)
     return
 
 
 @app.cell
 def _(trace_E_grad_descent, visualize_dynamics):
-    visualize_dynamics(trace_E_grad_descent, lam=0.0)
-    return
-
-
-@app.cell
-def _(trace_E_grad_descent, visualize_dynamics):
-    visualize_dynamics(trace_E_grad_descent, lam=0.9)
+    visualize_dynamics(trace_E_grad_descent, lam=0.0, show_mc_error=True)
     return
 
 
@@ -446,7 +728,8 @@ def _(trace_partially_fitted_vi, visualize_dynamics):
 
 
 @app.cell
-def _():
+def _(trace_partially_fitted_vi, visualize_dynamics):
+    visualize_dynamics(trace_partially_fitted_vi, lam=0.0, alpha=0.001, show_bellman_error=False)
     return
 
 

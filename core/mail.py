@@ -32,6 +32,10 @@ def email_results_file(filename, recipient='ds541@cs.duke.edu'):
             content_type = "image/gif"
         elif filename_lower.endswith(('.png', '.jpg', '.jpeg')):
             content_type = f"image/{'jpeg' if filename_lower.endswith('jpg') else filename_lower.split('.')[-1]}"
+        elif filename_lower.endswith('.zip'):
+            content_type = "application/zip"
+        elif filename_lower.endswith(('.tar.gz', '.tgz', '.gz')):
+            content_type = "application/gzip"
         else:
             content_type = "application/pdf"
 

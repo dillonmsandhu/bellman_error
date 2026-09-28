@@ -52,6 +52,10 @@ ALGO_REGISTRY = {
         "mc": "fixed_policy.mc",
         "monte_carlo": "fixed_policy.mc",
         "sampled_E": "fixed_policy.sampled_E",
+        "E": "fixed_policy.sampled_E",
+        "E_lambda_fixed": "fixed_policy.E_lambda_fixed",
+        "E_lambda_geometric": "fixed_policy.E_lambda_geometric",
+        "E_lambda_differentiable": "fixed_policy.E_lambda_differentiable",
         "unbiased_sampled_E": "fixed_policy.unbiased_sampled_E",
     },
     "random": {
@@ -71,6 +75,10 @@ ALGO_REGISTRY = {
         "mc": "random_policy.mc",
         "monte_carlo": "random_policy.mc",
         "sampled_E": "random_policy.sampled_E",
+        "E": "random_policy.sampled_E",
+        "E_lambda_fixed": "random_policy.E_lambda_fixed",
+        "E_lambda_geometric": "random_policy.E_lambda_geometric",
+        "E_lambda_differentiable": "random_policy.E_lambda_differentiable",
         "unbiased_sampled_E": "random_policy.unbiased_sampled_E",
     },
     "ppo": {
@@ -93,6 +101,10 @@ ALGO_REGISTRY = {
         "sampled_E": "ppo.sampled_E",
         "sampled_E_gd": "ppo.sampled_E",
         "E_min": "ppo.sampled_E",
+        "E": "ppo.sampled_E",
+        "E_lambda_fixed": "ppo.E_lambda_fixed",
+        "E_lambda_geometric": "ppo.E_lambda_geometric",
+        "E_lambda_differentiable": "ppo.E_lambda_differentiable",
         "td_lambda": "ppo.sampled_td_lambda",
         "td": "ppo.sampled_td_lambda",
         "sampled_td_lambda": "ppo.sampled_td_lambda",
@@ -128,6 +140,8 @@ def get_default_param_grid(
     actor_lr_list=None,
     gae_lambda_list=None,
     value_lambda_list=None,
+    e_lambda_list=None,
+    recompute_targets_list=None,
 ):
     """Returns sensible default parameter grids for standard and multi-param algorithms."""
     standard_lrs = lr_list if lr_list is not None else [1e-2, 5e-3, 1e-3, 5e-4, 1e-4]
@@ -139,23 +153,34 @@ def get_default_param_grid(
     if gae_lambda_list is not None and algo_name not in mc_algos:
         grid["GAE_LAMBDA"] = gae_lambda_list
     elif lambda_list is not None and algo_name in [
-        "td", "td_lambda", "sampled_td_lambda", "sampled_E", "sampled_E_gd", "E_min"
+        "td", "td_lambda", "sampled_td_lambda", "sampled_E", "sampled_E_gd", "E_min", "E"
     ]:
         grid["GAE_LAMBDA"] = lambda_list
 
-    # 2. Value lambda grid (for critic returns)
+    # 2. Value lambda grid (for critic returns and E(lambda) variants)
+    e_lambda_algos = [
+        "E_lambda_fixed", "E_lambda_geometric", "E_lambda_differentiable",
+        "ppo.E_lambda_fixed", "ppo.E_lambda_geometric", "ppo.E_lambda_differentiable",
+        "fixed_policy.E_lambda_fixed", "fixed_policy.E_lambda_geometric", "fixed_policy.E_lambda_differentiable",
+        "random_policy.E_lambda_fixed", "random_policy.E_lambda_geometric", "random_policy.E_lambda_differentiable",
+    ]
     if value_lambda_list is not None and algo_name not in mc_algos:
         grid["VALUE_LAMBDA"] = value_lambda_list
-    elif lambda_list is not None and "td_lambda" in algo_name and "GAE_LAMBDA" not in grid:
+    elif e_lambda_list is not None and (algo_name in e_lambda_algos or "E_lambda" in algo_name):
+        grid["VALUE_LAMBDA"] = e_lambda_list
+    elif lambda_list is not None and ("td_lambda" in algo_name or "E_lambda" in algo_name or algo_name in e_lambda_algos) and "GAE_LAMBDA" not in grid:
         reduced_lrs = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
         grid["LR"] = reduced_lrs
         grid["VALUE_LAMBDA"] = lambda_list
 
-    # 3. Defaults if neither was specified
+    if recompute_targets_list is not None and "E_lambda_fixed" in algo_name:
+        grid["RECOMPUTE_TARGETS_EACH_EPOCH"] = recompute_targets_list
+
+    # 4. Defaults if neither was specified
     if "GAE_LAMBDA" not in grid and "VALUE_LAMBDA" not in grid:
         if algo_name in ["td", "sampled_td_lambda"]:
             grid["GAE_LAMBDA"] = [0.1, 0.5, 0.9]
-        elif "td_lambda" in algo_name and algo_name not in ["mc", "monte_carlo"]:
+        elif ("td_lambda" in algo_name or "E_lambda" in algo_name or algo_name in e_lambda_algos) and algo_name not in mc_algos:
             grid["LR"] = [5e-3, 1e-3, 5e-4] if lr_list is None else lr_list
             grid["VALUE_LAMBDA"] = [0.1, 0.5, 0.9]
 
@@ -224,6 +249,8 @@ def run_sweep_pipeline(
     lambda_grid=None,
     gae_lambda_grid=None,
     value_lambda_grid=None,
+    e_lambda_grid=None,
+    recompute_targets_grid=None,
     custom_grids=None,
     config_overrides=None,
     base_save_dir="results",
@@ -352,6 +379,8 @@ def run_sweep_pipeline(
                 actor_lr_list=actor_lr_grid,
                 gae_lambda_list=gae_lambda_grid,
                 value_lambda_list=value_lambda_grid,
+                e_lambda_list=e_lambda_grid,
+                recompute_targets_list=recompute_targets_grid,
             )
 
         # Output folder for this specific algorithm inside the sweep root
@@ -486,6 +515,10 @@ def parse_args():
                         help="Custom GAE lambda grid for policy advantages (e.g. --gae-lambda-grid 0.9 0.99 1.0)")
     parser.add_argument("--value-lambda-grid", nargs="+", type=float, default=None,
                         help="Custom value lambda grid for critic returns (e.g. --value-lambda-grid 0.9 0.99 1.0)")
+    parser.add_argument("--e-lambda-grid", nargs="+", type=float, default=None,
+                        help="Custom E(lambda) decay grid for E_lambda algorithms (e.g. --e-lambda-grid 0.0 0.6 0.8 0.9 0.95)")
+    parser.add_argument("--recompute-targets-grid", nargs="+", default=None,
+                        help="Recompute targets each epoch for E_lambda_fixed (e.g. --recompute-targets-grid false true)")
     parser.add_argument("--custom-grids-json", type=str, default=None,
                         help="Path to JSON file specifying custom grids per algorithm")
     parser.add_argument("--config", type=str, default=None,
@@ -564,6 +597,8 @@ def main():
         lambda_grid=args.lambda_grid,
         gae_lambda_grid=args.gae_lambda_grid,
         value_lambda_grid=args.value_lambda_grid,
+        e_lambda_grid=args.e_lambda_grid,
+        recompute_targets_grid=[x.lower() == "true" if isinstance(x, str) else bool(x) for x in args.recompute_targets_grid] if args.recompute_targets_grid is not None else None,
         custom_grids=custom_grids,
         config_overrides=config_overrides,
         log_scale=log_scale,

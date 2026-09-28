@@ -221,3 +221,13 @@ __marimo__/
 *__pycache__*
 __pycache__/
 .aider*
+
+slurmslurm/
+.DS_Store
+*.DS_Store
+.agents/
+.vscode/
+.python-version.bak
+scratch/
+*.mp4
+*.gif

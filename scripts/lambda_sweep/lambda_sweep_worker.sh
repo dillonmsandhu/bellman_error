@@ -49,7 +49,8 @@ $PYTHON -m scripts.lambda_sweep.lambda_sweep_pipeline \
     --env-name "$ENV_NAME" \
     --policy "$POLICY_TYPE" \
     --algo "$ALGO" \
-    --sweep-id "$SWEEP_ID"
+    --sweep-id "$SWEEP_ID" \
+    "${@:5}"
 
 EXIT_CODE=$?
 

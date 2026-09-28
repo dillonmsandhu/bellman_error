@@ -48,15 +48,19 @@ def evaluate(run_config, make_train, run_dir, args, rng):
 
     def _extract_series(data):
         arr = _mean_over_seeds(data)
+        arr = jnp.squeeze(arr)
         if arr.ndim == 0:
             return arr[None]
         if arr.ndim == 1:
             return arr
+        return None
 
     def get_metric(name, slice_idx=0):
         if name not in metrics:
             return None
         series = _extract_series(metrics[name])
+        if series is None:
+            return None
         return series[slice_idx:]
 
     standard_plots = {
