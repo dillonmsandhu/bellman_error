@@ -1,8 +1,8 @@
 #!/bin/bash
 # ==============================================================================
-# Multi-GPU SLURM Sampled E(lambda) Sweep Launcher
+# Multi-GPU SLURM Sampled E(lambda) Sweep Launcher (SLURM Job Array)
 #
-# Loops over all 12 tasks (4 envs x 3 policies) and submits independent SLURM jobs
+# Loops over all 12 tasks (4 envs x 3 policies) and submits a single SLURM job array
 # for the 4 sampling implementations of E(lambda):
 #   1. sampled_E (E(0.0) original formulation)
 #   2. E_lambda_fixed (sweeping lambda in {0.0, 0.9})
@@ -25,14 +25,15 @@ DEFAULT_ALGOS=("sampled_E" "E_lambda_fixed" "E_lambda_geometric" "E_lambda_diffe
 PARTITION="compsci-gpu"
 TIME_LIMIT="4:00:00"
 GPU_GRES="gpu:a5000:1"
-WORKER_SCRIPT="scripts/lambda_sweep/lambda_sweep_worker.sh"
+WORKER_SCRIPT="scripts/lambda_sweep/lambda_sweep_array_worker.sh"
 DIAGNOSTICS_SCRIPT="scripts/lambda_sweep/sampled_lambda_diagnostics.sh"
 
-mkdir -p slurm
+mkdir -p slurm slurm/manifests
 
 DRY_RUN=false
 SWEEP_ID=$(date +"%Y%m%d_%H%M%S")
 LAMBDAS="0.0 0.9"
+MAX_CONCURRENT=10
 
 # ==============================================================================
 # Hard-coded Training Hyperparameters for Sampled E
@@ -40,9 +41,10 @@ LAMBDAS="0.0 0.9"
 NUM_EPOCHS=4
 MINIBATCH_SIZE=1024
 TOTAL_TIMESTEPS=1000000
-NUM_ENVS=64
-NUM_STEPS=256
-CONFIG="{\"NUM_ENVS\":$NUM_ENVS,\"NUM_STEPS\":$NUM_STEPS,\"TOTAL_TIMESTEPS\":$TOTAL_TIMESTEPS,\"MINIBATCH_SIZE\":$MINIBATCH_SIZE,\"NUM_EPOCHS\":$NUM_EPOCHS,\"LIGHT_METRICS\":true}"
+NUM_ENVS=128
+NUM_STEPS=128
+GAE_LAMBDA=0.8
+CONFIG="{\"NUM_ENVS\":$NUM_ENVS,\"NUM_STEPS\":$NUM_STEPS,\"TOTAL_TIMESTEPS\":$TOTAL_TIMESTEPS,\"MINIBATCH_SIZE\":$MINIBATCH_SIZE,\"NUM_EPOCHS\":$NUM_EPOCHS,\"LIGHT_METRICS\":true,\"GAE_LAMBDA\":$GAE_LAMBDA}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -55,112 +57,95 @@ for arg in "$@"; do
         --lambdas=*)
             LAMBDAS="${arg#*=}"
             ;;
+        --max-concurrent=*)
+            MAX_CONCURRENT="${arg#*=}"
+            ;;
         -h|--help)
-            echo "Usage: $0 [--dry-run] [--sweep-id=ID] [--lambdas=\"0.0 0.9\"]"
+            echo "Usage: $0 [--dry-run] [--sweep-id=ID] [--lambdas=\"0.0 0.9\"] [--max-concurrent=10]"
             exit 0
             ;;
     esac
 done
 
-echo "======================================================================"
-echo "SAMPLED E(LAMBDA) SWEEP DISPATCHER"
-echo "Sweep ID:     $SWEEP_ID"
-echo "Environments: ${DEFAULT_ENVS[*]}"
-echo "Policies:     ${DEFAULT_POLICIES[*]}"
-echo "Algorithms:   ${DEFAULT_ALGOS[*]}"
-echo "Lambdas:      $LAMBDAS"
-echo "Config:       $CONFIG"
-if [ "$DRY_RUN" = true ]; then
-    echo "Mode: DRY-RUN"
-else
-    echo "Mode: SLURM PARALLEL"
-fi
-echo "======================================================================"
-
-JOB_IDS=""
-SUBMITTED_COUNT=0
-MAX_CONCURRENT=10
-declare -a SUBMITTED_JOBS
-
+# Build task manifest (env policy algo lambdas...)
+TASKS=()
 for env in "${DEFAULT_ENVS[@]}"; do
     for policy in "${DEFAULT_POLICIES[@]}"; do
         for algo in "${DEFAULT_ALGOS[@]}"; do
-            
-            # sampled_E only implements lambda=0.0
             if [ "$algo" = "sampled_E" ]; then
                 ALGO_LAMBDAS="0.0"
             else
                 ALGO_LAMBDAS="$LAMBDAS"
             fi
-
-            JOB_NAME="samp_e_${env}_${policy}_${algo}"
-            LOG_OUT="slurm/%j_samp_e_${env}_${policy}_${algo}.out"
-            
-            DEP=""
-            if [ $SUBMITTED_COUNT -ge $MAX_CONCURRENT ]; then
-                DEP_JOB_IDX=$((SUBMITTED_COUNT - MAX_CONCURRENT))
-                DEP_JOB_ID=${SUBMITTED_JOBS[$DEP_JOB_IDX]}
-                DEP="--dependency=afterany:$DEP_JOB_ID"
-            fi
-            
-            SBATCH_CMD="sbatch \
-                $DEP \
-                --job-name=\"$JOB_NAME\" \
-                --output=\"$LOG_OUT\" \
-                --time=\"$TIME_LIMIT\" \
-                --partition=\"$PARTITION\" \
-                --gres=\"$GPU_GRES\" \
-                \"$WORKER_SCRIPT\" \"$env\" \"$policy\" \"$algo\" \"$SWEEP_ID\" --lambdas $ALGO_LAMBDAS --config '$CONFIG'"
-            
-            echo "--> Submitting: Env=$env, Policy=$policy, Algo=$algo (lambdas: $ALGO_LAMBDAS)"
-            
-            if [ "$DRY_RUN" = true ]; then
-                echo "    [DRY-RUN] Command: $SBATCH_CMD"
-            else
-                JOB_OUTPUT=$(eval "$SBATCH_CMD")
-                EXIT_CODE=$?
-                if [ $EXIT_CODE -eq 0 ]; then
-                    JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $NF}')
-                    echo "    Status: SUBMITTED (Job ID: $JOB_ID)"
-                    if [ -z "$JOB_IDS" ]; then
-                        JOB_IDS="$JOB_ID"
-                    else
-                        JOB_IDS="${JOB_IDS}:${JOB_ID}"
-                    fi
-                    SUBMITTED_JOBS+=($JOB_ID)
-                    SUBMITTED_COUNT=$((SUBMITTED_COUNT + 1))
-                else
-                    echo "    Status: FAILED"
-                fi
-            fi
+            TASKS+=("$env $policy $algo $ALGO_LAMBDAS")
         done
     done
 done
+NUM_TASKS=${#TASKS[@]}
+
+MANIFEST_FILE="slurm/manifests/tasks_lambda_${SWEEP_ID}.txt"
+printf "%s\n" "${TASKS[@]}" > "$MANIFEST_FILE"
 
 echo "======================================================================"
-if [ "$DRY_RUN" = false ]; then
-    echo "Successfully dispatched $SUBMITTED_COUNT SLURM jobs."
+echo "SAMPLED E(LAMBDA) SWEEP DISPATCHER (SLURM ARRAY)"
+echo "Sweep ID:       $SWEEP_ID"
+echo "Total Tasks:    $NUM_TASKS"
+echo "Max Concurrent: $MAX_CONCURRENT"
+echo "Lambdas:        $LAMBDAS"
+echo "GAE Lambda:     $GAE_LAMBDA"
+echo "Envs x Steps:   $NUM_ENVS x $NUM_STEPS"
+echo "Manifest:       $MANIFEST_FILE"
+echo "Config:         $CONFIG"
+if [ "$DRY_RUN" = true ]; then
+    echo "Mode:           DRY-RUN"
+else
+    echo "Mode:           SLURM BATCH ARRAY"
+fi
+echo "======================================================================"
+
+ARRAY_CMD="sbatch --parsable \
+    --array=0-$((NUM_TASKS - 1))%${MAX_CONCURRENT} \
+    --job-name=\"samp_e_${SWEEP_ID}\" \
+    --output=\"slurm/%A_%a.out\" \
+    --time=\"$TIME_LIMIT\" \
+    --partition=\"$PARTITION\" \
+    --gres=\"$GPU_GRES\" \
+    \"$WORKER_SCRIPT\" \"$MANIFEST_FILE\" \"$SWEEP_ID\" --config '$CONFIG'"
+
+if [ "$DRY_RUN" = true ]; then
+    echo "--> [DRY-RUN] Array Command:"
+    echo "$ARRAY_CMD"
+    echo ""
+    echo "--> [DRY-RUN] Chained Diagnostics Command:"
+    echo "sbatch --dependency=afterany:<ARRAY_JOB_ID> --job-name=\"samp_e_diag_${SWEEP_ID}\" --partition=\"$PARTITION\" \"$DIAGNOSTICS_SCRIPT\" \"$SWEEP_ID\""
+else
+    echo "--> Submitting SLURM Job Array (0-$((NUM_TASKS - 1))%${MAX_CONCURRENT})..."
+    ARRAY_JOB_ID=$(eval "$ARRAY_CMD")
+    EXIT_CODE=$?
     
-    # Dispatch Diagnostics Job
-    if [ ! -z "$JOB_IDS" ]; then
+    if [ $EXIT_CODE -eq 0 ] && [ -n "$ARRAY_JOB_ID" ]; then
+        echo "    Status: SUBMITTED (Array Job ID: $ARRAY_JOB_ID)"
+        echo "    Monitor progress: squeue -j $ARRAY_JOB_ID"
+        
+        echo ""
+        echo "Submitting chained diagnostics job (triggers after array $ARRAY_JOB_ID completes)..."
         DIAG_JOB_NAME="samp_e_diag_${SWEEP_ID}"
         DIAG_LOG_OUT="slurm/%j_samp_e_diag_${SWEEP_ID}.out"
+        
         DIAG_CMD="sbatch \
-            --dependency=afterany:$JOB_IDS \
+            --dependency=afterany:$ARRAY_JOB_ID \
             --job-name=\"$DIAG_JOB_NAME\" \
             --output=\"$DIAG_LOG_OUT\" \
             --time=\"01:00:00\" \
             --partition=\"$PARTITION\" \
             \"$DIAGNOSTICS_SCRIPT\" \"$SWEEP_ID\""
         
-        echo "--> Submitting Diagnostics Job with dependency on $SUBMITTED_COUNT jobs..."
         DIAG_OUTPUT=$(eval "$DIAG_CMD")
-        if [ $? -eq 0 ]; then
-            DIAG_ID=$(echo "$DIAG_OUTPUT" | awk '{print $NF}')
-            echo "    Diagnostics Job SUBMITTED (Job ID: $DIAG_ID)"
-        else
-            echo "    Failed to submit Diagnostics job."
-        fi
+        DIAG_JOB_ID=$(echo "$DIAG_OUTPUT" | awk '{print $NF}')
+        echo "Diagnostics job scheduled with Job ID: $DIAG_JOB_ID"
+    else
+        echo "    Status: FAILED ARRAY SUBMISSION (Exit code: $EXIT_CODE)"
+        exit 1
     fi
 fi
 echo "======================================================================"
