@@ -34,7 +34,12 @@ This suite evaluates and compares **Ground Truth PPO** and **Exact E(λ) PPO** a
 
 ### 1. Submit Full SLURM Array Job (Recommended)
 
-To launch all 4 environments across 8 seeds and exact settings:
+Submit the self-contained array job directly:
+```bash
+sbatch scripts/fourrooms_lambda_sweep/run_slurm_fourrooms_array.sh
+```
+
+Or use the submission dispatcher (which also schedules the chained plotting job):
 ```bash
 ./scripts/fourrooms_lambda_sweep/submit_fourrooms_array.sh
 ```
@@ -42,11 +47,6 @@ To launch all 4 environments across 8 seeds and exact settings:
 Preview commands without submitting:
 ```bash
 ./scripts/fourrooms_lambda_sweep/submit_fourrooms_array.sh --dry-run
-```
-
-Or submit directly via `sbatch`:
-```bash
-sbatch scripts/fourrooms_lambda_sweep/run_slurm_fourrooms_array.sh
 ```
 
 ### 2. Run Individual Sub-Jobs Locally
