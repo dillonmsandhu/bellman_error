@@ -32,7 +32,13 @@ def make_train(base_config):
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
-    n_actions = env.action_space(env_params).n
+    is_continuous = isinstance(env.action_space(env_params), spaces.Box)
+    if is_continuous:
+        action_shape = env.action_space(env_params).shape
+        n_actions = getattr(evaluator, "num_actions", action_shape[0])
+    else:
+        action_shape = ()
+        n_actions = env.action_space(env_params).n
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
@@ -55,7 +61,16 @@ def make_train(base_config):
 
                 rng, _rng = jax.random.split(rng)
                 value = network.apply(train_state.params, last_obs)
-                pi = distrax.Categorical(logits=jnp.zeros((config['NUM_ENVS'], n_actions)))
+                if is_continuous:
+                    pi = distrax.Independent(
+                        distrax.Uniform(
+                            low=jnp.full((config['NUM_ENVS'], *action_shape), -1.0),
+                            high=jnp.full((config['NUM_ENVS'], *action_shape), 1.0),
+                        ),
+                        reinterpreted_batch_ndims=1,
+                    )
+                else:
+                    pi = distrax.Categorical(logits=jnp.zeros((config['NUM_ENVS'], n_actions)))
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action)
 

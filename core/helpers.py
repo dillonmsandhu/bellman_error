@@ -14,7 +14,7 @@ from gymnax.environments import spaces
 from flax.core import unfreeze, freeze
 
 def create_evaluator(config, env=None, env_params=None):
-    from envs.fourrooms import FourRoomsExactValue
+    from envs.fourrooms import FourRoomsExactValue, FourRoomsDenseExactValue
     from envs.fourrooms_continuing import ContinuingFourRooms
     from envs.eightrooms import (
         EightRoomsExactValue,
@@ -28,13 +28,41 @@ def create_evaluator(config, env=None, env_params=None):
 
     env_name = config['ENV_NAME'].lower()
 
-    if env_name == 'fourrooms-misc':
+    if env_name in ['fourrooms', 'fourrooms-misc']:
         return FourRoomsExactValue(
             start_pos=getattr(env, 'pos_fixed', (3, 1)),
             goal_pos=getattr(env, 'goal_fixed', (11, 11)),
             fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
+    elif env_name in ['fourrooms-dense', 'fourrooms_dense', 'fourroomsdense', 'fourrooms-misc-dense']:
+        return FourRoomsDenseExactValue(
+            start_pos=getattr(env, 'pos_fixed', (3, 1)),
+            goal_pos=getattr(env, 'goal_fixed', (11, 11)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+    elif env_name in ['continuous-fourrooms', 'continuous_fourrooms', 'continuousfourrooms', 'continuous-fourrooms-misc', 'fourrooms-continuous']:
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        return FourRoomsExactValue(
+            start_pos=(3, 1),
+            goal_pos=(11, 11),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.0)),
+            gamma=config['GAMMA'],
+            use_visual_obs=use_visual,
+        )
+    elif env_name in ['continuous-fourrooms-dense', 'continuous_fourrooms_dense', 'continuousfourroomsdense', 'continuous-fourrooms-misc-dense', 'fourrooms-continuous-dense']:
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        return FourRoomsDenseExactValue(
+            start_pos=(3, 1),
+            goal_pos=(11, 11),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.0)),
+            gamma=config['GAMMA'],
+            use_visual_obs=use_visual,
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
         )
     elif env_name == 'fourrooms-cont':
         return ContinuingFourRooms(
@@ -78,6 +106,25 @@ def create_evaluator(config, env=None, env_params=None):
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
             potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
         )
+    elif env_name in ['continuous-eightrooms', 'continuous_eightrooms', 'continuouseightrooms', 'continuous-eightrooms-misc', 'eightrooms-continuous']:
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        return EightRoomsExactValue(
+            start_pos=(3, 1),
+            goal_pos=(23, 11),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.0)),
+            gamma=config['GAMMA'],
+            use_visual_obs=use_visual,
+        )
+    elif env_name in ['continuous-eightrooms-dense', 'continuous_eightrooms_dense', 'continuouseightroomsdense', 'continuous-eightrooms-misc-dense', 'eightrooms-continuous-dense']:
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        return EightRoomsDenseExactValue(
+            start_pos=(3, 1),
+            goal_pos=(23, 11),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.0)),
+            gamma=config['GAMMA'],
+            use_visual_obs=use_visual,
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
     elif env_name == 'boyan':
         return ContinuingBoyanRing(
             size=config.get('ENV_SIZE', 21),
@@ -119,7 +166,7 @@ def make_env(config):
 
     tabular_env_names = [
         'whirlpool', 'whirlpool-misc', 'whirlpool-cont',
-        'fourrooms-misc', 'fourrooms-cont',
+        'fourrooms', 'fourrooms-misc', 'fourrooms-cont', 'fourrooms-dense',
         'eightrooms', 'eightrooms-misc', 'eightrooms-cont',
         'eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense',
         'eightrooms-dense-cont', 'eightrooms_dense_cont',
@@ -222,7 +269,215 @@ def make_env(config):
         )
         env = TerminalInfoWrapper(env)
         env = ContinuingWrapper(env)
-        
+
+    elif config['ENV_NAME'].lower().replace('_', '').replace('-', '') in [
+        'continuouseightrooms',
+        'continuouseightroomsmisc',
+        'eightroomscontinuous',
+        'eightroomscontcontrol',
+    ]:
+        from envs.continuous_eightrooms import ContinuousEightRooms, ContinuousEightRoomsParams
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        if use_visual:
+            config['NETWORK_TYPE'] = 'cnn'
+        else:
+            config['NETWORK_TYPE'] = 'mlp'
+        env = ContinuousEightRooms(
+            use_visual_obs=use_visual,
+            include_vel_in_obs=config.get('INCLUDE_VEL_IN_OBS', False),
+            goal_fixed=config.get('GOAL_POS', (23.5, 11.5)),
+            pos_fixed=config.get('START_POS', (3.5, 1.5)),
+            substeps=int(config.get('SUBSTEPS', 4)),
+        )
+        env_params = ContinuousEightRoomsParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1000)),
+            step_size=float(config.get('STEP_SIZE', 0.5)),
+            agent_radius=float(config.get('AGENT_RADIUS', 0.2)),
+            goal_radius=float(config.get('GOAL_RADIUS', 0.6)),
+            action_noise=float(config.get('ACTION_NOISE', 0.0)),
+            fail_prob=float(config.get('FAIL_PROB', 0.0)),
+            control_mode=int(config.get('CONTROL_MODE', 0)),
+            damping=float(config.get('DAMPING', 0.2)),
+            dt=float(config.get('DT', 0.1)),
+            max_vel=float(config.get('MAX_VEL', 1.0)),
+        )
+        env = TerminalInfoWrapper(env)
+
+    elif config['ENV_NAME'].lower().replace('_', '').replace('-', '') in [
+        'continuouseightroomscont',
+        'eightroomscontinuouscont',
+    ]:
+        from envs.continuous_eightrooms import ContinuousEightRooms, ContinuousEightRoomsParams
+        from envs.wrappers import ContinuingWrapper
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        if use_visual:
+            config['NETWORK_TYPE'] = 'cnn'
+        else:
+            config['NETWORK_TYPE'] = 'mlp'
+        env = ContinuousEightRooms(
+            use_visual_obs=use_visual,
+            include_vel_in_obs=config.get('INCLUDE_VEL_IN_OBS', False),
+            goal_fixed=config.get('GOAL_POS', (23.5, 11.5)),
+            pos_fixed=config.get('START_POS', (3.5, 1.5)),
+            substeps=int(config.get('SUBSTEPS', 4)),
+        )
+        env_params = ContinuousEightRoomsParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1000)),
+            step_size=float(config.get('STEP_SIZE', 0.5)),
+            agent_radius=float(config.get('AGENT_RADIUS', 0.2)),
+            goal_radius=float(config.get('GOAL_RADIUS', 0.6)),
+            action_noise=float(config.get('ACTION_NOISE', 0.0)),
+            fail_prob=float(config.get('FAIL_PROB', 0.0)),
+            control_mode=int(config.get('CONTROL_MODE', 0)),
+            damping=float(config.get('DAMPING', 0.2)),
+            dt=float(config.get('DT', 0.1)),
+            max_vel=float(config.get('MAX_VEL', 1.0)),
+        )
+        env = TerminalInfoWrapper(env)
+        env = ContinuingWrapper(env)
+
+    elif config['ENV_NAME'].lower().replace('_', '').replace('-', '') in [
+        'continuouseightroomsdense',
+        'continuouseightroomsmiscdense',
+        'eightroomscontinuousdense',
+    ]:
+        from envs.continuous_eightrooms import ContinuousEightRoomsDense, ContinuousEightRoomsDenseParams
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        if use_visual:
+            config['NETWORK_TYPE'] = 'cnn'
+        else:
+            config['NETWORK_TYPE'] = 'mlp'
+        env = ContinuousEightRoomsDense(
+            use_visual_obs=use_visual,
+            include_vel_in_obs=config.get('INCLUDE_VEL_IN_OBS', False),
+            goal_fixed=config.get('GOAL_POS', (23.5, 11.5)),
+            pos_fixed=config.get('START_POS', (3.5, 1.5)),
+            substeps=int(config.get('SUBSTEPS', 4)),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+        env_params = ContinuousEightRoomsDenseParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1000)),
+            step_size=float(config.get('STEP_SIZE', 0.5)),
+            agent_radius=float(config.get('AGENT_RADIUS', 0.2)),
+            goal_radius=float(config.get('GOAL_RADIUS', 0.6)),
+            action_noise=float(config.get('ACTION_NOISE', 0.0)),
+            fail_prob=float(config.get('FAIL_PROB', 0.0)),
+            control_mode=int(config.get('CONTROL_MODE', 0)),
+            damping=float(config.get('DAMPING', 0.2)),
+            dt=float(config.get('DT', 0.1)),
+            max_vel=float(config.get('MAX_VEL', 1.0)),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+        env = TerminalInfoWrapper(env)
+
+    elif config['ENV_NAME'].lower().replace('_', '').replace('-', '') in [
+        'continuouseightroomsdensecont',
+        'eightroomscontinuousdensecont',
+    ]:
+        from envs.continuous_eightrooms import ContinuousEightRoomsDense, ContinuousEightRoomsDenseParams
+        from envs.wrappers import ContinuingWrapper
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        if use_visual:
+            config['NETWORK_TYPE'] = 'cnn'
+        else:
+            config['NETWORK_TYPE'] = 'mlp'
+        env = ContinuousEightRoomsDense(
+            use_visual_obs=use_visual,
+            include_vel_in_obs=config.get('INCLUDE_VEL_IN_OBS', False),
+            goal_fixed=config.get('GOAL_POS', (23.5, 11.5)),
+            pos_fixed=config.get('START_POS', (3.5, 1.5)),
+            substeps=int(config.get('SUBSTEPS', 4)),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+        env_params = ContinuousEightRoomsDenseParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1000)),
+            step_size=float(config.get('STEP_SIZE', 0.5)),
+            agent_radius=float(config.get('AGENT_RADIUS', 0.2)),
+            goal_radius=float(config.get('GOAL_RADIUS', 0.6)),
+            action_noise=float(config.get('ACTION_NOISE', 0.0)),
+            fail_prob=float(config.get('FAIL_PROB', 0.0)),
+            control_mode=int(config.get('CONTROL_MODE', 0)),
+            damping=float(config.get('DAMPING', 0.2)),
+            dt=float(config.get('DT', 0.1)),
+            max_vel=float(config.get('MAX_VEL', 1.0)),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+        env = TerminalInfoWrapper(env)
+        env = ContinuingWrapper(env)
+
+    elif config['ENV_NAME'].lower().replace('_', '').replace('-', '') in [
+        'continuousfourrooms',
+        'continuousfourroomsmisc',
+        'fourroomscontinuous',
+        'fourroomscontcontrol',
+    ]:
+        from envs.continuous_fourrooms import ContinuousFourRooms, ContinuousFourRoomsParams
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        if use_visual:
+            config['NETWORK_TYPE'] = 'cnn'
+        else:
+            config['NETWORK_TYPE'] = 'mlp'
+        env = ContinuousFourRooms(
+            use_visual_obs=use_visual,
+            include_vel_in_obs=config.get('INCLUDE_VEL_IN_OBS', False),
+            goal_fixed=config.get('GOAL_POS', (11.5, 11.5)),
+            pos_fixed=config.get('START_POS', (3.5, 1.5)),
+            substeps=int(config.get('SUBSTEPS', 4)),
+        )
+        env_params = ContinuousFourRoomsParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1000)),
+            step_size=float(config.get('STEP_SIZE', 0.5)),
+            agent_radius=float(config.get('AGENT_RADIUS', 0.2)),
+            goal_radius=float(config.get('GOAL_RADIUS', 0.6)),
+            action_noise=float(config.get('ACTION_NOISE', 0.0)),
+            fail_prob=float(config.get('FAIL_PROB', 0.0)),
+            control_mode=int(config.get('CONTROL_MODE', 0)),
+            damping=float(config.get('DAMPING', 0.2)),
+            dt=float(config.get('DT', 0.1)),
+            max_vel=float(config.get('MAX_VEL', 1.0)),
+        )
+        env = TerminalInfoWrapper(env)
+
+    elif config['ENV_NAME'].lower().replace('_', '').replace('-', '') in [
+        'continuousfourroomsdense',
+        'continuousfourroomsmiscdense',
+        'fourroomscontinuousdense',
+    ]:
+        from envs.continuous_fourrooms import ContinuousFourRoomsDense, ContinuousFourRoomsDenseParams
+        use_visual = config.get('USE_VISUAL_OBS', config.get('NETWORK_TYPE') == 'cnn')
+        if use_visual:
+            config['NETWORK_TYPE'] = 'cnn'
+        else:
+            config['NETWORK_TYPE'] = 'mlp'
+        env = ContinuousFourRoomsDense(
+            use_visual_obs=use_visual,
+            include_vel_in_obs=config.get('INCLUDE_VEL_IN_OBS', False),
+            goal_fixed=config.get('GOAL_POS', (11.5, 11.5)),
+            pos_fixed=config.get('START_POS', (3.5, 1.5)),
+            substeps=int(config.get('SUBSTEPS', 4)),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+        env_params = ContinuousFourRoomsDenseParams(
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1000)),
+            step_size=float(config.get('STEP_SIZE', 0.5)),
+            agent_radius=float(config.get('AGENT_RADIUS', 0.2)),
+            goal_radius=float(config.get('GOAL_RADIUS', 0.6)),
+            action_noise=float(config.get('ACTION_NOISE', 0.0)),
+            fail_prob=float(config.get('FAIL_PROB', 0.0)),
+            control_mode=int(config.get('CONTROL_MODE', 0)),
+            damping=float(config.get('DAMPING', 0.2)),
+            dt=float(config.get('DT', 0.1)),
+            max_vel=float(config.get('MAX_VEL', 1.0)),
+            gamma=config.get('GAMMA', 0.99),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+        env = TerminalInfoWrapper(env)
+
     elif config['ENV_NAME'] == 'boyan':
         # Create our lightweight mock primitives right here
         env = MatrixMockEnv(size=20, use_visual_obs=config.get("USE_VISUAL_OBS", True))
@@ -616,6 +871,41 @@ def get_evaluation_policies(base_config, evaluator):
             
         # pi_eps already has shape (num_total_states, A), we just need to ensure the terminal state is uniform
         pi_eps = pi_eps.at[-1, :].set(jnp.ones(evaluator.num_actions) / evaluator.num_actions)
+
+        is_continuous_env = base_config.get("ENV_NAME", "").lower().replace('_', '').replace('-', '') in [
+            'continuouseightrooms',
+            'continuouseightroomsdense',
+            'continuouseightroomsmisc',
+            'continuouseightroomsmiscdense',
+            'eightroomscontinuous',
+            'eightroomscontinuousdense',
+            'continuouseightroomscont',
+            'eightroomscontinuouscont',
+        ]
+        if is_continuous_env:
+            from flax import struct
+            action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+
+            @struct.dataclass
+            class CardinalContinuousPolicy:
+                cat_dist: Any
+                basis: jax.Array
+
+                def sample(self, seed=None):
+                    idx = self.cat_dist.sample(seed=seed)
+                    return self.basis[idx]
+
+                def log_prob(self, value):
+                    diffs = jnp.sum((value[..., None, :] - self.basis)**2, axis=-1)
+                    idx = jnp.argmin(diffs, axis=-1)
+                    return self.cat_dist.log_prob(idx)
+
+                def mode(self):
+                    return self.basis[self.cat_dist.mode()]
+
+            orig_policy_fn = policy_fn
+            policy_fn = lambda obs: CardinalContinuousPolicy(cat_dist=orig_policy_fn(obs), basis=action_basis)
+
         return policy_fn, pi_eps
     else:
         import core.utils as utils
@@ -636,7 +926,12 @@ def get_evaluation_policies(base_config, evaluator):
             
         # build the matrix
         pi_dist = policy_fn(evaluator.obs_stack)
-        pi_probs = pi_dist.probs
+        if hasattr(pi_dist, "probs"):
+            pi_probs = pi_dist.probs
+        else:
+            action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+            log_p = jax.vmap(lambda a: pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+            pi_probs = jax.nn.softmax(log_p, axis=-1)
         terminal_policy = jnp.ones([1, evaluator.num_actions], dtype=pi_probs.dtype) / evaluator.num_actions
         policy_matrix = jnp.vstack([pi_probs, terminal_policy])
         

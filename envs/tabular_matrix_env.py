@@ -1,9 +1,10 @@
+from __future__ import annotations
 import numpy as np
 import jax
 import jax.numpy as jnp
 from flax import struct
 from gymnax.environments import environment, spaces
-from typing import Tuple, Any
+from typing import Tuple, Any, Union
 
 
 @struct.dataclass
@@ -18,7 +19,7 @@ class TabularParams(environment.EnvParams):
     fail_prob: float = 0.0
 
 
-class TabularMatrixEnv(environment.Environment[TabularState, TabularParams]):
+class TabularMatrixEnv(environment.Environment):
     """
     Generic, high-throughput tabular matrix simulator for JAX.
     Simulates transitions directly from an exact evaluator's precomputed transition tensor P

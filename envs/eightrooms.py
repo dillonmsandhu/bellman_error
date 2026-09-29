@@ -369,7 +369,12 @@ class EightRoomsParams(environment.EnvParams):
     max_steps_in_episode: int = 1000
 
 
-class EightRooms(environment.Environment[EightRoomsState, EightRoomsParams]):
+try:
+    _EnvBase = environment.Environment[EightRoomsState, EightRoomsParams]
+except (TypeError, AttributeError):
+    _EnvBase = environment.Environment
+
+class EightRooms(_EnvBase):
     """Gymnax-compatible Environment for EightRooms."""
 
     def __init__(
@@ -580,4 +585,14 @@ class EightRoomsDense(EightRooms):
     @property
     def name(self) -> str:
         return "EightRooms-dense"
+
+
+# Re-export Continuous control variants
+from envs.continuous_eightrooms import (
+    ContinuousEightRooms,
+    ContinuousEightRoomsDense,
+    ContinuousEightRoomsState,
+    ContinuousEightRoomsParams,
+    ContinuousEightRoomsDenseParams,
+)
 

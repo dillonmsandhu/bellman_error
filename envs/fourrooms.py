@@ -1,3 +1,4 @@
+from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -332,3 +333,60 @@ xxxxxxxxxxxxx"""
     def compute_discounted_visitation(self, pi: jax.Array) -> jax.Array:
         mu = self.compute_discounted_visitation_raw(pi)
         return self.get_value_grid(mu)
+
+
+class FourRoomsDenseExactValue(FourRoomsExactValue):
+    """
+    Exact policy evaluation for Four Rooms with Potential-Based Reward Shaping (PBRS).
+    Uses the negative shortest-path geodesic distance to the goal as potential:
+        Phi(s) = - potential_scale * D(s, goal), with Phi(terminal) = 0.
+        F(s, a, s') = gamma * Phi(s') - Phi(s)
+        R_dense(s, a, s') = R_sparse(s, a, s') + F(s, a, s')
+    """
+
+    def __init__(self, *args, potential_scale: float = 0.03125, **kwargs):
+        self.potential_scale = float(potential_scale)
+        super().__init__(*args, **kwargs)
+
+    def compute_shortest_path_distances(self) -> np.ndarray:
+        from collections import deque
+
+        coords_arr = np.array(self.coords)
+        coords_to_idx = {tuple(c): i for i, c in enumerate(coords_arr)}
+        adj = [[] for _ in range(self.num_states)]
+        for i, (y, x) in enumerate(coords_arr):
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                ny, nx = int(y + dy), int(x + dx)
+                if (ny, nx) in coords_to_idx:
+                    adj[i].append(coords_to_idx[(ny, nx)])
+
+        dist = np.zeros(self.num_total_states, dtype=np.float32)
+        dist_states = np.full(self.num_states, -1, dtype=np.int32)
+        dist_states[self.goal_idx] = 0
+        q = deque([self.goal_idx])
+        while q:
+            curr = q.popleft()
+            for nbr in adj[curr]:
+                if dist_states[nbr] == -1:
+                    dist_states[nbr] = dist_states[curr] + 1
+                    q.append(nbr)
+
+        dist[: self.num_states] = dist_states.astype(np.float32)
+        dist[self.terminal_idx] = 0.0
+        return dist
+
+    def _build_env_dynamics(self, continuing: bool) -> Tuple[jax.Array, jax.Array]:
+        P, R_sparse = super()._build_env_dynamics(continuing=continuing)
+        self.distances = self.compute_shortest_path_distances()
+        phi = - self.potential_scale * self.distances
+        phi[self.terminal_idx] = 0.0
+        self.potential = jnp.asarray(phi, dtype=jnp.float32)
+
+        gamma = self.gamma
+        F = gamma * phi[None, None, :] - phi[:, None, None]
+        F[self.terminal_idx, :, self.terminal_idx] = 0.0
+
+        R_dense = np.array(R_sparse) + F
+        R_dense = np.where(np.array(P) > 0, R_dense, 0.0)
+        return P, jnp.asarray(R_dense, dtype=jnp.float32)
+

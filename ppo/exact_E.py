@@ -9,9 +9,13 @@ from core.policy_metrics import compute_policy_metrics
 
 SAVE_DIR = "ppo/exact_E"
 
-def network_inference(params, network, S, n_actions):
+def network_inference(params, network, S, n_actions, is_continuous=False, action_basis=None):
     pi_dist, v = network.apply(params, S)
-    pi = pi_dist.probs
+    if is_continuous:
+        log_probs = jax.vmap(lambda a: pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+        pi = jax.nn.softmax(log_probs, axis=-1)
+    else:
+        pi = pi_dist.probs
     terminal_policy = jnp.ones([1, n_actions], dtype=pi.dtype) / n_actions
     pi = jnp.vstack([pi, terminal_policy])
     v = jnp.append(v, 0.0)
@@ -26,7 +30,14 @@ def make_train(base_config):
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
-    n_actions = env.action_space(env_params).n
+
+    is_continuous = isinstance(env.action_space(env_params), spaces.Box)
+    if is_continuous:
+        n_actions = evaluator.num_actions
+        action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+    else:
+        n_actions = env.action_space(env_params).n
+        action_basis = None
     
     S_states = evaluator.obs_stack
     P = evaluator.P 
@@ -49,7 +60,11 @@ def make_train(base_config):
 
             # 1. Compute Exact Dynamics
             old_pi_dist, old_v = network.apply(train_state.params, S_states)
-            old_pi = old_pi_dist.probs
+            if is_continuous:
+                old_log_probs = jax.vmap(lambda a: old_pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+                old_pi = jax.nn.softmax(old_log_probs, axis=-1)
+            else:
+                old_pi = old_pi_dist.probs
             terminal_policy = jnp.ones([1, n_actions], dtype=old_pi.dtype) / n_actions
             old_pi_full = jnp.vstack([old_pi, terminal_policy])
             old_log_pi = jnp.log(old_pi + 1e-8)
@@ -79,7 +94,7 @@ def make_train(base_config):
 
             def loss_fn(params, network):
                 # pi shape (num_states+1, n_actions), v shape (num_states+1,)
-                pi, v = network_inference(params, network, S_states, n_actions)
+                pi, v = network_inference(params, network, S_states, n_actions, is_continuous, action_basis)
                 
                 # E-Loss (Bellman error gradient descent loss)
                 # (V_true - v)^T @ S @ (V_true - v)
@@ -125,7 +140,12 @@ def make_train(base_config):
                     evaluator, network, train_state.params, random_policy=False,)
                 )
             # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)
-            new_pi = network.apply(train_state.params, S_states)[0].probs
+            if is_continuous:
+                new_pi_dist = network.apply(train_state.params, S_states)[0]
+                new_log_probs = jax.vmap(lambda a: new_pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+                new_pi = jax.nn.softmax(new_log_probs, axis=-1)
+            else:
+                new_pi = network.apply(train_state.params, S_states)[0].probs
             new_mu = evaluator.compute_stationary_distribution_raw(new_pi)[0]
             metric.update(compute_policy_metrics(new_pi, old_pi, new_mu, mu[:-1]))
             metric.update({

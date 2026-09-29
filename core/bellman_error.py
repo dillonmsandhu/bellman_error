@@ -111,7 +111,12 @@ def get_lstd_weights(evaluator, network, params, random_policy, target_policy_fn
         else:
             pi_dist = network.apply(params, evaluator.obs_stack, method=network.policy)
 
-        pi = pi_dist.probs
+        if hasattr(pi_dist, "probs"):
+            pi = pi_dist.probs
+        else:
+            action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+            log_probs = jax.vmap(lambda a: pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+            pi = jax.nn.softmax(log_probs, axis=-1)
         terminal_policy = jnp.ones( [1,m], dtype=pi.dtype) / m
         pi = jnp.vstack([pi, terminal_policy])
         return pi
@@ -189,7 +194,12 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         else:
             pi_dist = network.apply(params, evaluator.obs_stack, method=network.policy)
 
-        pi = pi_dist.probs
+        if hasattr(pi_dist, "probs"):
+            pi = pi_dist.probs
+        else:
+            action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+            log_probs = jax.vmap(lambda a: pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+            pi = jax.nn.softmax(log_probs, axis=-1)
         terminal_policy = jnp.ones( [1,m], dtype=pi.dtype) / m
         pi = jnp.vstack([pi, terminal_policy])
         return pi

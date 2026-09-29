@@ -1,3 +1,4 @@
+from __future__ import annotations
 import jax
 import jax.numpy as jnp
 from flax import struct
@@ -15,8 +16,12 @@ class EnvParams(environment.EnvParams):
     # fail_prob is the strength of the current. 0.9 = 90% chance to be swept clockwise
     fail_prob: float = 0.9 
     max_steps_in_episode: int = 1e6
+try:
+    _EnvBase = environment.Environment[EnvState, EnvParams]
+except (TypeError, AttributeError):
+    _EnvBase = environment.Environment
 
-class Whirlpool(environment.Environment[EnvState, EnvParams]):
+class Whirlpool(_EnvBase):
     """JAX/Gymnax implementation of the Whirlpool environment."""
 
     def __init__(

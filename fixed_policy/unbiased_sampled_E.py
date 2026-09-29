@@ -34,7 +34,10 @@ def make_train(base_config):
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
-    n_actions = env.action_space(env_params).n
+    try:
+        n_actions = env.action_space(env_params).n
+    except AttributeError:
+        n_actions = env.action_space(env_params).shape[0]
 
     # --- Precompute True Value Function for Fixed Policy ---
     n_states = len(evaluator.obs_stack)

@@ -19,9 +19,13 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     info: jnp.ndarray
 
-def network_inference(params, network, S, n_actions):
+def network_inference(params, network, S, n_actions, is_continuous=False, action_basis=None):
     pi_dist, v = network.apply(params, S)
-    pi = pi_dist.probs
+    if is_continuous:
+        log_probs = jax.vmap(lambda a: pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+        pi = jax.nn.softmax(log_probs, axis=-1)
+    else:
+        pi = pi_dist.probs
     terminal_policy = jnp.ones([1, n_actions], dtype=pi.dtype) / n_actions
     pi = jnp.vstack([pi, terminal_policy])
     v = jnp.append(v, 0.0)
@@ -36,7 +40,14 @@ def make_train(base_config):
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
-    n_actions = env.action_space(env_params).n
+
+    is_continuous = isinstance(env.action_space(env_params), spaces.Box)
+    if is_continuous:
+        n_actions = evaluator.num_actions
+        action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+    else:
+        n_actions = env.action_space(env_params).n
+        action_basis = None
     
     S_states = evaluator.obs_stack
     P = evaluator.P 
@@ -98,7 +109,11 @@ def make_train(base_config):
             # 2. EXACT DYNAMICS TARGETS (TD-Lambda)
             # ==========================================
             old_pi_dist, old_v = network.apply(train_state.params, S_states)
-            old_pi = old_pi_dist.probs
+            if is_continuous:
+                old_log_probs = jax.vmap(lambda a: old_pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+                old_pi = jax.nn.softmax(old_log_probs, axis=-1)
+            else:
+                old_pi = old_pi_dist.probs
             terminal_policy = jnp.ones([1, n_actions], dtype=old_pi.dtype) / n_actions
             old_pi_full = jnp.vstack([old_pi, terminal_policy])
             
@@ -137,7 +152,7 @@ def make_train(base_config):
                         actor_loss = -jnp.minimum(surr1, surr2).mean()
 
                         # B) Exact Critic Loss
-                        _, v_full = network_inference(params, network, S_states, n_actions)
+                        _, v_full = network_inference(params, network, S_states, n_actions, is_continuous, action_basis)
                         TD_targets = t_lambda(v_full)
                         td_errors = v_full - jax.lax.stop_gradient(TD_targets)
                         value_loss = 0.5 * jnp.sum(mu * (td_errors ** 2))
