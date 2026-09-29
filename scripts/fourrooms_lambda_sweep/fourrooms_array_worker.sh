@@ -64,10 +64,14 @@ MINIBATCH_SIZE=1
 
 LAMBDA_VALUES=(0.0 0.8 0.95 1.0)
 
-# Repository directory setup
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -n "$SLURM_SUBMIT_DIR" ]; then
+    REPO_ROOT="$SLURM_SUBMIT_DIR"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
 cd "$REPO_ROOT"
+PLOT_SCRIPT="$REPO_ROOT/scripts/fourrooms_lambda_sweep/plot_fourrooms_learning_curves.py"
 
 # Resolve Python executable
 if [ -f "/home/users/ds541/.pyenv/versions/3.10.15/envs/gymnax/bin/python" ]; then
@@ -169,5 +173,5 @@ if [ "$ALL_COMPLETED" = true ]; then
     echo "All environments have finished all 5 runs for Sweep $SWEEP_ID!"
     echo "Generating vector PDF learning curves plot..."
     echo "======================================================================"
-    $PYTHON "$SCRIPT_DIR/plot_fourrooms_learning_curves.py" --sweep-id "$SWEEP_ID"
+    $PYTHON "$PLOT_SCRIPT" --sweep-id "$SWEEP_ID"
 fi

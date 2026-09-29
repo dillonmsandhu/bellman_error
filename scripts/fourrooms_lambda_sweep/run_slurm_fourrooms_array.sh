@@ -38,9 +38,14 @@ set -e
 
 mkdir -p slurm
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -n "$SLURM_SUBMIT_DIR" ]; then
+    REPO_ROOT="$SLURM_SUBMIT_DIR"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
 cd "$REPO_ROOT"
+WORKER_SCRIPT="$REPO_ROOT/scripts/fourrooms_lambda_sweep/fourrooms_array_worker.sh"
 
 # Default configuration
 export N_SEEDS=${N_SEEDS:-8}
@@ -64,11 +69,11 @@ fi
 
 if [ -n "$TARGET_ENV" ]; then
     # Run single assigned environment sub-job
-    exec "$SCRIPT_DIR/fourrooms_array_worker.sh" "$TARGET_ENV" "$SWEEP_ID"
+    exec "$WORKER_SCRIPT" "$TARGET_ENV" "$SWEEP_ID"
 else
     # Sequential local fallback for testing without SLURM
     echo "No task index provided; running all 4 environments sequentially..."
     for task_idx in 0 1 2 3; do
-        "$SCRIPT_DIR/fourrooms_array_worker.sh" "$task_idx" "$SWEEP_ID"
+        "$WORKER_SCRIPT" "$task_idx" "$SWEEP_ID"
     done
 fi
