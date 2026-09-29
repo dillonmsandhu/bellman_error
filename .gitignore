@@ -224,8 +224,8 @@ __pycache__/
 
 slurmslurm/
 .DS_Store
-*.DS_Store
-.agents/
+.agents/*
+!.agents/skills/
 .vscode/
 .python-version.bak
 scratch/
