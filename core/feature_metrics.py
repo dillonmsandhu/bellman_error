@@ -24,7 +24,7 @@ def get_capacity_angle(V_true, V_vr, D):
     
     return inner_product / (norm_true * norm_vr + ε)
 
-def feature_metrics(evaluator, network, params, random_policy=False, target_policy_fn = None):
+def feature_metrics(evaluator, network, params, random_policy=False, target_policy_fn = None, log_variance=False, lmbda=0.95):
     m = evaluator.num_actions
     def get_policy_matrix():
         if target_policy_fn is not None:
@@ -121,7 +121,13 @@ def feature_metrics(evaluator, network, params, random_policy=False, target_poli
         "Jacobian_top_singular_vectors": heatmaps_stack,
         "jacobian_singular_values": Sj,
         "Direlechet_energy": Direlechet_energy,
-
     }
+
+    if log_variance:
+        from core.variance_metrics import compute_all_variance_metrics
+        var_metrics = compute_all_variance_metrics(
+            evaluator, network, params, lmbda=lmbda, random_policy=random_policy, target_policy_fn=target_policy_fn
+        )
+        metrics.update(var_metrics)
 
     return metrics

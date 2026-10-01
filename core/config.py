@@ -44,6 +44,7 @@ config = {
     # 'MODEL_LOAD_DIR': "cont",
     "MODEL_LOAD_DIR": "ground_truth/fixed_policies",
     "LOG_FEATURE_METRICS": False,
+    "LOG_VARIANCE_METRICS": False,
     "LIGHT_METRICS": True,
     "POLICY_COEFF": 1.0,
     "RECOMPUTE_TARGETS_EACH_EPOCH": False,

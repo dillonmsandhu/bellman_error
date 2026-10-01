@@ -94,6 +94,22 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "mu_tv": "mu_tv",
         "state_coverage": "state_coverage",
         "state_entropy_coverage": "state_entropy_coverage",
+        "sigma_v_sq_td0": "sigma_v_sq_td0",
+        "sigma_v_td0": "sigma_v_td0",
+        "snr_v_td0": "snr_v_td0",
+        "rho_v_td0": "rho_v_td0",
+        "sigma_v_sq_td_lambda": "sigma_v_sq_td_lambda",
+        "sigma_v_td_lambda": "sigma_v_td_lambda",
+        "snr_v_td_lambda": "snr_v_td_lambda",
+        "rho_v_td_lambda": "rho_v_td_lambda",
+        "sigma_v_sq_mc": "sigma_v_sq_mc",
+        "sigma_v_mc": "sigma_v_mc",
+        "snr_v_mc": "snr_v_mc",
+        "rho_v_mc": "rho_v_mc",
+        "sigma_v_sq_e_lambda": "sigma_v_sq_e_lambda",
+        "sigma_v_e_lambda": "sigma_v_e_lambda",
+        "snr_v_e_lambda": "snr_v_e_lambda",
+        "rho_v_e_lambda": "rho_v_e_lambda",
     }
 
     data = get_metric("E", 1)
@@ -146,6 +162,14 @@ def evaluate(run_config, make_train, run_dir, args, rng):
             save_heatmap(env_dir, run_config["ENV_NAME"], metrics["min_eigenvector_grid"][0, -1], "min_eigenvector_grid")
     except Exception as e:
         pass
+
+    # Variance spatial heatmaps
+    for grid_name in ["var_grid_td0", "var_grid_td_lambda", "var_grid_mc", "var_grid_e_lambda"]:
+        if grid_name in metrics:
+            try:
+                save_heatmap(env_dir, run_config["ENV_NAME"], metrics[grid_name][0, -1], grid_name)
+            except Exception as e:
+                pass
 
     try:
         save_heatmap_stack(
@@ -209,14 +233,35 @@ def evaluate(run_config, make_train, run_dir, args, rng):
             },
             False,
         ),
+        (
+            "Function Space Update Variance",
+            "sigma_v_sq",
+            {
+                "sigma_v_sq_td0": "TD(0)",
+                "sigma_v_sq_td_lambda": "TD(lambda)",
+                "sigma_v_sq_mc": "MC",
+                "sigma_v_sq_e_lambda": "E(lambda)",
+            },
+            True,
+        ),
+        (
+            "Update Directional Alignment",
+            "rho_v (Cosine Similarity)",
+            {
+                "rho_v_td0": "TD(0)",
+                "rho_v_td_lambda": "TD(lambda)",
+                "rho_v_mc": "MC",
+                "rho_v_e_lambda": "E(lambda)",
+            },
+            False,
+        ),
     ]
 
     # 2. Unpack title, ylabel, and metric_keys'
-    if metrics.get("nn_weighted_VE", None) is not None:
-        for title, ylabel, metric_keys, logscale in plot_configs:
-
-            plot_data = {legend: get_metric(m_key, 1) for m_key, legend in metric_keys.items()}
-
+    for title, ylabel, metric_keys, logscale in plot_configs:
+        plot_data = {legend: get_metric(m_key, 1) for m_key, legend in metric_keys.items()}
+        plot_data = {k: v for k, v in plot_data.items() if v is not None}
+        if len(plot_data) > 0:
             save_multi_plot(
                 env_dir=env_dir,
                 env_name=run_config["ENV_NAME"],
