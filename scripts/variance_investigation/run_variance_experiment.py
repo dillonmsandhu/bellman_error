@@ -98,35 +98,43 @@ def run_experiment(env_name: str, num_updates: int = 150, lr: float = 3e-4, seed
         "sigma_v_sq_td0": [],
         "snr_v_td0": [],
         "rho_v_td0": [],
+        # E(0)
+        "mean_dv_norm_e0": [],
+        "sigma_v_e0": [],
+        "sigma_v_sq_e0": [],
+        "snr_v_e0": [],
+        "rho_v_e0": [],
         # TD(lambda)
         "mean_dv_norm_td_lambda": [],
         "sigma_v_td_lambda": [],
         "sigma_v_sq_td_lambda": [],
         "snr_v_td_lambda": [],
         "rho_v_td_lambda": [],
-        # MC
-        "mean_dv_norm_mc": [],
-        "sigma_v_mc": [],
-        "sigma_v_sq_mc": [],
-        "snr_v_mc": [],
-        "rho_v_mc": [],
         # E(lambda)
         "mean_dv_norm_e_lambda": [],
         "sigma_v_e_lambda": [],
         "sigma_v_sq_e_lambda": [],
         "snr_v_e_lambda": [],
         "rho_v_e_lambda": [],
+        # MC
+        "mean_dv_norm_mc": [],
+        "sigma_v_mc": [],
+        "sigma_v_sq_mc": [],
+        "snr_v_mc": [],
+        "rho_v_mc": [],
     }
 
     spatial_grids = {
         "var_grid_td0": [],
+        "var_grid_e0": [],
         "var_grid_td_lambda": [],
-        "var_grid_mc": [],
         "var_grid_e_lambda": [],
+        "var_grid_mc": [],
         "steps": [],
     }
 
     start_time = time.time()
+    alg_keys = ["td0", "e0", "td_lambda", "e_lambda", "mc"]
 
     for update_idx in range(num_updates):
         # 1. Compute exact closed-form variance metrics at the current policy snapshot
@@ -148,7 +156,7 @@ def run_experiment(env_name: str, num_updates: int = 150, lr: float = 3e-4, seed
         history["update"].append(update_idx)
         history["policy_return"].append(start_val)
 
-        for alg_key in ["td0", "td_lambda", "mc", "e_lambda"]:
+        for alg_key in alg_keys:
             history[f"mean_dv_norm_{alg_key}"].append(var_metrics[f"mean_dv_norm_{alg_key}"])
             history[f"sigma_v_{alg_key}"].append(var_metrics[f"sigma_v_{alg_key}"])
             history[f"sigma_v_sq_{alg_key}"].append(var_metrics[f"sigma_v_sq_{alg_key}"])
@@ -158,14 +166,16 @@ def run_experiment(env_name: str, num_updates: int = 150, lr: float = 3e-4, seed
         # Save spatial heatmaps at key milestones (initialization, midpoint, final)
         if update_idx in [0, num_updates // 4, num_updates // 2, num_updates - 1]:
             spatial_grids["steps"].append(update_idx)
-            for alg_key in ["td0", "td_lambda", "mc", "e_lambda"]:
+            for alg_key in alg_keys:
                 spatial_grids[f"var_grid_{alg_key}"].append(np.array(var_metrics[f"var_grid_{alg_key}"]))
 
         if update_idx % 20 == 0 or update_idx == num_updates - 1:
             print(
                 f"[Step {update_idx:3d}/{num_updates}] Return: {start_val:6.4f} | "
                 f"||dv||_TD0: {history['mean_dv_norm_td0'][-1]:.2e} (std {history['sigma_v_td0'][-1]:.2e}) | "
-                f"||dv||_E: {history['mean_dv_norm_e_lambda'][-1]:.2e} (std {history['sigma_v_e_lambda'][-1]:.2e}) | "
+                f"||dv||_E0: {history['mean_dv_norm_e0'][-1]:.2e} (std {history['sigma_v_e0'][-1]:.2e}) | "
+                f"||dv||_E(λ): {history['mean_dv_norm_e_lambda'][-1]:.2e} (std {history['sigma_v_e_lambda'][-1]:.2e}) | "
+                f"||dv||_TD(λ): {history['mean_dv_norm_td_lambda'][-1]:.2e} (std {history['sigma_v_td_lambda'][-1]:.2e}) | "
                 f"||dv||_MC: {history['mean_dv_norm_mc'][-1]:.2e} (std {history['sigma_v_mc'][-1]:.2e})"
             )
 
@@ -245,67 +255,145 @@ def run_experiment(env_name: str, num_updates: int = 150, lr: float = 3e-4, seed
 def plot_results(history: dict, spatial_grids: dict, env_name: str, out_dir: str):
     """
     Generates publication-quality figures:
-    1. Log-scale Mean Update with Variance Band (||Delta v||_D +/- sigma_v).
-    2. Signal-to-Noise Ratio (SNR_v) and Directional Alignment (rho_v).
-    3. Spatial variance heatmaps across the transition grid.
+    1. variance_and_mean_update: 4-panel overview:
+       - Policy Return
+       - Expected Step Magnitude ||Delta v||_D
+       - Direct CI Range / Standard Deviation sigma_v (Log Scale)
+       - Normalized CI Range (sigma_v / ||Delta v||_D, Log Scale)
+    2. algorithm_confidence_intervals: Dedicated per-algorithm subplots showing ||Delta v||_D +/- 1.96 * sigma_v.
+    3. snr_and_alignment: Signal-to-Noise Ratio (SNR_v) and Directional Alignment (rho_v).
+    4. spatial_variance_heatmaps: 2D spatial variance fields across training milestones.
     """
     updates = history["update"]
 
-    # Color palette
+    # Color palette & labels for all 5 algorithms
     colors = {
         "td0": "#1f77b4",        # Blue
+        "e0": "#17becf",         # Teal / Cyan
         "td_lambda": "#ff7f0e",  # Orange
-        "mc": "#d62728",         # Red
         "e_lambda": "#2ca02c",   # Green
+        "mc": "#d62728",         # Red
     }
     labels = {
         "td0": "TD(0)",
+        "e0": "E(0)",
         "td_lambda": r"TD($\lambda=0.95$)",
-        "mc": "Monte Carlo",
         "e_lambda": r"$E(\lambda=0.95)$",
+        "mc": "Monte Carlo",
     }
+    algs = ["td0", "e0", "td_lambda", "e_lambda", "mc"]
 
-    # =========================================================================
-    # FIGURE 1: Log-Scale Mean Update with Variance Band
-    # =========================================================================
     plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={"height_ratios": [1, 2.5]})
 
-    # Top panel: Policy Performance
-    ax1.plot(updates, history["policy_return"], color="#333333", lw=2.2, label=r"Policy Return ($V^\pi(s_0)$)")
-    ax1.set_ylabel("Expected Return", fontsize=11, fontweight="bold")
-    ax1.set_title(f"Policy Optimization & Function-Space Variance Dynamics ({env_name})", fontsize=14, fontweight="bold", pad=12)
-    ax1.legend(loc="upper left", frameon=True)
-    ax1.grid(True, alpha=0.3)
+    # =========================================================================
+    # FIGURE 1: 4-Panel Overview (Return, Mean Step, Direct CI, Normalized CI)
+    # =========================================================================
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    ax_ret, ax_mean = axes[0, 0], axes[0, 1]
+    ax_std, ax_norm = axes[1, 0], axes[1, 1]
 
-    # Bottom panel: Mean Update and Variance Bands on Log Scale
-    for alg in ["td0", "e_lambda", "td_lambda", "mc"]:
-        mean_norm = np.maximum(history[f"mean_dv_norm_{alg}"], 1e-10)
-        sigma = np.maximum(history[f"sigma_v_{alg}"], 1e-10)
+    # (a) Top-Left: Policy Return
+    ax_ret.plot(updates, history["policy_return"], color="#333333", lw=2.2, label=r"Policy Return $V^\pi(s_0)$")
+    ax_ret.set_xlabel("Policy Update Step", fontsize=11, fontweight="bold")
+    ax_ret.set_ylabel("Expected Return", fontsize=11, fontweight="bold")
+    ax_ret.set_title("Policy Performance", fontsize=12, fontweight="bold")
+    ax_ret.legend(loc="lower right", frameon=True)
+    ax_ret.grid(True, alpha=0.3)
 
-        lower = np.maximum(mean_norm - sigma, 1e-10)
-        upper = mean_norm + sigma
+    # (b) Top-Right: Expected Update Magnitude ||Delta v||_D
+    for alg in algs:
+        mean_norm = np.maximum(history[f"mean_dv_norm_{alg}"], 1e-12)
+        ax_mean.plot(updates, mean_norm, color=colors[alg], lw=2.0, label=labels[alg])
+    ax_mean.set_yscale("log")
+    ax_mean.set_xlabel("Policy Update Step", fontsize=11, fontweight="bold")
+    ax_mean.set_ylabel(r"$\|\overline{\Delta v}\|_D$ (Log Scale)", fontsize=11, fontweight="bold")
+    ax_mean.set_title(r"Expected Function Step Magnitude $\|\overline{\Delta v}\|_D$", fontsize=12, fontweight="bold")
+    ax_mean.legend(loc="upper right", frameon=True, fontsize=9)
+    ax_mean.grid(True, which="both", alpha=0.3)
 
-        line, = ax2.plot(updates, mean_norm, color=colors[alg], lw=2.2, label=labels[alg])
-        ax2.fill_between(updates, lower, upper, color=colors[alg], alpha=0.18)
+    # (c) Bottom-Left: Direct CI Range / Standard Deviation sigma_v
+    for alg in algs:
+        sigma = np.maximum(history[f"sigma_v_{alg}"], 1e-12)
+        ax_std.plot(updates, sigma, color=colors[alg], lw=2.0, label=labels[alg])
+    ax_std.set_yscale("log")
+    ax_std.set_xlabel("Policy Update Step", fontsize=11, fontweight="bold")
+    ax_std.set_ylabel(r"Direct CI Range / Std $\sigma_v$ (Log Scale)", fontsize=11, fontweight="bold")
+    ax_std.set_title(r"Function-Space Standard Deviation $\sigma_v = \sqrt{\mathrm{Tr}(D K \Sigma_z K^\top)}$", fontsize=12, fontweight="bold")
+    ax_std.legend(loc="upper right", frameon=True, fontsize=9)
+    ax_std.grid(True, which="both", alpha=0.3)
 
-    ax2.set_yscale("log")
-    ax2.set_xlabel("Policy Update Step", fontsize=11, fontweight="bold")
-    ax2.set_ylabel(r"Function Update $\|\overline{\Delta v}\|_D \pm \sigma_v$ (Log Scale)", fontsize=11, fontweight="bold")
-    ax2.legend(loc="upper right", frameon=True, fontsize=10)
-    ax2.grid(True, which="both", alpha=0.3)
+    # (d) Bottom-Right: Normalized CI Range (sigma_v / ||Delta v||_D)
+    for alg in algs:
+        mean_norm = np.maximum(history[f"mean_dv_norm_{alg}"], 1e-12)
+        sigma = np.maximum(history[f"sigma_v_{alg}"], 1e-12)
+        rel_ci = sigma / mean_norm
+        ax_norm.plot(updates, rel_ci, color=colors[alg], lw=2.0, label=labels[alg])
+    ax_norm.axhline(1.0, color="#666666", ls="--", lw=1.5, label="Noise = Signal (100% of Step)")
+    ax_norm.set_yscale("log")
+    ax_norm.set_xlabel("Policy Update Step", fontsize=11, fontweight="bold")
+    ax_norm.set_ylabel(r"Normalized CI Range $\sigma_v / \|\overline{\Delta v}\|_D$ (Log Scale)", fontsize=11, fontweight="bold")
+    ax_norm.set_title(r"Relative Uncertainty Normalized by Mean ($\sigma_v / \|\overline{\Delta v}\|_D$)", fontsize=12, fontweight="bold")
+    ax_norm.legend(loc="upper right", frameon=True, fontsize=9)
+    ax_norm.grid(True, which="both", alpha=0.3)
 
+    fig.suptitle(f"Function-Space Variance & Update Dynamics ({env_name})", fontsize=14, fontweight="bold", y=0.99)
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, "variance_and_mean_update.png"), dpi=300)
     fig.savefig(os.path.join(out_dir, "variance_and_mean_update.pdf"))
     plt.close(fig)
 
     # =========================================================================
-    # FIGURE 2: Signal-to-Noise Ratio (SNR_v) & Directional Alignment (rho_v)
+    # FIGURE 2: Dedicated Per-Algorithm Confidence Interval Panels
     # =========================================================================
-    fig, (ax_snr, ax_rho) = plt.subplots(1, 2, figsize=(14, 5))
+    fig_facets, axes_facets = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
+    axes_list = axes_facets.flatten()
 
-    for alg in ["td0", "e_lambda", "td_lambda", "mc"]:
+    for idx, alg in enumerate(algs):
+        ax = axes_list[idx]
+        mean_norm = np.maximum(history[f"mean_dv_norm_{alg}"], 1e-12)
+        sigma = np.maximum(history[f"sigma_v_{alg}"], 1e-12)
+
+        # 95% Confidence Interval: [max(0, mu - 1.96 * sigma), mu + 1.96 * sigma]
+        ci_lower = np.maximum(mean_norm - 1.96 * sigma, 1e-12)
+        ci_upper = mean_norm + 1.96 * sigma
+
+        ax.plot(updates, mean_norm, color=colors[alg], lw=2.2, label=r"Mean Step $\|\overline{\Delta v}\|_D$")
+        ax.fill_between(updates, ci_lower, ci_upper, color=colors[alg], alpha=0.22, label=r"$95\%$ CI ($\pm 1.96 \sigma_v$)")
+
+        ax.set_yscale("log")
+        ax.set_title(f"{labels[alg]} Update & Uncertainty", fontsize=11, fontweight="bold")
+        ax.set_ylabel(r"Function Update (Log Scale)", fontsize=10)
+        ax.legend(loc="lower right", frameon=True, fontsize=8)
+        ax.grid(True, which="both", alpha=0.3)
+        if idx >= 2:
+            ax.set_xlabel("Policy Update Step", fontsize=10)
+
+    # 6th panel: Direct comparison of relative confidence interval half-widths
+    ax_comp = axes_list[5]
+    for alg in algs:
+        mean_norm = np.maximum(history[f"mean_dv_norm_{alg}"], 1e-12)
+        sigma = np.maximum(history[f"sigma_v_{alg}"], 1e-12)
+        ax_comp.plot(updates, sigma / mean_norm, color=colors[alg], lw=1.8, label=labels[alg])
+    ax_comp.axhline(1.0, color="#444444", ls="--", lw=1.2)
+    ax_comp.set_yscale("log")
+    ax_comp.set_title(r"Summary: Relative Uncertainty $\sigma_v / \|\overline{\Delta v}\|_D$", fontsize=11, fontweight="bold")
+    ax_comp.set_xlabel("Policy Update Step", fontsize=10)
+    ax_comp.set_ylabel(r"Relative Spread (Log Scale)", fontsize=10)
+    ax_comp.legend(loc="upper right", frameon=True, fontsize=8)
+    ax_comp.grid(True, which="both", alpha=0.3)
+
+    fig_facets.suptitle(f"Algorithm-Specific Confidence Intervals ({env_name})", fontsize=14, fontweight="bold", y=0.99)
+    fig_facets.tight_layout()
+    fig_facets.savefig(os.path.join(out_dir, "algorithm_confidence_intervals.png"), dpi=300)
+    fig_facets.savefig(os.path.join(out_dir, "algorithm_confidence_intervals.pdf"))
+    plt.close(fig_facets)
+
+    # =========================================================================
+    # FIGURE 3: Signal-to-Noise Ratio (SNR_v) & Directional Alignment (rho_v)
+    # =========================================================================
+    fig_snr, (ax_snr, ax_rho) = plt.subplots(1, 2, figsize=(14, 5))
+
+    for alg in algs:
         snr = np.maximum(history[f"snr_v_{alg}"], 1e-12)
         rho = history[f"rho_v_{alg}"]
 
@@ -326,24 +414,23 @@ def plot_results(history: dict, spatial_grids: dict, env_name: str, out_dir: str
     ax_rho.legend(loc="best", frameon=True)
     ax_rho.grid(True, alpha=0.3)
 
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, "snr_and_alignment.png"), dpi=300)
-    fig.savefig(os.path.join(out_dir, "snr_and_alignment.pdf"))
-    plt.close(fig)
+    fig_snr.tight_layout()
+    fig_snr.savefig(os.path.join(out_dir, "snr_and_alignment.png"), dpi=300)
+    fig_snr.savefig(os.path.join(out_dir, "snr_and_alignment.pdf"))
+    plt.close(fig_snr)
 
     # =========================================================================
-    # FIGURE 3: Spatial Variance Heatmaps
+    # FIGURE 4: Spatial Variance Heatmaps
     # =========================================================================
     n_milestones = len(spatial_grids["steps"])
     if n_milestones > 0 and spatial_grids["var_grid_td0"][0] is not None:
-        fig, axes = plt.subplots(4, n_milestones, figsize=(4 * n_milestones, 12))
-        algs = [("td0", "TD(0)"), ("td_lambda", r"TD($\lambda=0.95$)"), ("mc", "Monte Carlo"), ("e_lambda", r"$E(\lambda=0.95)$")]
+        fig_hm, axes_hm = plt.subplots(len(algs), n_milestones, figsize=(4 * n_milestones, 3 * len(algs)))
 
-        for row_idx, (alg_key, alg_title) in enumerate(algs):
+        for row_idx, alg_key in enumerate(algs):
             for col_idx in range(n_milestones):
                 step = spatial_grids["steps"][col_idx]
                 grid = spatial_grids[f"var_grid_{alg_key}"][col_idx]
-                ax = axes[row_idx, col_idx] if n_milestones > 1 else axes[row_idx]
+                ax = axes_hm[row_idx, col_idx] if n_milestones > 1 else axes_hm[row_idx]
 
                 # Log-scale heatmap
                 grid_pos = np.maximum(grid, 1e-12)
@@ -351,15 +438,15 @@ def plot_results(history: dict, spatial_grids: dict, env_name: str, out_dir: str
                 if row_idx == 0:
                     ax.set_title(f"Step {step}", fontsize=12, fontweight="bold")
                 if col_idx == 0:
-                    ax.set_ylabel(alg_title, fontsize=12, fontweight="bold")
+                    ax.set_ylabel(labels[alg_key], fontsize=12, fontweight="bold")
                 ax.set_xticks([])
                 ax.set_yticks([])
 
-        fig.suptitle(f"Spatial Variance Field Across Training ({env_name})", fontsize=15, fontweight="bold", y=0.98)
-        fig.tight_layout()
-        fig.savefig(os.path.join(out_dir, "spatial_variance_heatmaps.png"), dpi=300)
-        fig.savefig(os.path.join(out_dir, "spatial_variance_heatmaps.pdf"))
-        plt.close(fig)
+        fig_hm.suptitle(f"Spatial Variance Field Across Training ({env_name})", fontsize=15, fontweight="bold", y=0.99)
+        fig_hm.tight_layout()
+        fig_hm.savefig(os.path.join(out_dir, "spatial_variance_heatmaps.png"), dpi=300)
+        fig_hm.savefig(os.path.join(out_dir, "spatial_variance_heatmaps.pdf"))
+        plt.close(fig_hm)
 
 
 if __name__ == "__main__":

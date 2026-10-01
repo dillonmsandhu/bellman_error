@@ -25,6 +25,8 @@ mkdir -p slurm
 # Python interpreter resolution (cluster pyenv vs local fallback)
 if [ -f "/home/users/ds541/.pyenv/versions/3.10.15/envs/gymnax/bin/python" ]; then
     PYTHON="/home/users/ds541/.pyenv/versions/3.10.15/envs/gymnax/bin/python"
+elif [ -f "/Users/dillonsandhu/.pyenv/versions/purejaxrl/bin/python" ]; then
+    PYTHON="/Users/dillonsandhu/.pyenv/versions/purejaxrl/bin/python"
 elif [ -f "/Users/dillonsandhu/.pyenv/versions/gymnax/bin/python" ]; then
     PYTHON="/Users/dillonsandhu/.pyenv/versions/gymnax/bin/python"
 elif command -v python >/dev/null 2>&1; then

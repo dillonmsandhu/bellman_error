@@ -320,21 +320,26 @@ def compute_all_variance_metrics(
     Sigma_td0, mean_td0 = compute_sigma_z_td0(stats)
     res_td0 = compute_function_variance_metrics(K, D, Sigma_td0, mean_td0, alpha=alpha)
 
-    # 6. Monte Carlo
+    # 6. E(0) (Dirichlet energy at lambda=0)
+    Sigma_e0, mean_e0 = compute_sigma_z_e_lambda(stats, evaluator, pi, lmbda=0.0)
+    res_e0 = compute_function_variance_metrics(K, D, Sigma_e0, mean_e0, alpha=alpha)
+
+    # 7. Monte Carlo
     Sigma_mc, mean_mc = compute_sigma_z_mc(stats, evaluator, pi)
     res_mc = compute_function_variance_metrics(K, D, Sigma_mc, mean_mc, alpha=alpha)
 
-    # 7. TD(lambda)
+    # 8. TD(lambda)
     Sigma_td_lambda, mean_td_lambda = compute_sigma_z_td_lambda(stats, evaluator, pi, lmbda=lmbda)
     res_td_lambda = compute_function_variance_metrics(K, D, Sigma_td_lambda, mean_td_lambda, alpha=alpha)
 
-    # 8. E(lambda)
+    # 9. E(lambda)
     Sigma_e_lambda, mean_e_lambda = compute_sigma_z_e_lambda(stats, evaluator, pi, lmbda=lmbda)
     res_e_lambda = compute_function_variance_metrics(K, D, Sigma_e_lambda, mean_e_lambda, alpha=alpha)
 
     # Map state-wise variance to 2D environment grids if evaluator supports it
     get_grid = getattr(evaluator, "get_value_grid", None)
     grid_td0 = get_grid(res_td0["state_var"]) if get_grid is not None else None
+    grid_e0 = get_grid(res_e0["state_var"]) if get_grid is not None else None
     grid_mc = get_grid(res_mc["state_var"]) if get_grid is not None else None
     grid_td_lambda = get_grid(res_td_lambda["state_var"]) if get_grid is not None else None
     grid_e_lambda = get_grid(res_e_lambda["state_var"]) if get_grid is not None else None
@@ -347,6 +352,13 @@ def compute_all_variance_metrics(
         "snr_v_td0": res_td0["snr_v"],
         "rho_v_td0": res_td0["rho_v"],
         "var_grid_td0": grid_td0,
+        # E(0)
+        "sigma_v_sq_e0": res_e0["sigma_v_sq"],
+        "sigma_v_e0": res_e0["sigma_v"],
+        "mean_dv_norm_e0": res_e0["mean_dv_norm"],
+        "snr_v_e0": res_e0["snr_v"],
+        "rho_v_e0": res_e0["rho_v"],
+        "var_grid_e0": grid_e0,
         # Monte Carlo
         "sigma_v_sq_mc": res_mc["sigma_v_sq"],
         "sigma_v_mc": res_mc["sigma_v"],

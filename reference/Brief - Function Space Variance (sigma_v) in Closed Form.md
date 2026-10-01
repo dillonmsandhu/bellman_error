@@ -192,6 +192,23 @@ $$\boxed{\sigma_{v, E}^2 < \sigma_{v, \text{TD}}^2}$$
 
 ---
 
+### 3.5 $E(0)$ Closed Form ($\lambda = 0$)
+
+When $\lambda = 0$, the trace resolvent reduces to the identity $L = (I - 0)^{-1} = I$, and the effective discount factor is $\tilde{\gamma} = \gamma$. The symmetric operator simplifies to:
+$$S_0 = \frac{1}{2}(A + A^\top) = \mathrm{Sym}(D (I - \gamma P))$$
+The expected gradient update is:
+$$\overline{\mathbf{z}}_{E(0)} = S_0 e = \frac{1}{2} D (I - \gamma P) e + \frac{1}{2} (I - \gamma P)^\top D e$$
+
+The covariance matrix $\Sigma_z^{E(0)}$ filters trajectory noise through the one-step symmetrized graph Laplacian $\mathcal{L}_G = I - \frac{1}{2}(P + P^\top)$:
+$$\Sigma_z^{E(0)} = \mathcal{F}_0 \, \Sigma_z^{\text{MC}} \, \mathcal{F}_0^\top, \quad \text{where } \mathcal{F}_0 \doteq (1 - \gamma) I + \gamma \mathcal{L}_G$$
+
+#### Variance Ranking:
+Across the full spectrum of eligibility and smoothing parameters:
+$$\boxed{\sigma_v^2(\text{TD}(0)) < \sigma_v^2(E(0)) < \sigma_v^2(E(\lambda)) \ll \sigma_v^2(\text{TD}(\lambda)) < \sigma_v^2(\text{MC})}$$
+$E(0)$ exhibits very low trajectory variance ($\sim 10^{-5}$ on FourRooms) while eliminating the directional bias and bootstrapping distortion inherent in purely asymmetric $\text{TD}(0)$ operators.
+
+---
+
 ## 4. Signal-to-Noise Ratio (SNR) and Directional Alignment ($\rho_v$)
 
 Using the exact expected update $\overline{\Delta v}$ and covariance $\Sigma_{\Delta v} = \alpha^2 K \Sigma_z K^\top$:
