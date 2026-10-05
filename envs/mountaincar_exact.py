@@ -17,7 +17,9 @@ class MountainCarExactValue:
         n_vel: int = 32,
         gamma: float = 0.99,
         episodic: bool = True,
+        use_visual_obs: bool = True,
         scale_obs: bool = True,
+        goal_reward: float = 100.0,
         min_position: float = -1.2,
         max_position: float = 0.6,
         max_speed: float = 0.07,
@@ -30,7 +32,9 @@ class MountainCarExactValue:
         self.n_vel = int(n_vel)
         self.gamma = float(gamma)
         self.episodic = episodic
+        self.use_visual_obs = use_visual_obs
         self.scale_obs = scale_obs
+        self.goal_reward = float(goal_reward)
 
         # Continuous bounds
         self.min_position = float(min_position)
@@ -51,7 +55,7 @@ class MountainCarExactValue:
         # coords[s_idx] = [pos, vel]
         self.num_states = self.n_pos * self.n_vel
 
-        # We will add a singular terminal state (goal states are just regular bins meeting the criteria)
+        # We will add a singular terminal state
         self.terminal_idx = self.num_states
         self.num_total_states = self.num_states + 1
 
@@ -62,11 +66,21 @@ class MountainCarExactValue:
                 self.coords[idx] = [self.pos_bins[i], self.vel_bins[j]]
                 idx += 1
 
-        # Determine default start state (e.g. pos around -0.5, vel 0.0)
-        # We find the bin closest to pos=-0.5, vel=0.0
+        # Determine default start state (pos around -0.5, vel 0.0)
         start_pos_idx = np.argmin(np.abs(self.pos_bins - (-0.5)))
         start_vel_idx = np.argmin(np.abs(self.vel_bins - 0.0))
         self.start_idx = start_pos_idx * self.n_vel + start_vel_idx
+        self.start = np.array([-0.5, 0.0], dtype=np.float32)
+
+        # Goal state representation
+        goal_pos_idx = np.argmin(np.abs(self.pos_bins - self.goal_position))
+        goal_vel_idx = np.argmin(np.abs(self.vel_bins - self.goal_velocity))
+        self.goal_idx = goal_pos_idx * self.n_vel + goal_vel_idx
+        self.goal = np.array([self.goal_position, self.goal_velocity], dtype=np.float32)
+
+        self.occupied_map = np.ones((self.n_pos, self.n_vel), dtype=bool)
+        self.reset_indices = np.array([self.start_idx], dtype=np.int32)
+        self.fail_prob = 0.0
 
         # Build Observations
         self.obs_stack = self._build_obs_stack()
@@ -76,13 +90,26 @@ class MountainCarExactValue:
         self.P_cont, _ = self._build_env_dynamics(continuing=True)
 
     def _build_obs_stack(self) -> jax.Array:
-        obs = np.copy(self.coords)
-        if self.scale_obs:
-            # Scale position to [-1, 1]
-            obs[:, 0] = 2.0 * (obs[:, 0] - self.min_position) / (self.max_position - self.min_position) - 1.0
-            # Scale velocity to [-1, 1]
-            obs[:, 1] = 2.0 * (obs[:, 1] - (-self.max_speed)) / (2 * self.max_speed) - 1.0
-        return jnp.asarray(obs, dtype=jnp.float32)
+        if self.use_visual_obs:
+            # Output Shape: (num_states, n_pos, n_vel, 2)
+            obs = np.zeros((self.num_states, self.n_pos, self.n_vel, 2), dtype=np.float32)
+            # Channel 0: One-hot indicator of position and velocity in phase space
+            pos_indices = np.arange(self.num_states) // self.n_vel
+            vel_indices = np.arange(self.num_states) % self.n_vel
+            obs[np.arange(self.num_states), pos_indices, vel_indices, 0] = 1.0
+
+            # Channel 1: Track height profile (sin(3x) + 1) / 2
+            height = (np.sin(3.0 * self.pos_bins) + 1.0) / 2.0  # shape (n_pos,)
+            obs[:, :, :, 1] = height[:, None]
+            return jnp.asarray(obs, dtype=jnp.float32)
+        else:
+            obs = np.copy(self.coords)
+            if self.scale_obs:
+                # Scale position to [-1, 1]
+                obs[:, 0] = 2.0 * (obs[:, 0] - self.min_position) / (self.max_position - self.min_position) - 1.0
+                # Scale velocity to [-1, 1]
+                obs[:, 1] = 2.0 * (obs[:, 1] - (-self.max_speed)) / (2 * self.max_speed) - 1.0
+            return jnp.asarray(obs, dtype=jnp.float32)
 
     def _get_bin_idx(self, pos: float, vel: float) -> int:
         pos_idx = np.argmin(np.abs(self.pos_bins - pos))
@@ -114,10 +141,10 @@ class MountainCarExactValue:
             if pos >= self.goal_position and vel >= self.goal_velocity:
                 if not continuing:
                     P[s_idx, :, self.terminal_idx] = 1.0
-                    R[s_idx, :, self.terminal_idx] = 1.0
+                    R[s_idx, :, self.terminal_idx] = self.goal_reward
                 else:
                     P[s_idx, :, self.start_idx] = 1.0
-                    R[s_idx, :, self.start_idx] = 1.0
+                    R[s_idx, :, self.start_idx] = self.goal_reward
                 continue
                 
             for a in range(self.num_actions):
@@ -260,3 +287,49 @@ class MountainCarExactValue:
             transitions.append((p1 * self.n_vel + v1, w_p1_v1))
 
         return transitions
+
+
+class MountainCarDenseExactValue(MountainCarExactValue):
+    """
+    MountainCar with Potential-Based Reward Shaping based on height (Option A: Zero-offset potential).
+    
+    Potential:
+        Phi(s) = potential_scale * (sin(3x) + 1) / 2 in [0, potential_scale].
+    
+    Shaping:
+        F(s, a, s') = gamma * Phi(s') - Phi(s).
+        R_dense(s, a, s') = R_sparse(s, a, s') + F(s, a, s').
+    
+    Guarantees policy invariance while maintaining return scale identical to sparse return
+    without shifting the baseline for failing trajectories.
+    """
+
+    def __init__(
+        self,
+        potential_scale: float = 20.0,
+        goal_reward: float = 100.0,
+        **kwargs,
+    ):
+        self.potential_scale = float(potential_scale)
+        super().__init__(goal_reward=goal_reward, **kwargs)
+
+    def _build_env_dynamics(self, continuing: bool) -> Tuple[jax.Array, jax.Array]:
+        P, R_sparse = super()._build_env_dynamics(continuing=continuing)
+
+        # Option A: Zero-offset Potential based on height
+        # Phi(s) = potential_scale * (sin(3x) + 1) / 2 in [0, potential_scale]
+        phi = np.zeros(self.num_total_states, dtype=np.float32)
+        phi[: self.num_states] = self.potential_scale * (np.sin(3.0 * self.coords[:, 0]) + 1.0) / 2.0
+        
+        # Terminal state retains the goal potential Phi(s_goal) so telescoping returns hold
+        phi[self.terminal_idx] = phi[self.goal_idx]
+        self.potential = jnp.asarray(phi, dtype=jnp.float32)
+
+        gamma = self.gamma
+        F = gamma * phi[None, None, :] - phi[:, None, None]
+        # Absorbing self-loop in terminal state has zero shaping reward
+        F[self.terminal_idx, :, self.terminal_idx] = 0.0
+
+        R_dense = np.array(R_sparse) + F
+        R_dense = np.where(np.array(P) > 0, R_dense, 0.0)
+        return P, jnp.asarray(R_dense, dtype=jnp.float32)

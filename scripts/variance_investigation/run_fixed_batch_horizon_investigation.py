@@ -145,7 +145,7 @@ def run_single_horizon_experiment(
     """
     config = {
         "ENV_NAME": env_name,
-        "NETWORK_TYPE": "mlp",
+        "NETWORK_TYPE": "cnn",
         "LAYER_NORM": False,
         "GAMMA": 0.99,
         "LR": lr,
@@ -159,11 +159,11 @@ def run_single_horizon_experiment(
         "GAE_LAMBDA": 0.95,
         "RETURN_LAMBDA": 1.0,
         "CALC_TRUE_VALUES": True,
-        "USE_VISUAL_OBS": False,
+        "USE_VISUAL_OBS": True,
         "NUM_ENVS": num_envs,
         "NUM_STEPS": num_steps,
         "k": 32,
-        "MAX_STEPS_IN_EPISODE": 1000,
+        "MAX_STEPS_IN_EPISODE": int(1e6),
         "USE_TABULAR_SIMULATOR": True,
     }
 
@@ -700,7 +700,10 @@ def main():
             "eightrooms-misc",
             "eightrooms-dense",
             "whirlpool-misc",
+            "mountaincar",
+            "mountaincar-v0",
             "MountainCar-v0",
+            "mountaincar-dense",
             "SpaceInvadersExactValue",
             "spaceinvaders",
         ],

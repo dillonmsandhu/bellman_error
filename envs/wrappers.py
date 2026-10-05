@@ -237,18 +237,49 @@ class ContinuingWrapper(GymnaxWrapper):
 
 class MountainCarSparseRewardWrapper(GymnaxWrapper):
     """
-    Replaces standard -1.0/step reward with sparse +1.0 goal reward matching MountainCarExactValue.
-    Reward is 1.0 when the agent transitions into the goal state (done & ~is_timeout), and 0.0 otherwise.
+    Replaces standard -1.0/step reward with sparse goal reward matching MountainCarExactValue.
+    Reward is goal_reward when the agent transitions into the goal state (done & ~is_timeout), and 0.0 otherwise.
     """
-    def __init__(self, env):
+    def __init__(self, env, goal_reward: float = 100.0):
         super().__init__(env)
+        self.goal_reward = float(goal_reward)
 
     def step(self, key, state, action, params=None):
         obs, env_state, reward, done, info = self._env.step(key, state, action, params)
         is_timeout = info.get("is_timeout", False)
         is_goal = jnp.logical_and(done, jnp.logical_not(is_timeout))
-        sparse_reward = jnp.where(is_goal, 1.0, 0.0)
+        sparse_reward = jnp.where(is_goal, self.goal_reward, 0.0)
         return obs, env_state, sparse_reward, done, info
+
+
+class MountainCarDenseRewardWrapper(GymnaxWrapper):
+    """
+    Potential-based reward shaping for MountainCar based on height (Option A: Zero-offset potential).
+    Phi(s) = potential_scale * (sin(3x) + 1) / 2 in [0, potential_scale].
+    F(s, a, s') = gamma * Phi(s') - Phi(s).
+    R_dense = R_base + F.
+    """
+    def __init__(self, env, potential_scale: float = 20.0, goal_reward: float = 100.0, gamma: float = 0.99):
+        super().__init__(env)
+        self.potential_scale = float(potential_scale)
+        self.goal_reward = float(goal_reward)
+        self.gamma = float(gamma)
+
+    def step(self, key, state, action, params=None):
+        pos_prev = state.position if hasattr(state, "position") else obs[..., 0]
+        obs, env_state, reward, done, info = self._env.step(key, state, action, params)
+        pos_next = env_state.position if hasattr(env_state, "position") else obs[..., 0]
+
+        is_timeout = info.get("is_timeout", False)
+        is_goal = jnp.logical_and(done, jnp.logical_not(is_timeout))
+        base_reward = jnp.where(is_goal, self.goal_reward, 0.0)
+
+        phi_prev = self.potential_scale * (jnp.sin(3.0 * pos_prev) + 1.0) / 2.0
+        phi_next = self.potential_scale * (jnp.sin(3.0 * pos_next) + 1.0) / 2.0
+        f = self.gamma * phi_next - phi_prev
+
+        dense_reward = base_reward + f
+        return obs, env_state, dense_reward, done, info
 
 
 class MountainCarNormalizeWrapper(UniversalObservationWrapper):

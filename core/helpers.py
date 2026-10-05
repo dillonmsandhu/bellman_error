@@ -155,8 +155,21 @@ def create_evaluator(config, env=None, env_params=None):
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
-    elif env_name == 'mountaincar-v0':
-        return MountainCarExactValue(gamma=config['GAMMA'])
+    elif env_name in ['mountaincar', 'mountaincar-v0']:
+        from envs.mountaincar_exact import MountainCarExactValue
+        return MountainCarExactValue(
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            goal_reward=config.get('GOAL_REWARD', 100.0),
+        )
+    elif env_name in ['mountaincar-dense', 'mountaincardense']:
+        from envs.mountaincar_exact import MountainCarDenseExactValue
+        return MountainCarDenseExactValue(
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            potential_scale=config.get('POTENTIAL_SCALE', 20.0),
+            goal_reward=config.get('GOAL_REWARD', 100.0),
+        )
     return None
 
 def initialize_evaluator(config, env, env_params):
@@ -177,7 +190,8 @@ def make_env(config):
         'eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense',
         'eightrooms-dense-cont', 'eightrooms_dense_cont',
         'boyan',
-        'spaceinvadersexactvalue', 'spaceinvaders', 'spaceinvaders-exact'
+        'spaceinvadersexactvalue', 'spaceinvaders', 'spaceinvaders-exact',
+        'mountaincar', 'mountaincar-v0', 'mountaincar-dense', 'mountaincardense',
     ]
 
     if use_tabular and env_name in tabular_env_names:
@@ -193,15 +207,23 @@ def make_env(config):
             from envs.wrappers import ContinuingWrapper
             env = ContinuingWrapper(env)
 
-    elif config['ENV_NAME'] == 'MountainCar-v0':
-        env, env_params = gymnax.make(config["ENV_NAME"])
+    elif env_name in ['mountaincar-v0', 'mountaincar', 'mountaincar-dense']:
+        env, env_params = gymnax.make('MountainCar-v0')
         env_params = env_params.replace(
-            max_steps_in_episode=config['MAX_STEPS_IN_EPISODE']
+            max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6))
         )
         env = TerminalInfoWrapper(env)
         env = MountainCarNormalizeWrapper(env)
-        env = MountainCarSparseRewardWrapper(env)
-        config["NETWORK_TYPE"] = 'mlp'
+        if 'dense' in env_name:
+            from envs.wrappers import MountainCarDenseRewardWrapper
+            env = MountainCarDenseRewardWrapper(
+                env,
+                potential_scale=config.get('POTENTIAL_SCALE', 20.0),
+                goal_reward=config.get('GOAL_REWARD', 100.0),
+                gamma=config['GAMMA'],
+            )
+        else:
+            env = MountainCarSparseRewardWrapper(env, goal_reward=config.get('GOAL_REWARD', 100.0))
 
     elif config['ENV_NAME'] == 'FourRooms-misc':
         env, env_params = gymnax.make(config["ENV_NAME"], use_visual_obs=True, goal_fixed=(11,11), pos_fixed = (3,1))
