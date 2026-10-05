@@ -35,10 +35,11 @@ class SpaceInvadersExactValue:
     def __init__(
         self,
         width: int = 5,
-        height: int = 4,
+        height: int = 6,
         gamma: float = 0.99,
         episodic: bool = True,
         use_visual_obs: bool = True,
+        endless: bool = True,
         kill_reward: float = 0.5,
         death_penalty: float = 0.0,
     ):
@@ -47,6 +48,7 @@ class SpaceInvadersExactValue:
         self.gamma = float(gamma)
         self.episodic = episodic
         self.use_visual_obs = use_visual_obs
+        self.endless = endless
         self.kill_reward = float(kill_reward)
         self.death_penalty = float(death_penalty)
         self.fail_prob = 0.0
@@ -193,12 +195,19 @@ class SpaceInvadersExactValue:
                 # Check WIN: both aliens dead
                 if a0_next == 0 and a1_next == 0:
                     P_win[s_idx, a] = 1.0
-                    if not continuing:
-                        P[s_idx, a, self.terminal_idx] = 1.0
-                        R[s_idx, a, self.terminal_idx] = reward
+                    if not self.endless:
+                        if not continuing:
+                            P[s_idx, a, self.terminal_idx] = 1.0
+                            R[s_idx, a, self.terminal_idx] = reward
+                        else:
+                            P[s_idx, a, self.start_idx] = 1.0
+                            R[s_idx, a, self.start_idx] = reward
                     else:
-                        P[s_idx, a, self.start_idx] = 1.0
-                        R[s_idx, a, self.start_idx] = reward
+                        # Endless wave mode: new wave respawns at top row, player retains horizontal position
+                        s_respawn = (1, 1, xp_next, 0, 1, 2, 1)
+                        respawn_idx = self.state_to_idx[s_respawn]
+                        P[s_idx, a, respawn_idx] = 1.0
+                        R[s_idx, a, respawn_idx] = reward
                     continue
 
                 # 3. Fleet movement of surviving alien(s)
@@ -275,8 +284,8 @@ class SpaceInvadersExactValue:
                 # Invasion: aliens reached player row (fy_next >= 3)
                 is_invaded = fy_next >= self.H - 1
 
-                # Point-blank bombing: living alien at row 2 directly above player's new position
-                is_bombed = (fy_next == 2) and (
+                # Point-blank bombing: living alien at row H-2 directly above player's new position
+                is_bombed = (fy_next == self.H - 2) and (
                     (a0_next == 1 and col0_next == xp_next)
                     or (a1_next == 1 and col1_next == xp_next)
                 )
