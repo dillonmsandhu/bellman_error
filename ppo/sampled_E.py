@@ -22,7 +22,12 @@ class Transition(NamedTuple):
 def make_train(base_config):
     base_config = base_config.copy()
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
-    base_config["NUM_MINIBATCHES"] = batch_size // base_config["MINIBATCH_SIZE"]
+    if "NUM_MINIBATCHES" in base_config:
+        num_minibatches = base_config["NUM_MINIBATCHES"]
+    else:
+        minibatch_size = base_config.get("MINIBATCH_SIZE", 1024)
+        num_minibatches = max(1, batch_size // minibatch_size)
+    base_config["NUM_MINIBATCHES"] = num_minibatches
     base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"] // batch_size
     
     env, env_params = helpers.make_env(base_config)
@@ -168,12 +173,20 @@ def make_train(base_config):
             metric.update({"mean_rew": traj_batch.reward.mean()})
 
             if evaluator is not None:
-                value_metrics = bellman_error.value_metrics(
-                    evaluator, network, train_state.params, random_policy=False, light=config["LIGHT_METRICS"]
-                )
-                metric.update(value_metrics)
+                if config.get("CALC_TRUE_VALUES", True):
+                    value_metrics = bellman_error.value_metrics(
+                        evaluator, network, train_state.params, random_policy=False, light=config.get("LIGHT_METRICS", True)
+                    )
+                    metric.update(value_metrics)
 
-                if config["LOG_FEATURE_METRICS"]:
+                if config.get("LOG_GRADIENT_METRICS", False):
+                    from core.gradient_tracking import compute_gradient_tracking_metrics
+                    grad_metrics = compute_gradient_tracking_metrics(
+                        train_state, evaluator, network, traj_batch, gamma
+                    )
+                    metric.update(grad_metrics)
+
+                if config.get("LOG_FEATURE_METRICS", False):
                     from core.feature_metrics import feature_metrics
                     metric.update(feature_metrics(
                         evaluator, network, train_state.params, random_policy=False
