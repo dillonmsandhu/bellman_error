@@ -48,4 +48,9 @@ __all__ = [
     "ContinuousFourRoomsDenseParams",
     "FourRoomsExactValue",
     "FourRoomsDenseExactValue",
+    "SpaceInvadersExactValue",
+    "TabularMatrixEnv",
 ]
+
+from envs.space_invaders import SpaceInvadersExactValue
+from envs.tabular_matrix_env import TabularMatrixEnv

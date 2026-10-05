@@ -255,6 +255,12 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
     # 1. Key Matrix A (State Space)
     A = D @ (jnp.eye(D.shape[0]) - γ * P_π)
+    S = 0.5 * (A + A.T)
+    K = 0.5 * (A - A.T)
+
+    norm_S_2 = jnp.max(jnp.abs(jnp.linalg.eigvalsh(S)))
+    norm_K_2 = jnp.max(jnp.abs(jnp.linalg.eigvalsh(1j * K)))
+    relative_spectral_norm = norm_K_2 / (norm_S_2 + 1e-12)
 
     e = V_nn - V_pi
     # Compute the weighted value error E
@@ -269,6 +275,9 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
         "E_local": E_local,
         "stat_dist_error": stat_dist_error,
         "V_start": V_pi[evaluator.start_idx],
+        "relative_spectral_norm": relative_spectral_norm,
+        "norm_S_spectral": norm_S_2,
+        "norm_K_spectral": norm_K_2,
     }
 
     # Extract extra heavy computations and spatial grid allocations if light=False
@@ -285,8 +294,6 @@ def value_metrics(evaluator, network, params, random_policy=False, target_policy
 
         # Consider the symmetry of the key matrix.
         # 2. Symmetric and Skew-Symmetric components
-        S = 0.5 * (A + A.T)
-        K = 0.5 * (A - A.T)
         norm_s = jnp.linalg.norm(S, ord='fro')
         norm_k = jnp.linalg.norm(K, ord='fro')
 

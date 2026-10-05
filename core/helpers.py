@@ -149,6 +149,12 @@ def create_evaluator(config, env=None, env_params=None):
             goal_pos=getattr(env, 'goal_fixed', None),
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
         )
+    elif env_name in ['spaceinvadersexactvalue', 'spaceinvaders', 'spaceinvaders-exact']:
+        from envs.space_invaders import SpaceInvadersExactValue
+        return SpaceInvadersExactValue(
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+        )
     elif env_name == 'mountaincar-v0':
         return MountainCarExactValue(gamma=config['GAMMA'])
     return None
@@ -170,7 +176,8 @@ def make_env(config):
         'eightrooms', 'eightrooms-misc', 'eightrooms-cont',
         'eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense',
         'eightrooms-dense-cont', 'eightrooms_dense_cont',
-        'boyan'
+        'boyan',
+        'spaceinvadersexactvalue', 'spaceinvaders', 'spaceinvaders-exact'
     ]
 
     if use_tabular and env_name in tabular_env_names:
