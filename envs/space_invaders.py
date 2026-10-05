@@ -92,9 +92,9 @@ class SpaceInvadersExactValue:
         self.idx_to_state = {i: s for i, s in enumerate(self.states)}
         self.coords = jnp.array(self.states, dtype=jnp.int32)
 
-        # Canonical initial state: both alive, player center, aliens top row, marching right
-        # (1, 1, 2, 0, 1, 2, 1)
-        start_state = (1, 1, self.W // 2, 0, 1, 2, 1)
+        # Canonical initial state: both alive, player on right (W-1), aliens on left (0, 1), marching right
+        # Guarantees aliens NEVER start directly above the player!
+        start_state = (1, 1, self.W - 1, 0, 0, 1, 1)
         self.start_idx = self.state_to_idx[start_state]
         self.goal_idx = self.start_idx
         self.reset_indices = jnp.array([self.start_idx], dtype=jnp.int32)
@@ -203,8 +203,12 @@ class SpaceInvadersExactValue:
                             P[s_idx, a, self.start_idx] = 1.0
                             R[s_idx, a, self.start_idx] = reward
                     else:
-                        # Endless wave mode: new wave respawns at top row, player retains horizontal position
-                        s_respawn = (1, 1, xp_next, 0, 1, 2, 1)
+                        # Endless wave mode: wave respawns on the opposite side of the player
+                        # Guarantees aliens NEVER respawn directly above the player!
+                        if xp_next <= self.W // 2:
+                            s_respawn = (1, 1, xp_next, 0, self.W - 2, self.W - 1, -1)
+                        else:
+                            s_respawn = (1, 1, xp_next, 0, 0, 1, 1)
                         respawn_idx = self.state_to_idx[s_respawn]
                         P[s_idx, a, respawn_idx] = 1.0
                         R[s_idx, a, respawn_idx] = reward
