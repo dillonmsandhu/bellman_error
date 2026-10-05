@@ -135,7 +135,7 @@ def create_evaluator(config, env=None, env_params=None):
         return WhirlpoolExactValue(
             size=config.get('ENV_SIZE', 21),
             gamma=config['GAMMA'],
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.95)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             start_pos=getattr(env, 'pos_fixed', None),
             goal_pos=getattr(env, 'goal_fixed', None),
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
@@ -144,7 +144,7 @@ def create_evaluator(config, env=None, env_params=None):
         return ContinuingWhirlpool(
             size=config.get('ENV_SIZE', 20),
             gamma=config['GAMMA'],
-            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.95)),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             start_pos=getattr(env, 'pos_fixed', None),
             goal_pos=getattr(env, 'goal_fixed', None),
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
@@ -518,7 +518,7 @@ def make_env(config):
         from envs.whirlpool_env import Whirlpool, EnvParams
         env = Whirlpool(size=config.get('ENV_SIZE', 21), use_visual_obs=True)
         env_params = EnvParams(
-            fail_prob=config.get('FAIL_PROB', 0.95),
+            fail_prob=config.get('FAIL_PROB', 0.25),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
         )
         env = TerminalInfoWrapper(env)
@@ -528,7 +528,7 @@ def make_env(config):
         from envs.wrappers import ContinuingWrapper
         env = Whirlpool(size=config.get('ENV_SIZE', 21), use_visual_obs=True)
         env_params = EnvParams(
-            fail_prob=config.get('FAIL_PROB', 0.95),
+            fail_prob=config.get('FAIL_PROB', 0.25),
             max_steps_in_episode=int(config.get('MAX_STEPS_IN_EPISODE', 1e6)),
         )
         env = TerminalInfoWrapper(env)

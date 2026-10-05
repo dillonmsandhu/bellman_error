@@ -349,6 +349,67 @@ def plot_cross_env_exact_e_vs_td(
     print(f"Saved Cross-Environment Exact E vs TD to: {out_path}")
 
 
+def plot_cross_env_three_way_alignment(
+    all_env_data: Dict[str, Dict[int, Dict[str, np.ndarray]]],
+    out_path: str,
+):
+    """
+    Subplots for each environment showing the 3-way directional alignment:
+    - rho(g_exact_E, g_exact_TD)
+    - rho(g_exact_TD, g_exact_MC)
+    - rho(g_exact_E, g_exact_MC)
+    Demonstrates geometrically how Bellman error gradient E relates to TD and MC.
+    """
+    plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
+    env_names = list(all_env_data.keys())
+    n_envs = len(env_names)
+
+    n_cols = min(n_envs, 3)
+    n_rows = (n_envs + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 5.5 * n_rows), squeeze=False)
+    axes = axes.flatten()
+
+    for i, env_name in enumerate(env_names):
+        ax = axes[i]
+        env_res = all_env_data[env_name]
+        t_key = sorted(env_res.keys())[len(env_res) // 2]
+        data = env_res[t_key]
+        updates = data["update"]
+
+        rho_e_td = data.get("rho_exactE_exactTD_mean", None)
+        rho_td_mc = data.get("rho_exactTD_exactMC_mean", None)
+        rho_e_mc = data.get("rho_exactE_exactMC_mean", None)
+
+        if rho_e_td is not None:
+            ax.plot(updates, rho_e_td, color="#2980b9", lw=2.5, marker="o", markersize=3, label=r"$\rho(g_E, g_{TD})$")
+        if rho_td_mc is not None:
+            ax.plot(updates, rho_td_mc, color="#e67e22", lw=2.5, marker="s", markersize=3, label=r"$\rho(g_{TD}, g_{MC})$")
+        if rho_e_mc is not None:
+            ax.plot(updates, rho_e_mc, color="#27ae60", lw=2.0, ls="--", marker="^", markersize=3, label=r"$\rho(g_E, g_{MC})$")
+
+        ax.axhline(1.0, color="#27ae60", ls=":", lw=1.2, alpha=0.7)
+        ax.axhline(0.0, color="gray", ls="--", lw=1.0, alpha=0.5)
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_title(f"{env_name}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Policy Update Step", fontsize=10, fontweight="bold")
+        ax.set_ylabel("Cosine Similarity", fontsize=10, fontweight="bold")
+        ax.legend(loc="lower right", frameon=True, fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    fig.suptitle(
+        r"Exact Gradient Geometry: Alignment of $E$, TD, and Monte Carlo Across Tasks",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=300)
+    plt.close(fig)
+    print(f"Saved Cross-Environment Three-Way Alignment to: {out_path}")
+
+
 def plot_cross_env_sampled_vs_exact_td_trajectories(
     all_env_data: Dict[str, Dict[int, Dict[str, np.ndarray]]],
     total_batch_size: int,
@@ -538,6 +599,10 @@ def main():
     plot_cross_env_exact_e_vs_td(
         all_env_data,
         out_path=os.path.join(args.out_dir, "cross_env_exact_E_vs_TD_all_tasks.png"),
+    )
+    plot_cross_env_three_way_alignment(
+        all_env_data,
+        out_path=os.path.join(args.out_dir, "cross_env_three_way_E_TD_MC_alignment.png"),
     )
     plot_cross_env_sampled_vs_exact_td_trajectories(
         all_env_data,
