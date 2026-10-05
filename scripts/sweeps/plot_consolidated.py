@@ -89,6 +89,68 @@ def plot_all(all_data: Dict[str, Dict[str, Any]], out_dir: str):
     h_colors = plt.cm.plasma(np.linspace(0.1, 0.85, len(sample_horizons)))
 
     # =========================================================================
+    # 0. Policy Return Trajectories Across Updates for All Horizons T (MAIN FIGURE)
+    # =========================================================================
+    fig0, axes0 = plt.subplots(rows, cols, figsize=(5.0 * cols, 3.8 * rows), squeeze=False)
+    for idx, env in enumerate(env_names):
+        r, c = idx // cols, idx % cols
+        ax = axes0[r][c]
+        env_data = all_data[env]
+        horizons = sorted(env_data["horizons"])
+
+        for h_idx, t in enumerate(horizons):
+            res = env_data[t]
+            u = res["updates"]
+            ret_m = res["policy_return_mean"]
+            ret_s = res.get("policy_return_std", np.zeros_like(ret_m)) / np.sqrt(4)
+            color = h_colors[h_idx % len(h_colors)]
+            ax.plot(u, ret_m, color=color, lw=2.0, label=f"T={t}")
+            ax.fill_between(u, ret_m - 1.96 * ret_s, ret_m + 1.96 * ret_s, color=color, alpha=0.15)
+
+        ax.set_title(env, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Update Step", fontsize=9)
+        if c == 0:
+            ax.set_ylabel(r"Policy Return $V^\pi(s_0)$", fontsize=10, fontweight="bold")
+        if idx == 0:
+            ax.legend(fontsize=8, loc="lower right", frameon=True)
+        ax.grid(True, alpha=0.3)
+
+    for idx in range(n_envs, rows * cols):
+        axes0[idx // cols][idx % cols].axis("off")
+
+    fig0.suptitle("Policy Return Learning Curves Across Rollout Horizons T (Fixed Batch N = 16384)", fontsize=14, fontweight="bold")
+    fig0.tight_layout()
+    save_fig(fig0, out_dir, "cross_env_policy_returns_all_T")
+
+    # =========================================================================
+    # 0B. Final / Asymptotic Policy Return vs Horizon T
+    # =========================================================================
+    fig0b, axes0b = plt.subplots(rows, cols, figsize=(5.0 * cols, 3.8 * rows), squeeze=False)
+    for idx, env in enumerate(env_names):
+        r, c = idx // cols, idx % cols
+        ax = axes0b[r][c]
+        env_data = all_data[env]
+        horizons = sorted(env_data["horizons"])
+
+        final_returns = [float(np.mean(env_data[t]["policy_return_mean"][-5:])) for t in horizons]
+        ax.plot(horizons, final_returns, marker="o", lw=2.4, color="#2ecc71", markersize=7)
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(horizons)
+        ax.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
+        ax.set_title(env, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Horizon T", fontsize=9)
+        if c == 0:
+            ax.set_ylabel(r"Final Return $V^\pi(s_0)$", fontsize=10, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+
+    for idx in range(n_envs, rows * cols):
+        axes0b[idx // cols][idx % cols].axis("off")
+
+    fig0b.suptitle("Asymptotic Policy Performance vs. Rollout Horizon T (Fixed Batch N = 16384)", fontsize=14, fontweight="bold")
+    fig0b.tight_layout()
+    save_fig(fig0b, out_dir, "cross_env_final_return_vs_T")
+
+    # =========================================================================
     # 1. Sampled vs Exact E Trajectories
     # =========================================================================
     fig1, axes1 = plt.subplots(rows, cols, figsize=(5.0 * cols, 3.8 * rows), squeeze=False, sharey=True)
