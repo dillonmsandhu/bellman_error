@@ -182,7 +182,7 @@ def make_train(base_config):
                 if config.get("LOG_GRADIENT_METRICS", False):
                     from core.gradient_tracking import compute_gradient_tracking_metrics
                     grad_metrics = compute_gradient_tracking_metrics(
-                        train_state, evaluator, network, traj_batch, gamma
+                        train_state, evaluator, network, traj_batch, targets, gamma
                     )
                     metric.update(grad_metrics)
 

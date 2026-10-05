@@ -117,6 +117,7 @@ def compute_sampled_critic_gradients(
     train_state: TrainState,
     network,
     traj_batch,
+    targets: jnp.ndarray,
     gamma: float,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
@@ -126,17 +127,15 @@ def compute_sampled_critic_gradients(
     """
     obs = traj_batch.obs
     next_obs = traj_batch.next_obs
-    targets = traj_batch.next_target  # aligned next targets
+    next_targets = traj_batch.next_target  # aligned next targets G_{t+1}
     is_timeout = traj_batch.info["is_timeout"]
     true_terminal = traj_batch.done & ~is_timeout
 
-    # 1. Sampled E critic loss
+    # 1. Sampled E critic loss: matches the exact loss PPO critic updates on
     def sampled_e_loss(params):
         v_i = network.apply(params, obs, method=network.value)
         v_j = network.apply(params, next_obs, method=network.value)
-        # Note: traj_batch.value was the target G_t computed via return_lambda
-        # Here we re-evaluate targets aligned
-        v_loss, _, _ = helpers.e_critic_loss(v_i, traj_batch.value, v_j, targets, true_terminal, gamma)
+        v_loss, _, _ = helpers.e_critic_loss(v_i, targets, v_j, next_targets, true_terminal, gamma)
         return v_loss
 
     # 2. Sampled TD critic loss: 0.5 * (v(s) - sg(r + gamma * (1-d) * v(s')))^2
@@ -157,6 +156,7 @@ def compute_gradient_tracking_metrics(
     evaluator,
     network,
     traj_batch,
+    targets: jnp.ndarray,
     gamma: float,
 ) -> Dict[str, Any]:
     """
@@ -166,7 +166,7 @@ def compute_gradient_tracking_metrics(
     g_exact_E, g_exact_TD, g_exact_MC, start_val, rel_spectral_norm, alignments = (
         compute_all_exact_critic_gradients(train_state, evaluator, network, gamma)
     )
-    g_samp_E, g_samp_TD = compute_sampled_critic_gradients(train_state, network, traj_batch, gamma)
+    g_samp_E, g_samp_TD = compute_sampled_critic_gradients(train_state, network, traj_batch, targets, gamma)
 
     sq_err_E = jnp.sum((g_samp_E - g_exact_E) ** 2)
     sq_err_TD = jnp.sum((g_samp_TD - g_exact_TD) ** 2)
