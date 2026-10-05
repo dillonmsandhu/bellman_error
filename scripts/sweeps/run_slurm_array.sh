@@ -10,13 +10,17 @@
 #SBATCH --array=0-6
 
 set -e
-mkdir -p slurm
 
-# Working directory resolution
-if [ -n "$SLURM_SUBMIT_DIR" ]; then
-    cd "$SLURM_SUBMIT_DIR"
+# Ensure working directory is repo root
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/core/config.py" ]; then
+    cd "$REPO_ROOT"
+elif [ -f "core/config.py" ]; then
+    : # already in repo root
+else
+    cd "$(dirname "$0")/../.."
 fi
 REPO_ROOT="$(pwd)"
+mkdir -p slurm
 export PYTHONPATH="$REPO_ROOT"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 

@@ -2,14 +2,10 @@
 # scripts/sweeps/submit_sweep.sh
 # Submits the 7-environment SLURM array job and chains consolidated plotting upon completion.
 
-set -e
-mkdir -p slurm
-
-# Working directory resolution
-if [ -n "$SLURM_SUBMIT_DIR" ]; then
-    cd "$SLURM_SUBMIT_DIR"
-fi
+# Ensure working directory is repo root
+[ -f "core/config.py" ] || cd "$(dirname "$0")/../.."
 REPO_ROOT="$(pwd)"
+mkdir -p slurm
 export PYTHONPATH="$REPO_ROOT"
 
 # Python interpreter resolution
@@ -33,7 +29,8 @@ echo "================================================================"
 # 1. Submit the 7-environment array job
 ARRAY_SCRIPT="scripts/sweeps/run_slurm_array.sh"
 SBATCH_ARRAY_CMD="sbatch --parsable \
-    --export=ALL,SWEEP_ID=$SWEEP_ID,SLURM_SUBMIT_DIR=$REPO_ROOT \
+    --chdir=\"$REPO_ROOT\" \
+    --export=ALL,SWEEP_ID=$SWEEP_ID,REPO_ROOT=$REPO_ROOT \
     \"$ARRAY_SCRIPT\""
 
 ARRAY_JOB_ID=$(eval "$SBATCH_ARRAY_CMD")
@@ -43,6 +40,7 @@ echo "Submitted Array Job ID: $ARRAY_JOB_ID"
 PLOT_SCRIPT="scripts/sweeps/plot_consolidated.py"
 PLOT_JOB_ID=$(sbatch --parsable \
     --dependency=afterany:$ARRAY_JOB_ID \
+    --chdir="$REPO_ROOT" \
     --job-name="plot_${SWEEP_ID}" \
     --output="slurm/%j_plot_${SWEEP_ID}.out" \
     --error="slurm/%j_plot_${SWEEP_ID}.err" \
