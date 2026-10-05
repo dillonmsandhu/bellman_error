@@ -143,9 +143,10 @@ def run_single_horizon_experiment(
     Runs PPO with sampled E critic for a specific (T, B) condition across multiple seeds in parallel via jax.vmap.
     Logs exact gradients, sampled gradient, squared errors, and pairwise cosine similarities across seeds.
     """
+    is_mc = "mountaincar" in env_name.lower()
     config = {
         "ENV_NAME": env_name,
-        "NETWORK_TYPE": "cnn",
+        "NETWORK_TYPE": "mlp" if is_mc else "cnn",
         "LAYER_NORM": False,
         "GAMMA": 0.99,
         "LR": lr,
@@ -159,7 +160,7 @@ def run_single_horizon_experiment(
         "GAE_LAMBDA": 0.95,
         "RETURN_LAMBDA": 1.0,
         "CALC_TRUE_VALUES": True,
-        "USE_VISUAL_OBS": True,
+        "USE_VISUAL_OBS": False if is_mc else True,
         "NUM_ENVS": num_envs,
         "NUM_STEPS": num_steps,
         "k": 32,

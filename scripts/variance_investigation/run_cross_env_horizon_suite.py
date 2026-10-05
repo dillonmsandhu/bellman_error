@@ -426,7 +426,15 @@ def main():
     parser.add_argument(
         "--envs",
         nargs="+",
-        default=["fourrooms-dense", "whirlpool-misc"],
+        default=[
+            "fourrooms-dense",
+            "FourRooms-misc",
+            "eightrooms-dense",
+            "eightrooms-misc",
+            "whirlpool-misc",
+            "SpaceInvadersExactValue",
+            "mountaincar-dense",
+        ],
         help="List of environments to run",
     )
     parser.add_argument("--total_batch_size", type=int, default=16384, help="Fixed batch size N = B * T")

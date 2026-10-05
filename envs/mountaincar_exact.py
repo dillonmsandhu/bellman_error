@@ -17,7 +17,7 @@ class MountainCarExactValue:
         n_vel: int = 32,
         gamma: float = 0.99,
         episodic: bool = True,
-        use_visual_obs: bool = True,
+        use_visual_obs: bool = False,
         scale_obs: bool = True,
         goal_reward: float = 100.0,
         min_position: float = -1.2,

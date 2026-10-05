@@ -33,7 +33,7 @@ mkdir -p results/full_horizon_suite_multiseed
 
 # Run multi-seed fixed-batch horizon investigation across all environments
 $PYTHON scripts/variance_investigation/run_cross_env_horizon_suite.py \
-    --envs fourrooms-dense FourRooms-misc eightrooms-dense eightrooms-misc whirlpool-misc SpaceInvadersExactValue \
+    --envs fourrooms-dense FourRooms-misc eightrooms-dense eightrooms-misc whirlpool-misc SpaceInvadersExactValue mountaincar-dense \
     --total_batch_size 16384 \
     --horizons 8 64 128 512 1024 \
     --num_updates 35 \
