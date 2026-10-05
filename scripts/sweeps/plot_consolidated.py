@@ -341,24 +341,24 @@ def plot_all(all_data: Dict[str, Dict[str, Any]], out_dir: str):
     fig7, ax7 = plt.subplots(figsize=(9, 6))
     env_labels = []
     spec_norms = []
-    final_rhos = []
+    mean_rhos = []
 
     for env in env_names:
         env_data = all_data[env]
         horizons = sorted(env_data["horizons"])
         rep_t = horizons[len(horizons) // 2]
         spec_val = float(np.mean(env_data[rep_t]["relative_spectral_norm_mean"]))
-        rho_val = float(env_data[rep_t]["rho_exactE_exactTD_mean"][-1])
+        rho_val = float(np.mean(env_data[rep_t]["rho_exactE_exactTD_mean"]))
         env_labels.append(env)
         spec_norms.append(spec_val)
-        final_rhos.append(rho_val)
+        mean_rhos.append(rho_val)
 
-    scatter = ax7.scatter(spec_norms, final_rhos, c=np.arange(len(env_names)), cmap="tab10", s=140, edgecolors="black", zorder=5)
+    scatter = ax7.scatter(spec_norms, mean_rhos, c=np.arange(len(env_names)), cmap="tab10", s=140, edgecolors="black", zorder=5)
     for i, label in enumerate(env_labels):
-        ax7.annotate(label, (spec_norms[i], final_rhos[i]), textcoords="offset points", xytext=(8, 4), fontsize=9, fontweight="bold")
+        ax7.annotate(label, (spec_norms[i], mean_rhos[i]), textcoords="offset points", xytext=(8, 4), fontsize=9, fontweight="bold")
 
     ax7.set_xlabel(r"Relative Skew Spectral Norm $\|K\|_2 / \|S\|_2$", fontsize=11, fontweight="bold")
-    ax7.set_ylabel(r"Final Alignment $\rho(g_E^*, g_{\mathrm{TD}}^*)$", fontsize=11, fontweight="bold")
+    ax7.set_ylabel(r"Mean Alignment Throughout Learning $\bar{\rho}(g_E^*, g_{\mathrm{TD}}^*)$", fontsize=11, fontweight="bold")
     ax7.set_title(r"Geometric Impact of Non-Reversibility ($\|K\|_2 / \|S\|_2$) on Alignment", fontsize=13, fontweight="bold")
     ax7.axhline(1.0, color="#27ae60", ls=":", lw=1.2)
     ax7.grid(True, alpha=0.3)
