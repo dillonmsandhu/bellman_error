@@ -152,7 +152,9 @@ def create_evaluator(config, env=None, env_params=None):
     elif env_name in ['spaceinvadersexactvalue', 'spaceinvaders', 'spaceinvaders-exact']:
         from envs.space_invaders import SpaceInvadersExactValue
         return SpaceInvadersExactValue(
+            width=config.get('SPACE_INVADERS_WIDTH', 7),
             height=config.get('SPACE_INVADERS_HEIGHT', 6),
+            num_aliens=config.get('SPACE_INVADERS_NUM_ALIENS', 3),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
             endless=config.get('SPACE_INVADERS_ENDLESS', True),
