@@ -65,24 +65,18 @@ class SpaceInvadersExactValue:
         # Config 1: Both alive (1, 1)
         # col0 in 0..W-2, col1 = col0 + 1
         for xp in range(self.W):
-            for fy in range(self.H - 1): # 0, 1, 2
-                for col0 in range(self.W - 1): # 0, 1, 2, 3
+            for fy in range(self.H - 1):
+                for col0 in range(self.W - 1):
                     for fdir in [-1, 1]:
                         self.states.append((1, 1, xp, fy, col0, col0 + 1, fdir))
 
-        # Config 2: Only A0 alive (1, 0)
+        # Config 2: Single alien alive (1, 0)
+        # Symmetries between A0 and A1 are collapsed into a canonical single alien
         for xp in range(self.W):
             for fy in range(self.H - 1):
                 for col0 in range(self.W):
                     for fdir in [-1, 1]:
                         self.states.append((1, 0, xp, fy, col0, -1, fdir))
-
-        # Config 3: Only A1 alive (0, 1)
-        for xp in range(self.W):
-            for fy in range(self.H - 1):
-                for col1 in range(self.W):
-                    for fdir in [-1, 1]:
-                        self.states.append((0, 1, xp, fy, -1, col1, fdir))
 
         self.num_states = len(self.states)
         self.terminal_idx = self.num_states
@@ -137,12 +131,6 @@ class SpaceInvadersExactValue:
                     prevs = [(max(0, fy - 1), col0), (max(0, fy - 1), col1)]
         elif a0 == 1 and a1 == 0:
             c = col0
-            if fdir == 1:
-                prevs = [(fy, c - 1)] if c > 0 else [(max(0, fy - 1), c)]
-            else:
-                prevs = [(fy, c + 1)] if c < self.W - 1 else [(max(0, fy - 1), c)]
-        elif a0 == 0 and a1 == 1:
-            c = col1
             if fdir == 1:
                 prevs = [(fy, c - 1)] if c > 0 else [(max(0, fy - 1), c)]
             else:
@@ -222,20 +210,47 @@ class SpaceInvadersExactValue:
                     xp_next = xp
 
                 # 2. Shooting resolution
-                a0_next = a0
-                a1_next = a1
                 reward = 0.0
-
-                if a == 3:  # Laser shot straight up column xp
-                    hit_a0 = (a0 == 1 and xp == col0)
-                    hit_a1 = (a1 == 1 and xp == col1)
-
-                    if hit_a0:
+                if a0 == 1 and a1 == 1:
+                    if a == 3:
+                        hit_left = (xp == col0)
+                        hit_right = (xp == col1)
+                        if hit_left:
+                            # Left alien dies, right alien survives at col1
+                            a0_next = 1
+                            a1_next = 0
+                            col0_curr = col1
+                            col1_curr = -1
+                            reward += self.kill_reward
+                        elif hit_right:
+                            # Right alien dies, left alien survives at col0
+                            a0_next = 1
+                            a1_next = 0
+                            col0_curr = col0
+                            col1_curr = -1
+                            reward += self.kill_reward
+                        else:
+                            a0_next = 1
+                            a1_next = 1
+                            col0_curr = col0
+                            col1_curr = col1
+                    else:
+                        a0_next = 1
+                        a1_next = 1
+                        col0_curr = col0
+                        col1_curr = col1
+                else:  # Single alien alive (a0 == 1, a1 == 0)
+                    if a == 3 and xp == col0:
                         a0_next = 0
-                        reward += self.kill_reward
-                    elif hit_a1:
                         a1_next = 0
+                        col0_curr = -1
+                        col1_curr = -1
                         reward += self.kill_reward
+                    else:
+                        a0_next = 1
+                        a1_next = 0
+                        col0_curr = col0
+                        col1_curr = -1
 
                 # Check WIN: both aliens dead
                 if a0_next == 0 and a1_next == 0:
@@ -263,69 +278,46 @@ class SpaceInvadersExactValue:
                 if a0_next == 1 and a1_next == 1:
                     # 2-alien squad moving together
                     if fdir == 1:
-                        if col1 < self.W - 1:
-                            col0_next = col0 + 1
-                            col1_next = col1 + 1
+                        if col1_curr < self.W - 1:
+                            col0_next = col0_curr + 1
+                            col1_next = col1_curr + 1
                             fy_next = fy
                             fdir_next = 1
                         else:  # Hit right wall -> drop down and reverse
-                            col0_next = col0
-                            col1_next = col1
+                            col0_next = col0_curr
+                            col1_next = col1_curr
                             fy_next = fy + 1
                             fdir_next = -1
                     else:  # fdir == -1
-                        if col0 > 0:
-                            col0_next = col0 - 1
-                            col1_next = col1 - 1
+                        if col0_curr > 0:
+                            col0_next = col0_curr - 1
+                            col1_next = col1_curr - 1
                             fy_next = fy
                             fdir_next = -1
                         else:  # Hit left wall -> drop down and reverse
-                            col0_next = col0
-                            col1_next = col1
+                            col0_next = col0_curr
+                            col1_next = col1_curr
                             fy_next = fy + 1
                             fdir_next = 1
 
-                elif a0_next == 1 and a1_next == 0:
-                    # Only A0 alive
+                else:  # a0_next == 1 and a1_next == 0 (single alien)
                     col1_next = -1
                     if fdir == 1:
-                        if col0 < self.W - 1:
-                            col0_next = col0 + 1
+                        if col0_curr < self.W - 1:
+                            col0_next = col0_curr + 1
                             fy_next = fy
                             fdir_next = 1
                         else:
-                            col0_next = col0
+                            col0_next = col0_curr
                             fy_next = fy + 1
                             fdir_next = -1
                     else:
-                        if col0 > 0:
-                            col0_next = col0 - 1
+                        if col0_curr > 0:
+                            col0_next = col0_curr - 1
                             fy_next = fy
                             fdir_next = -1
                         else:
-                            col0_next = col0
-                            fy_next = fy + 1
-                            fdir_next = 1
-
-                else:  # a0_next == 0 and a1_next == 1
-                    # Only A1 alive
-                    col0_next = -1
-                    if fdir == 1:
-                        if col1 < self.W - 1:
-                            col1_next = col1 + 1
-                            fy_next = fy
-                            fdir_next = 1
-                        else:
-                            col1_next = col1
-                            fy_next = fy + 1
-                            fdir_next = -1
-                    else:
-                        if col1 > 0:
-                            col1_next = col1 - 1
-                            fy_next = fy
-                            fdir_next = -1
-                        else:
-                            col1_next = col1
+                            col0_next = col0_curr
                             fy_next = fy + 1
                             fdir_next = 1
 
