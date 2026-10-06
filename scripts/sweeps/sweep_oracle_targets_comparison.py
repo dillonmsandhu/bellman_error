@@ -46,6 +46,13 @@ from core.gradient_tracking import (
 from ppo.sampled_E import Transition
 
 
+def unwrap_state(state):
+    """Recursively unwraps wrapper state objects (e.g., LogEnvState) to access base state."""
+    while hasattr(state, "env_state"):
+        state = state.env_state
+    return state
+
+
 ALL_ENVS = [
     "fourrooms-dense",
     "FourRooms-misc",
@@ -151,6 +158,12 @@ def run_oracle_comparison_single_seed(
             next_obs, next_e_state, rew, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None))(
                 r_step, e_state, act, env_params
             )
+            raw_curr = unwrap_state(e_state)
+            raw_next = unwrap_state(info["real_next_state"])
+            if hasattr(raw_curr, "s_idx"):
+                info["curr_s_idx"] = raw_curr.s_idx
+                info["next_s_idx"] = raw_next.s_idx
+
             real_next = info["real_next_obs"]
             next_val = network.apply(t_state.params, real_next, method=network.value)
             trans = Transition(done, act, val, next_val, rew, pi.log_prob(act), obs, real_next, 0.0, info)
@@ -188,20 +201,29 @@ def run_oracle_comparison_single_seed(
         V_true = evaluator.compute_true_values_raw(old_pi_full)
         V_active = V_true[:n_states]
 
-        # Fast observation-to-state lookup
-        flat_obs = traj_batch.obs.reshape(-1, flat_stack.shape[-1])
-        dists = jnp.sum((flat_obs[:, None, :] - flat_stack[None, :, :]) ** 2, axis=-1)
-        curr_indices = jnp.argmin(dists, axis=-1)
-        v_oracle_curr = V_active[curr_indices].reshape(traj_batch.obs.shape[:-len(evaluator.obs_stack.shape) + 1])
+        # Oracle target lookup: prefer exact tabular state indices to avoid observation aliasing
+        # (e.g. SpaceInvaders where alien velocity/fdir is not encoded in visual observations)
+        if "curr_s_idx" in traj_batch.info:
+            v_oracle_curr = V_active[traj_batch.info["curr_s_idx"]]
+            v_oracle_next = jnp.where(
+                true_terminal,
+                0.0,
+                V_active[traj_batch.info["next_s_idx"]],
+            )
+        else:
+            flat_obs = traj_batch.obs.reshape(-1, flat_stack.shape[-1])
+            dists = jnp.sum((flat_obs[:, None, :] - flat_stack[None, :, :]) ** 2, axis=-1)
+            curr_indices = jnp.argmin(dists, axis=-1)
+            v_oracle_curr = V_active[curr_indices].reshape(traj_batch.obs.shape[:-len(evaluator.obs_stack.shape) + 1])
 
-        flat_next_obs = traj_batch.next_obs.reshape(-1, flat_stack.shape[-1])
-        next_dists = jnp.sum((flat_next_obs[:, None, :] - flat_stack[None, :, :]) ** 2, axis=-1)
-        next_indices = jnp.argmin(next_dists, axis=-1)
-        v_oracle_next = jnp.where(
-            true_terminal,
-            0.0,
-            V_active[next_indices].reshape(traj_batch.next_obs.shape[:-len(evaluator.obs_stack.shape) + 1]),
-        )
+            flat_next_obs = traj_batch.next_obs.reshape(-1, flat_stack.shape[-1])
+            next_dists = jnp.sum((flat_next_obs[:, None, :] - flat_stack[None, :, :]) ** 2, axis=-1)
+            next_indices = jnp.argmin(next_dists, axis=-1)
+            v_oracle_next = jnp.where(
+                true_terminal,
+                0.0,
+                V_active[next_indices].reshape(traj_batch.next_obs.shape[:-len(evaluator.obs_stack.shape) + 1]),
+            )
 
         # -------------------------------------------------------------
         # 5. Compute Empirical vs. Oracle Gradients
