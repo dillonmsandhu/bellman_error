@@ -113,14 +113,54 @@ class SpaceInvadersExactValue:
         self.P_win = jnp.asarray(P_win, dtype=jnp.float32)
         self.P_death = jnp.asarray(P_death, dtype=jnp.float32)
 
+    def _get_prev_alien_pos(
+        self, a0: int, a1: int, fy: int, col0: int, col1: int, fdir: int
+    ) -> List[Tuple[int, int]]:
+        """
+        Computes previous coordinates (prev_fy, prev_col) of living aliens
+        to build frame-stacked shadow channels that fully resolve fleet velocity
+        and march direction.
+        """
+        prevs = []
+        if a0 == 1 and a1 == 1:
+            if fdir == 1:
+                if col0 > 0:
+                    prevs = [(fy, col0 - 1), (fy, col1 - 1)]
+                else:
+                    # Bounced off left wall and dropped down
+                    prevs = [(max(0, fy - 1), col0), (max(0, fy - 1), col1)]
+            else:  # fdir == -1
+                if col1 < self.W - 1:
+                    prevs = [(fy, col0 + 1), (fy, col1 + 1)]
+                else:
+                    # Bounced off right wall and dropped down
+                    prevs = [(max(0, fy - 1), col0), (max(0, fy - 1), col1)]
+        elif a0 == 1 and a1 == 0:
+            c = col0
+            if fdir == 1:
+                prevs = [(fy, c - 1)] if c > 0 else [(max(0, fy - 1), c)]
+            else:
+                prevs = [(fy, c + 1)] if c < self.W - 1 else [(max(0, fy - 1), c)]
+        elif a0 == 0 and a1 == 1:
+            c = col1
+            if fdir == 1:
+                prevs = [(fy, c - 1)] if c > 0 else [(max(0, fy - 1), c)]
+            else:
+                prevs = [(fy, c + 1)] if c < self.W - 1 else [(max(0, fy - 1), c)]
+        return prevs
+
     def _build_obs_stack(self) -> jax.Array:
         """
-        Builds spatial grid observations of shape (num_states, H, W, 2).
-        Channel 0: Player position map (1.0 at [3, x_p]).
-        Channel 1: Alien position map (1.0 at living alien coordinates [fy, col]).
+        Builds spatial grid observations of shape (num_states, H, W, 4).
+        Frame t (current):
+          Channel 0: Player position map (1.0 at [H - 1, x_p]).
+          Channel 1: Living alien position map (1.0 at [fy, col]).
+        Frame t - 1 (shadow / frame-stacked past position):
+          Channel 2: Player shadow map (1.0 at [H - 1, x_p]).
+          Channel 3: Living alien shadow map (1.0 at [prev_fy, prev_col]).
         """
         if self.use_visual_obs:
-            obs = np.zeros((self.num_states, self.H, self.W, 2), dtype=np.float32)
+            obs = np.zeros((self.num_states, self.H, self.W, 4), dtype=np.float32)
             for i, (a0, a1, xp, fy, col0, col1, fdir) in enumerate(self.states):
                 # Channel 0: Player at row H - 1
                 obs[i, self.H - 1, xp, 0] = 1.0
@@ -129,6 +169,11 @@ class SpaceInvadersExactValue:
                     obs[i, fy, col0, 1] = 1.0
                 if a1 == 1:
                     obs[i, fy, col1, 1] = 1.0
+                # Channel 2: Player shadow
+                obs[i, self.H - 1, xp, 2] = 1.0
+                # Channel 3: Alien shadow (previous living alien positions)
+                for pfy, pcol in self._get_prev_alien_pos(a0, a1, fy, col0, col1, fdir):
+                    obs[i, pfy, pcol, 3] = 1.0
             return jnp.asarray(obs, dtype=jnp.float32)
         else:
             # Normalized feature vector: [xp/W, fy/H, col0/W, col1/W, fdir, a0, a1]
