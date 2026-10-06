@@ -154,8 +154,15 @@ def plot_seeds_grid(
     if n_combos > 16 or n_seeds <= 1:
         return None
     
-    cols = min(4, n_combos)
-    rows = (n_combos + cols - 1) // cols
+    if n_combos == 6:
+        rows, cols = 2, 3
+    elif n_combos <= 3:
+        rows, cols = 1, n_combos
+    elif n_combos == 4:
+        rows, cols = 2, 2
+    else:
+        cols = min(4, n_combos)
+        rows = (n_combos + cols - 1) // cols
     fig, axes = plt.subplots(rows, cols, figsize=(4.5 * cols, 3.5 * rows), squeeze=False)
     x = list(range(time_steps))
     xlabel_str = f"Update Steps ({steps_per_pi} env steps/update)" if steps_per_pi > 1 else "Update Steps"

@@ -80,8 +80,15 @@ def plot_all(all_data: Dict[str, Dict[str, Any]], out_dir: str):
     env_names = sorted(all_data.keys())
     n_envs = len(env_names)
 
-    cols = min(4, n_envs)
-    rows = (n_envs + cols - 1) // cols
+    if n_envs == 6:
+        rows, cols = 2, 3
+    elif n_envs <= 3:
+        rows, cols = 1, n_envs
+    elif n_envs == 4:
+        rows, cols = 2, 2
+    else:
+        cols = min(4, n_envs)
+        rows = (n_envs + cols - 1) // cols
 
     # Common horizon colors
     first_env = env_names[0]
