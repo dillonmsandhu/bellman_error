@@ -32,7 +32,7 @@ def make_train(base_config):
         k = config.get("k", 32)
 
         network, network_params = networks.initialize_network(
-            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config["LAYER_NORM"]
+            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config.get("LAYER_NORM", False)
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
 
