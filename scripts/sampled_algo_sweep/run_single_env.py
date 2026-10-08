@@ -3,14 +3,9 @@ scripts/sampled_algo_sweep/run_single_env.py
 
 Runs the 4 sampled algorithms:
   1. MC:          ppo/sampled_td_lambda.py with VALUE_LAMBDA = 1.0
-  2. TD(0):       ppo/sampled_td_lambda.py with VALUE_LAMBDA = 0.0
+  2. TD(0):       ppo/sampled_td.py (true online TD(0))
   3. TD(lambda):  ppo/sampled_td_lambda.py with VALUE_LAMBDA = 0.8
   4. E(0):        ppo/sampled_E.py         with RETURN_LAMBDA = 0.0 (corrected boundary loss)
-
-Sweeps 3 critic learning rates (0.5x, 1.0x, 2.0x base LR) per algorithm while keeping
-actor LR fixed at the base config rate.
-Uses appropriately long rollout horizons (e.g., NUM_STEPS = 256) to allow natural episode
-transitions without horizon truncation artifacts.
 """
 
 from __future__ import annotations
@@ -35,6 +30,7 @@ import matplotlib.pyplot as plt
 
 from core.config import config as base_cfg
 from ppo.sampled_td_lambda import make_train as make_td_train
+from ppo.sampled_td import make_train as make_td0_train
 from ppo.sampled_E import make_train as make_e_train
 
 matplotlib.rcParams["pdf.fonttype"] = 42
@@ -64,8 +60,8 @@ ALGORITHMS = [
     {
         "name": "TD0",
         "display_name": "TD(0)",
-        "train_builder": make_td_train,
-        "hparams": {"VALUE_LAMBDA": 0.0},
+        "train_builder": make_td0_train,
+        "hparams": {},
         "color": "#ff7f0e",
     },
     {

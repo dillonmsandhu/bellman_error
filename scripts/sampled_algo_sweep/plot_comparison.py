@@ -77,25 +77,41 @@ def load_env_results(env_dir: str):
 
 
 def find_best_condition(env_data, algo_name):
+    # Dynamically detect all LR multipliers present in env_data for this algorithm
+    discovered_mults = set()
+    for k in env_data.keys():
+        if k.startswith(f"{algo_name}_"):
+            parts = k.split("_")
+            if len(parts) >= 3 and parts[1].endswith("x"):
+                discovered_mults.add(parts[1])
+    mults = sorted(list(discovered_mults)) if discovered_mults else ["0.5x", "1.0x", "2.0x", "10.0x"]
+
+    # Determine metric: strictly prioritize V_start, then returned_episode_returns
+    metric_candidates = ["V_start", "returned_episode_returns", "mean_rew"]
+    chosen_metric = None
+    for m in metric_candidates:
+        if any(f"{algo_name}_{mult}_{m}" in env_data for mult in mults):
+            chosen_metric = m
+            break
+
+    if chosen_metric is None:
+        return None, None, None, None
+
     best_mult = None
     best_score = -float("inf")
     best_arr = None
-    metric_used = None
 
-    for mult in LR_MULTIPLIERS:
-        for metric in ["V_start", "returned_episode_returns"]:
-            key = f"{algo_name}_{mult}_{metric}"
-            if key in env_data:
-                arr = env_data[key]
-                score = np.mean(arr[:, -5:])
-                if score > best_score or best_mult is None:
-                    best_score = score
-                    best_mult = mult
-                    best_arr = arr
-                    metric_used = metric
-                break
+    for mult in mults:
+        key = f"{algo_name}_{mult}_{chosen_metric}"
+        if key in env_data:
+            arr = env_data[key]
+            score = np.mean(arr[:, -5:])
+            if score > best_score or best_mult is None:
+                best_score = score
+                best_mult = mult
+                best_arr = arr
 
-    return best_mult, best_score, best_arr, metric_used
+    return best_mult, best_score, best_arr, chosen_metric
 
 
 def main():
