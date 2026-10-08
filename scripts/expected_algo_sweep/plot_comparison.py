@@ -77,25 +77,32 @@ def load_env_results(env_dir: str):
 
 
 def find_best_condition(env_data, algo_name):
+    # Determine metric: strictly prioritize V_start (true value from evaluator), then returned_episode_returns
+    metric_candidates = ["V_start", "returned_episode_returns"]
+    chosen_metric = None
+    for m in metric_candidates:
+        if any(f"{algo_name}_{mult}_{m}" in env_data for mult in LR_MULTIPLIERS):
+            chosen_metric = m
+            break
+
+    if chosen_metric is None:
+        return None, None, None, None
+
     best_mult = None
     best_score = -float("inf")
     best_arr = None
-    metric_used = None
 
     for mult in LR_MULTIPLIERS:
-        for metric in ["v_true_start", "v_pred_start"]:
-            key = f"{algo_name}_{mult}_{metric}"
-            if key in env_data:
-                arr = env_data[key]
-                score = np.mean(arr[:, -10:])
-                if score > best_score or best_mult is None:
-                    best_score = score
-                    best_mult = mult
-                    best_arr = arr
-                    metric_used = metric
-                break
+        key = f"{algo_name}_{mult}_{chosen_metric}"
+        if key in env_data:
+            arr = env_data[key]
+            score = np.mean(arr[:, -10:])
+            if score > best_score or best_mult is None:
+                best_score = score
+                best_mult = mult
+                best_arr = arr
 
-    return best_mult, best_score, best_arr, metric_used
+    return best_mult, best_score, best_arr, chosen_metric
 
 
 def main():
@@ -153,7 +160,7 @@ def main():
 
         ax.set_xlabel("Updates", fontsize=10)
         if idx % 5 == 0:
-            ax.set_ylabel("Start Value $V(s_0)$", fontsize=10)
+            ax.set_ylabel("True Start Value $V^\\pi(s_0)$", fontsize=10)
         ax.legend(frameon=True, fontsize=8, loc="best")
 
     plt.suptitle("Expected Algorithm Comparison Across Environments (Best Critic LR per Algorithm)", fontsize=16, fontweight="bold", y=0.99)

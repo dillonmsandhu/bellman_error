@@ -83,7 +83,7 @@ def find_best_condition(env_data, algo_name):
     metric_used = None
 
     for mult in LR_MULTIPLIERS:
-        for metric in ["v_true_start", "v_pred_start", "mean_rew"]:
+        for metric in ["V_start", "returned_episode_returns"]:
             key = f"{algo_name}_{mult}_{metric}"
             if key in env_data:
                 arr = env_data[key]

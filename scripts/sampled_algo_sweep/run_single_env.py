@@ -155,7 +155,18 @@ def run_condition(
     metrics = out["metrics"]
     extracted = {"elapsed_seconds": elapsed}
 
-    for key in ["v_pred_start", "v_true_start", "mean_rew", "value_loss", "sq_err", "actor_loss", "entropy"]:
+    keys_to_extract = [
+        "V_start",
+        "returned_episode_returns",
+        "returned_episode_lengths",
+        "v_pred_start",
+        "mean_rew",
+        "value_loss",
+        "sq_err",
+        "actor_loss",
+        "entropy",
+    ]
+    for key in keys_to_extract:
         if key in metrics:
             extracted[key] = np.array(metrics[key])
 
@@ -232,9 +243,12 @@ def main():
 
         for lr_mult in [f"{m}x" for m in args.lr_multipliers]:
             data = all_results[algo_name][lr_mult]
-            if "v_true_start" in data:
-                # Score by final start value
-                score = np.mean(data["v_true_start"][:, -5:])
+            if "V_start" in data:
+                # Score by true start value computed by evaluator
+                score = np.mean(data["V_start"][:, -5:])
+            elif "returned_episode_returns" in data:
+                # Score by actual episode returns
+                score = np.mean(data["returned_episode_returns"][:, -5:])
             elif "mean_rew" in data:
                 score = np.mean(data["mean_rew"][:, -5:])
             else:
@@ -263,6 +277,9 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), dpi=150)
     ax_val, ax_rew = axes[0], axes[1]
 
+    val_metric_name = "V_start"
+    ret_metric_name = "returned_episode_returns"
+
     for algo in algorithms:
         name = algo["name"]
         best_info = best_results[name]
@@ -271,9 +288,10 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
         color = best_info["color"]
         label = f"{best_info['display_name']} ({mult})"
 
-        # Value Metric
-        val_metric = "v_true_start" if "v_true_start" in data else ("v_pred_start" if "v_pred_start" in data else None)
+        # True Value Metric (from evaluator), otherwise episode return
+        val_metric = "V_start" if "V_start" in data else ("returned_episode_returns" if "returned_episode_returns" in data else None)
         if val_metric is not None and val_metric in data:
+            val_metric_name = val_metric
             arr = data[val_metric]
             x = np.arange(arr.shape[1])
             m = np.mean(arr, axis=0)
@@ -281,24 +299,28 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
             ax_val.plot(x, m, label=label, color=color, lw=2.0)
             ax_val.fill_between(x, m - sem, m + sem, color=color, alpha=0.18)
 
-        # Reward / Return Metric
-        if "mean_rew" in data:
-            arr = data["mean_rew"]
+        # Return Metric (actual episode return)
+        ret_metric = "returned_episode_returns" if "returned_episode_returns" in data else ("mean_rew" if "mean_rew" in data else None)
+        if ret_metric is not None and ret_metric in data:
+            ret_metric_name = ret_metric
+            arr = data[ret_metric]
             x = np.arange(arr.shape[1])
             m = np.mean(arr, axis=0)
             sem = np.std(arr, axis=0) / np.sqrt(arr.shape[0])
             ax_rew.plot(x, m, label=label, color=color, lw=2.0)
             ax_rew.fill_between(x, m - sem, m + sem, color=color, alpha=0.18)
 
-    ax_val.set_title(f"{env_name}: Start State Value $V(s_0)$", fontsize=11, fontweight="bold")
+    val_title = "True Start Value $V^\\pi(s_0)$" if val_metric_name == "V_start" else "Episode Return"
+    ax_val.set_title(f"{env_name}: {val_title}", fontsize=11, fontweight="bold")
     ax_val.set_xlabel("PPO Updates", fontsize=10)
-    ax_val.set_ylabel("Estimated $V(s_0)$", fontsize=10)
+    ax_val.set_ylabel(val_title, fontsize=10)
     ax_val.grid(True, alpha=0.3)
     ax_val.legend(frameon=True, fontsize=9)
 
-    ax_rew.set_title(f"{env_name}: Mean Step Reward", fontsize=11, fontweight="bold")
+    ret_title = "Returned Episode Returns" if ret_metric_name == "returned_episode_returns" else "Mean Step Reward"
+    ax_rew.set_title(f"{env_name}: {ret_title}", fontsize=11, fontweight="bold")
     ax_rew.set_xlabel("PPO Updates", fontsize=10)
-    ax_rew.set_ylabel("Reward", fontsize=10)
+    ax_rew.set_ylabel(ret_title, fontsize=10)
     ax_rew.grid(True, alpha=0.3)
     ax_rew.legend(frameon=True, fontsize=9)
 
@@ -322,13 +344,13 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
             mult_str = f"{mult_val}x"
             data = all_results[name][mult_str]
 
-            val_metric = "v_true_start" if "v_true_start" in data else ("v_pred_start" if "v_pred_start" in data else None)
+            val_metric = "V_start" if "V_start" in data else ("returned_episode_returns" if "returned_episode_returns" in data else None)
             if val_metric is not None and val_metric in data:
                 arr = data[val_metric]
                 x = np.arange(arr.shape[1])
                 m = np.mean(arr, axis=0)
                 sem = np.std(arr, axis=0) / np.sqrt(arr.shape[0])
-                ax.plot(x, m, color=color, lw=1.8, label=f"$V(s_0)$")
+                ax.plot(x, m, color=color, lw=1.8, label=f"$V^\\pi(s_0)$")
                 ax.fill_between(x, m - sem, m + sem, color=color, alpha=0.2)
 
             ax.set_title(f"{algo['display_name']} | LR: {mult_str}", fontsize=9)
