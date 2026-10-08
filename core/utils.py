@@ -85,6 +85,8 @@ def save_plot(env_dir, env_name, steps_per_pi, episodic_return, title, logscale=
     plt.plot(x, y, 'o-', label=title)
     if logscale:
         plt.yscale('log') # Sets the scale for the active plot    
+    elif "cosine" in title.lower() or "rho" in title.lower() or "cossim" in title.lower():
+        plt.ylim(-1.05, 1.05)
     plt.xlabel("Env. Step")
     plt.ylabel(f"{title}")
     plt.title(env_name)
@@ -136,6 +138,8 @@ def save_multi_plot(env_dir, env_name, steps_per_pi, metrics_dict, title="Value_
     plt.ylabel(ylabel)
     if log_scale:
         plt.yscale('log')
+    elif "cosine" in ylabel.lower() or "rho" in ylabel.lower() or "cossim" in ylabel.lower() or "alignment" in title.lower():
+        plt.ylim(-1.05, 1.05)
     plt.title(f"{env_name} - {title}")
     
     # Adding a grid makes it much easier to compare error asymptotes visually

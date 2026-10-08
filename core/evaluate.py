@@ -114,6 +114,11 @@ def evaluate(run_config, make_train, run_dir, args, rng):
         "sigma_v_e_lambda": "sigma_v_e_lambda",
         "snr_v_e_lambda": "snr_v_e_lambda",
         "rho_v_e_lambda": "rho_v_e_lambda",
+        "E_exact": "E_exact",
+        "rho_samp_corr_exact": "rho_samp_corr_exact",
+        "rho_samp_uncorr_exact": "rho_samp_uncorr_exact",
+        "rho_exp_corr_exact": "rho_exp_corr_exact",
+        "rho_exp_uncorr_exact": "rho_exp_uncorr_exact",
     }
 
     data = get_metric("E", 1)
@@ -261,6 +266,44 @@ def evaluate(run_config, make_train, run_dir, args, rng):
             },
             False,
         ),
+        (
+            "E Uncorrected Comparison",
+            "E Loss",
+            {
+                "E_exact": "Exact E",
+                "E_exp_uncorr": "Exp Uncorr E",
+                "E_samp_uncorr": "Samp Uncorr E",
+            },
+            True,
+        ),
+        (
+            "E Corrected Comparison",
+            "E Loss",
+            {
+                "E_exact": "Exact E",
+                "E_exp_corr": "Exp Corr E",
+                "E_samp_corr": "Samp Corr E",
+            },
+            True,
+        ),
+        (
+            "E Gradient Similarity (Corrected)",
+            "Cosine Similarity (rho)",
+            {
+                "rho_exp_corr_exact": "Exp Corr vs Exact",
+                "rho_samp_corr_exact": "Samp Corr vs Exact",
+            },
+            False,
+        ),
+        (
+            "E Gradient Similarity (Uncorrected)",
+            "Cosine Similarity (rho)",
+            {
+                "rho_exp_uncorr_exact": "Exp Uncorr vs Exact",
+                "rho_samp_uncorr_exact": "Samp Uncorr vs Exact",
+            },
+            False,
+        ),
     ]
 
     # 2. Unpack title, ylabel, and metric_keys'
@@ -296,6 +339,96 @@ def evaluate(run_config, make_train, run_dir, args, rng):
                 ylabel="Total Variation Distance",
                 log_scale=False,
             )
+
+    # Composite 5-subplot figure for Sampling E Test
+    if get_metric("E_samp_corr") is not None:
+        try:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(1, 5, figsize=(25, 4.5))
+
+            # Subplot 1: Returns
+            ret = get_metric("V_start", 1)
+            if ret is None:
+                ret = get_metric("returned_episode_returns", 1)
+            if ret is not None:
+                x_ret = [i * steps_per_pi for i in range(len(ret))]
+                axes[0].plot(x_ret, ret, 'o-', color='tab:blue')
+            axes[0].set_title(f"Return ({run_config['ENV_NAME']})")
+            axes[0].set_xlabel("Env Steps")
+            axes[0].set_ylabel("Discounted Return")
+            axes[0].grid(True, alpha=0.3)
+
+            # Subplot 2: Uncorrected E losses
+            e_exact = get_metric("E_exact", 1)
+            e_exp_unc = get_metric("E_exp_uncorr", 1)
+            e_samp_unc = get_metric("E_samp_uncorr", 1)
+            if e_exact is not None:
+                x_e = [i * steps_per_pi for i in range(len(e_exact))]
+                axes[1].plot(x_e, e_exact, 'k-', label="Exact E", linewidth=2)
+                if e_exp_unc is not None:
+                    axes[1].plot(x_e, e_exp_unc, '--', color='tab:orange', label="Exp Uncorr E")
+                if e_samp_unc is not None:
+                    axes[1].plot(x_e, e_samp_unc, ':', color='tab:red', alpha=0.8, label="Samp Uncorr E")
+                axes[1].set_yscale('log')
+                axes[1].set_title("E Uncorrected Comparison")
+                axes[1].set_xlabel("Env Steps")
+                axes[1].set_ylabel("E Loss (log scale)")
+                axes[1].legend()
+                axes[1].grid(True, alpha=0.3)
+
+            # Subplot 3: Corrected E losses
+            e_exp_corr = get_metric("E_exp_corr", 1)
+            e_samp_corr = get_metric("E_samp_corr", 1)
+            if e_exact is not None:
+                axes[2].plot(x_e, e_exact, 'k-', label="Exact E", linewidth=2)
+                if e_exp_corr is not None:
+                    axes[2].plot(x_e, e_exp_corr, '--', color='tab:green', label="Exp Corr E")
+                if e_samp_corr is not None:
+                    axes[2].plot(x_e, e_samp_corr, ':', color='tab:purple', alpha=0.8, label="Samp Corr E")
+                axes[2].set_yscale('log')
+                axes[2].set_title("E Corrected Comparison")
+                axes[2].set_xlabel("Env Steps")
+                axes[2].set_ylabel("E Loss (log scale)")
+                axes[2].legend()
+                axes[2].grid(True, alpha=0.3)
+
+            # Subplot 4: Gradient similarity (corrected)
+            rho_exp_c = get_metric("rho_exp_corr_exact", 1)
+            rho_samp_c = get_metric("rho_samp_corr_exact", 1)
+            if rho_samp_c is not None:
+                x_rho = [i * steps_per_pi for i in range(len(rho_samp_c))]
+                if rho_exp_c is not None:
+                    axes[3].plot(x_rho, rho_exp_c, '--', color='tab:green', label="Exp Corr vs Exact")
+                axes[3].plot(x_rho, rho_samp_c, 'o-', color='tab:purple', label="Samp Corr vs Exact")
+                axes[3].set_title("Gradient Alignment (Corrected)")
+                axes[3].set_xlabel("Env Steps")
+                axes[3].set_ylabel("Cosine Similarity (rho)")
+                axes[3].set_ylim(-1.05, 1.05)
+                axes[3].legend()
+                axes[3].grid(True, alpha=0.3)
+
+            # Subplot 5: Gradient similarity (uncorrected)
+            rho_exp_u = get_metric("rho_exp_uncorr_exact", 1)
+            rho_samp_u = get_metric("rho_samp_uncorr_exact", 1)
+            if rho_samp_u is not None:
+                x_rho_u = [i * steps_per_pi for i in range(len(rho_samp_u))]
+                if rho_exp_u is not None:
+                    axes[4].plot(x_rho_u, rho_exp_u, '--', color='tab:orange', label="Exp Uncorr vs Exact")
+                axes[4].plot(x_rho_u, rho_samp_u, 'o-', color='tab:red', label="Samp Uncorr vs Exact")
+                axes[4].set_title("Gradient Alignment (Uncorrected)")
+                axes[4].set_xlabel("Env Steps")
+                axes[4].set_ylabel("Cosine Similarity (rho)")
+                axes[4].set_ylim(-1.05, 1.05)
+                axes[4].legend()
+                axes[4].grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            single_env_plot_path = os.path.join(env_dir, "E_sampling_summary.png")
+            plt.savefig(single_env_plot_path, dpi=200)
+            plt.close()
+            print(f"Saved single-env sampling E summary plot to {single_env_plot_path}")
+        except Exception as e:
+            print("Failed to save single-env sampling E summary plot:", e)
 
     if hasattr(args, "save_video") and args.save_video:
         try:

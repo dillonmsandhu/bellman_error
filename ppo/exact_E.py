@@ -139,6 +139,22 @@ def make_train(base_config):
                 metric.update(feature_metrics(
                     evaluator, network, train_state.params, random_policy=False,)
                 )
+            if config.get("LOG_SAMPLING_E_METRICS", False):
+                from core.sampling_e_metrics import compute_sampling_e_metrics
+                sampling_rng = jax.random.fold_in(rng, idx)
+                metric.update(compute_sampling_e_metrics(
+                    evaluator=evaluator,
+                    network=network,
+                    params=train_state.params,
+                    mu=mu,
+                    V_true=V_true,
+                    P_pi=P_pi,
+                    S_mat=S_mat,
+                    gamma=γ,
+                    rng=sampling_rng,
+                    num_trajectories=config.get("SAMPLING_E_NUM_TRAJECTORIES", 128),
+                    num_steps=config.get("SAMPLING_E_NUM_STEPS", 128),
+                ))
             # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)
             if is_continuous:
                 new_pi_dist = network.apply(train_state.params, S_states)[0]

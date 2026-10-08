@@ -113,6 +113,60 @@ def compute_all_exact_critic_gradients(
     return g_exact_E, g_exact_TD, g_exact_MC, start_val, rel_spectral_norm, alignments
 
 
+def compute_exact_e_lambda_critic_gradient(
+    train_state: TrainState,
+    evaluator,
+    network,
+    gamma: float,
+    lmbda: float,
+) -> Tuple[jnp.ndarray, float]:
+    """
+    Computes exact parameter gradient for the E(lambda) Dirichlet energy form:
+    L_{E(lambda)}(theta) = (V_true - v_theta)^T S_lambda (V_true - v_theta)
+    where S_lambda = 0.5 * (A L + L^T A^T) with L = (I - gamma * lambda * P_pi)^{-1} and A = D (I - gamma * P_pi).
+    """
+    S_states = evaluator.obs_stack
+    n_actions = evaluator.num_actions
+
+    # Extract current policy matrix pi(s, a)
+    pi_dist, _ = network.apply(train_state.params, S_states)
+    if hasattr(pi_dist, "probs"):
+        old_pi = pi_dist.probs
+    else:
+        action_basis = jnp.array(evaluator.directions, dtype=jnp.float32)
+        old_log_probs = jax.vmap(lambda a: pi_dist.log_prob(a), in_axes=0, out_axes=-1)(action_basis)
+        old_pi = jax.nn.softmax(old_log_probs, axis=-1)
+
+    terminal_policy = jnp.ones([1, n_actions], dtype=old_pi.dtype) / n_actions
+    old_pi_full = jnp.vstack([old_pi, terminal_policy])
+
+    # Value function & stationary distribution
+    V_true = evaluator.compute_true_values_raw(old_pi_full)
+    start_val = V_true[evaluator.start_idx]
+
+    mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
+    mu_full = jnp.append(mu, 0.0)
+    D = jnp.diag(mu_full)
+
+    P = evaluator.P
+    I = jnp.eye(evaluator.num_total_states)
+    P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
+
+    A_mat = D @ (I - gamma * P_pi)
+    gl = gamma * lmbda
+    L = jnp.linalg.inv(I - gl * P_pi)
+    AL = A_mat @ L
+    S_lambda = 0.5 * (AL + AL.T)
+
+    def exact_e_lambda_loss(params):
+        v = network.apply(params, S_states, method=network.value).squeeze()
+        diff = V_true - jnp.append(v, 0.0)
+        return diff.T @ S_lambda @ diff
+
+    g_exact_E_lambda = extract_critic_flat_grads(jax.grad(exact_e_lambda_loss)(train_state.params))
+    return g_exact_E_lambda, start_val
+
+
 def compute_sampled_critic_gradients(
     train_state: TrainState,
     network,

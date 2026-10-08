@@ -37,10 +37,10 @@ def make_train(base_config):
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
         gamma = config["GAMMA"]
-        k = config["k"]
+        k = config.get("k", 16)
 
         network, network_params = networks.initialize_network(
-            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config["LAYER_NORM"]
+            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config.get("LAYER_NORM", False)
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
 
@@ -86,8 +86,8 @@ def make_train(base_config):
             gae_lambda = config["GAE_LAMBDA"]
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], gae_lambda)
 
-            # RETURN_LAMBDA is strictly for critic targets
-            return_lambda = config["RETURN_LAMBDA"]
+            # RETURN_LAMBDA (or VALUE_LAMBDA) is strictly for critic targets; default 0.0 for E(0)
+            return_lambda = config.get("RETURN_LAMBDA", config.get("VALUE_LAMBDA", 0.0))
             _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
 
             is_timeout = traj_batch.info["is_timeout"]
