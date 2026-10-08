@@ -14,7 +14,12 @@ from gymnax.environments import spaces
 from flax.core import unfreeze, freeze
 
 def create_evaluator(config, env=None, env_params=None):
-    from envs.fourrooms import FourRoomsExactValue, FourRoomsDenseExactValue
+    from envs.fourrooms import (
+        FourRoomsExactValue,
+        FourRoomsDenseExactValue,
+        FourRoomsMinesExactValue,
+        FourRoomsMinesDenseExactValue,
+    )
     from envs.fourrooms_continuing import ContinuingFourRooms
     from envs.eightrooms import (
         EightRoomsExactValue,
@@ -43,6 +48,27 @@ def create_evaluator(config, env=None, env_params=None):
             fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
+        )
+    elif env_name in ['fourrooms-mines', 'fourrooms_mines', 'fourroom-mines', 'fourrooms-misc-mines']:
+        return FourRoomsMinesExactValue(
+            start_pos=getattr(env, 'pos_fixed', config.get('START_POS', (3, 1))),
+            goal_pos=getattr(env, 'goal_fixed', config.get('GOAL_POS', (11, 11))),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            mine_locations=config.get('MINE_LOCATIONS', None),
+            mine_reward=config.get('MINE_REWARD', 0.0),
+        )
+    elif env_name in ['fourrooms-mines-dense', 'fourrooms_mines_dense', 'fourroom-mines-dense']:
+        return FourRoomsMinesDenseExactValue(
+            start_pos=getattr(env, 'pos_fixed', config.get('START_POS', (3, 1))),
+            goal_pos=getattr(env, 'goal_fixed', config.get('GOAL_POS', (11, 11))),
+            fail_prob=getattr(env_params, 'fail_prob', config.get('FAIL_PROB', 0.25)),
+            gamma=config['GAMMA'],
+            use_visual_obs=config.get('USE_VISUAL_OBS', True),
+            mine_locations=config.get('MINE_LOCATIONS', None),
+            mine_reward=config.get('MINE_REWARD', 0.0),
             potential_scale=config.get('POTENTIAL_SCALE', 0.03125),
         )
     elif env_name in ['continuous-fourrooms', 'continuous_fourrooms', 'continuousfourrooms', 'continuous-fourrooms-misc', 'fourrooms-continuous']:
@@ -190,6 +216,8 @@ def make_env(config):
     tabular_env_names = [
         'whirlpool', 'whirlpool-misc', 'whirlpool-cont',
         'fourrooms', 'fourrooms-misc', 'fourrooms-cont', 'fourrooms-dense',
+        'fourrooms-mines', 'fourrooms_mines', 'fourroom-mines', 'fourrooms-misc-mines',
+        'fourrooms-mines-dense', 'fourrooms_mines_dense', 'fourroom-mines-dense',
         'eightrooms', 'eightrooms-misc', 'eightrooms-cont',
         'eightrooms-dense', 'eightrooms_dense', 'eightroomsdense', 'eightrooms-misc-dense',
         'eightrooms-dense-cont', 'eightrooms_dense_cont',
@@ -1000,18 +1028,20 @@ def e_lambda_fixed_loss_fn(params, network, traj_batch, gae, targets, config):
 
 def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma):
     """
-    Computes sampled E-loss (magnitude anchor + Dirichlet/Laplacian smoothness).
+    Computes sampled E-loss (magnitude anchor + Dirichlet/Laplacian smoothness + boundary correction).
     - For ongoing transitions and timeouts: smooths e_i against e_j.
     - For true terminal transitions (true_terminal=True): absorbing state error is 0,
       so (e_i - e_j)^2 = (e_i - 0)^2 = e_i^2.
+    - Boundary correction: 0.5 * gamma * (mean(e_i^2) - mean(e_j^2)) to match the exact matrix E objective.
     """
     e_i = targets_i - v_i
     e_j = jnp.where(true_terminal, 0.0, targets_j - v_j)
 
     magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
     laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
+    corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
 
-    value_loss = magnitude_loss + laplacian_loss
+    value_loss = magnitude_loss + laplacian_loss + corr_loss
     return value_loss, magnitude_loss, laplacian_loss
 
 

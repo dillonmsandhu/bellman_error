@@ -390,3 +390,207 @@ class FourRoomsDenseExactValue(FourRoomsExactValue):
         R_dense = np.where(np.array(P) > 0, R_dense, 0.0)
         return P, jnp.asarray(R_dense, dtype=jnp.float32)
 
+
+class FourRoomsMinesExactValue(FourRoomsExactValue):
+    """
+    Four Rooms environment with lethal mines placed along corridors.
+    Stepping on a mine terminates the agent and resets the trajectory to the start state.
+    Mines are strictly forbidden from doorway cells to ensure all rooms remain accessible.
+    """
+    DEFAULT_MINES = [(3, 3), (5, 8), (8, 2), (9, 9)]
+    DOORWAYS = [(3, 6), (6, 2), (7, 9), (10, 6)]
+
+    def __init__(
+        self,
+        size: int = 13,
+        fail_prob: float = 0.15,
+        gamma: float = 0.99,
+        episodic: bool = True,
+        use_visual_obs: bool = True,
+        goal_pos: Tuple[int, int] | None = None,
+        start_pos: Tuple[int, int] | None = None,
+        mine_locations: list | None = None,
+        mine_reward: float = 0.0,
+    ):
+        if mine_locations is None:
+            self.mine_locations = list(self.DEFAULT_MINES)
+        else:
+            self.mine_locations = [tuple(m) for m in mine_locations]
+
+        self.mine_reward = float(mine_reward)
+
+        # Validate mine locations
+        for m in self.mine_locations:
+            if m in self.DOORWAYS:
+                raise ValueError(f"Mine location {m} is in a doorway cell {self.DOORWAYS}. Doorways must be clear.")
+
+        super().__init__(
+            size=size,
+            fail_prob=fail_prob,
+            gamma=gamma,
+            episodic=episodic,
+            use_visual_obs=use_visual_obs,
+            goal_pos=goal_pos,
+            start_pos=start_pos,
+        )
+
+        # Ensure mines don't overlap with start or goal
+        start_tuple = tuple(int(x) for x in self.start)
+        goal_tuple = tuple(int(x) for x in self.goal)
+        for m in self.mine_locations:
+            if m == start_tuple:
+                raise ValueError(f"Mine location {m} cannot overlap with start position {start_tuple}.")
+            if m == goal_tuple:
+                raise ValueError(f"Mine location {m} cannot overlap with goal position {goal_tuple}.")
+
+        self.mine_indices = [self._coord_to_idx(jnp.array(m)) for m in self.mine_locations]
+
+    def _build_obs_stack(self) -> jax.Array:
+        obs = super()._build_obs_stack()
+        if self.use_visual_obs:
+            mine_map = np.zeros((self.N, self.N), dtype=np.float32)
+            for my, mx in self.mine_locations:
+                mine_map[my, mx] = 0.5
+            obs_np = np.array(obs)
+            # Channel 0 has walls (1.0). Overlay mines at 0.5 intensity.
+            obs_np[..., 0] = np.maximum(obs_np[..., 0], mine_map[None, ...])
+            obs = jnp.asarray(obs_np, dtype=jnp.float32)
+        return obs
+
+    def _build_env_dynamics(self, continuing: bool) -> Tuple[jax.Array, jax.Array]:
+        P = np.zeros((self.num_total_states, self.num_actions, self.num_total_states), dtype=np.float32)
+        R = np.zeros((self.num_total_states, self.num_actions, self.num_total_states), dtype=np.float32)
+
+        p_correct = 1.0 - self.fail_prob
+        p_wrong = self.fail_prob / 3.0
+        mine_locs_set = set(self.mine_locations)
+
+        for s_idx in range(self.num_states):
+            pos = self.coords[s_idx]
+
+            # 1. Goal state
+            if s_idx == self.goal_idx:
+                if not continuing:
+                    P[s_idx, :, self.terminal_idx] = 1.0
+                    R[s_idx, :, self.terminal_idx] = 1.0
+                else:
+                    P[s_idx, :, self.start_idx] = 1.0
+                    R[s_idx, :, self.start_idx] = 1.0
+                continue
+
+            # 2. Mine cells themselves (if ever initialized or queried directly)
+            if tuple(int(x) for x in pos) in mine_locs_set:
+                if not continuing:
+                    P[s_idx, :, self.terminal_idx] = 1.0
+                    R[s_idx, :, self.terminal_idx] = self.mine_reward
+                else:
+                    P[s_idx, :, self.start_idx] = 1.0
+                    R[s_idx, :, self.start_idx] = self.mine_reward
+                continue
+
+            # 3. Standard states
+            for chosen_a in range(self.num_actions):
+                for executed_a in range(self.num_actions):
+                    prob = p_correct if executed_a == chosen_a else p_wrong
+                    if prob == 0:
+                        continue
+
+                    next_pos = self._step_pos(pos, executed_a)
+                    next_pos_tuple = (int(next_pos[0]), int(next_pos[1]))
+
+                    # Check goal
+                    if next_pos_tuple == tuple(int(x) for x in self.goal):
+                        P[s_idx, chosen_a, self.goal_idx] += prob
+                        R[s_idx, chosen_a, self.goal_idx] = 0.0
+                    # Check mine: Stepping on a mine terminates immediately!
+                    # Target is purely mine_reward + gamma * 0 = mine_reward (no bootstrapping).
+                    elif next_pos_tuple in mine_locs_set:
+                        if not continuing:
+                            P[s_idx, chosen_a, self.terminal_idx] += prob
+                            R[s_idx, chosen_a, self.terminal_idx] = self.mine_reward
+                        else:
+                            P[s_idx, chosen_a, self.start_idx] += prob
+                            R[s_idx, chosen_a, self.start_idx] = self.mine_reward
+                    else:
+                        next_idx = self._coord_to_idx(next_pos)
+                        P[s_idx, chosen_a, next_idx] += prob
+
+        # Terminal state
+        P[self.terminal_idx, :, self.terminal_idx] = 1.0
+        R[self.terminal_idx, :, self.terminal_idx] = 0.0
+
+        return jnp.asarray(P, dtype=jnp.float32), jnp.asarray(R, dtype=jnp.float32)
+
+
+class FourRoomsMinesDenseExactValue(FourRoomsMinesExactValue):
+    """
+    Four Rooms with mines and potential-based reward shaping (PBRS).
+    """
+
+    def __init__(self, *args, potential_scale: float = 0.03125, **kwargs):
+        self.potential_scale = float(potential_scale)
+        super().__init__(*args, **kwargs)
+
+    def compute_shortest_path_distances(self) -> np.ndarray:
+        from collections import deque
+
+        coords_arr = np.array(self.coords)
+        coords_to_idx = {tuple(c): i for i, c in enumerate(coords_arr)}
+        mine_locs_set = set(self.mine_locations)
+        adj = [[] for _ in range(self.num_states)]
+        for i, (y, x) in enumerate(coords_arr):
+            if (int(y), int(x)) in mine_locs_set:
+                continue
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                ny, nx = int(y + dy), int(x + dx)
+                if (ny, nx) in coords_to_idx and (ny, nx) not in mine_locs_set:
+                    adj[i].append(coords_to_idx[(ny, nx)])
+
+        dist = np.zeros(self.num_total_states, dtype=np.float32)
+        dist_states = np.full(self.num_states, -1, dtype=np.int32)
+        dist_states[self.goal_idx] = 0
+        q = deque([self.goal_idx])
+        while q:
+            curr = q.popleft()
+            for nbr in adj[curr]:
+                if dist_states[nbr] == -1:
+                    dist_states[nbr] = dist_states[curr] + 1
+                    q.append(nbr)
+
+        dist[: self.num_states] = dist_states.astype(np.float32)
+        dist[self.terminal_idx] = 0.0
+        return dist
+
+    def _build_env_dynamics(self, continuing: bool) -> Tuple[jax.Array, jax.Array]:
+        P, R_sparse = super()._build_env_dynamics(continuing=continuing)
+        self.distances = self.compute_shortest_path_distances()
+        phi = - self.potential_scale * self.distances
+        phi[self.terminal_idx] = 0.0
+        self.potential = jnp.asarray(phi, dtype=jnp.float32)
+
+        gamma = self.gamma
+        phi_start = float(phi[self.start_idx])
+        F = gamma * phi[None, None, :] - phi[:, None, None]
+        F[self.terminal_idx, :, self.terminal_idx] = 0.0
+
+        R_dense = np.array(R_sparse) + F
+
+        # In episodic mode, transitions into terminal_idx from non-goal states (i.e. mines)
+        # represent dying and resetting to the start state.
+        # They should receive the potential jump gamma * phi(start) - phi(s),
+        # not gamma * phi(goal) - phi(s).
+        if not continuing:
+            P_arr = np.array(P)
+            R_sparse_arr = np.array(R_sparse)
+            for s in range(self.num_states):
+                if s != self.goal_idx:
+                    for a in range(self.num_actions):
+                        if P_arr[s, a, self.terminal_idx] > 0:
+                            R_dense[s, a, self.terminal_idx] = (
+                                R_sparse_arr[s, a, self.terminal_idx] + gamma * phi_start - phi[s]
+                            )
+
+        R_dense = np.where(np.array(P) > 0, R_dense, 0.0)
+        return P, jnp.asarray(R_dense, dtype=jnp.float32)
+
+
