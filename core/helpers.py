@@ -1026,22 +1026,33 @@ def e_lambda_fixed_loss_fn(params, network, traj_batch, gae, targets, config):
     return total_loss, losses
 
 
-def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma):
+def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant="oct8", is_start=None):
     """
-    Computes sampled E-loss (magnitude anchor + Dirichlet/Laplacian smoothness + boundary correction).
-    - For ongoing transitions and timeouts: smooths e_i against e_j.
-    - For true terminal transitions (true_terminal=True): absorbing state error is 0,
-      so (e_i - e_j)^2 = (e_i - 0)^2 = e_i^2.
-    - Boundary correction: 0.5 * gamma * (mean(e_i^2) - mean(e_j^2)) to match the exact matrix E objective.
+    Computes sampled E-loss across three formulations:
+    - 'sep14' / 'uncorrected': pure positive semi-definite (magnitude + Dirichlet smoothness)
+    - 'corrected': adds difference of second moments 0.5 * gamma * (mean(e_i^2) - mean(e_j^2))
+    - 'oct8': adds positive start-state anchor 0.5 * gamma * nu * mean(e_start^2)
     """
     e_i = targets_i - v_i
     e_j = jnp.where(true_terminal, 0.0, targets_j - v_j)
 
     magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
     laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
-    corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
 
-    value_loss = magnitude_loss + laplacian_loss + corr_loss
+    if variant in ["sep14", "uncorrected"]:
+        value_loss = magnitude_loss + laplacian_loss
+    elif variant in ["corrected", "corr"]:
+        corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
+        value_loss = magnitude_loss + laplacian_loss + corr_loss
+    else:  # "oct8" (default: start state anchor)
+        nu = jnp.mean(true_terminal)
+        if is_start is not None and jnp.any(is_start):
+            start_err_sq = jnp.sum(jnp.where(is_start, e_i ** 2, 0.0)) / jnp.maximum(jnp.sum(is_start), 1.0)
+        else:
+            start_err_sq = jnp.mean(e_i ** 2)
+        start_anchor_loss = 0.5 * gamma * nu * start_err_sq
+        value_loss = magnitude_loss + laplacian_loss + start_anchor_loss
+
     return value_loss, magnitude_loss, laplacian_loss
 
 
@@ -1111,10 +1122,11 @@ def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next
     Requires targets and aligned next_targets.
     """
     gamma = config["GAMMA"]
+    variant = config.get("E_VARIANT", "oct8")
     v_i = network.apply(params, obs_mb, method=network.value)
     v_j = network.apply(params, next_obs_mb, method=network.value)
     value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
-        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma
+        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma, variant=variant
     )
     return value_loss, {
         "value_loss": value_loss,
