@@ -65,6 +65,7 @@ TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-1000000}
 N_SEEDS=${N_SEEDS:-3}
 SEED=${SEED:-42}
 BASE_LR=${BASE_LR:-0.0003}
+CRITIC_EPOCHS=${CRITIC_EPOCHS:-"4 8"}
 
 echo "=========================================================="
 echo "Job ID:           ${SLURM_JOB_ID:-local}"
@@ -76,6 +77,7 @@ echo "Envs:             $NUM_ENVS"
 echo "Timesteps:        $TOTAL_TIMESTEPS"
 echo "Seeds:            $N_SEEDS (Base: $SEED)"
 echo "Base Critic LR:   $BASE_LR"
+echo "Critic Epochs:    $CRITIC_EPOCHS"
 echo "Output Directory: $OUT_DIR"
 echo "=========================================================="
 
@@ -87,7 +89,8 @@ $PYTHON scripts/sampled_algo_sweep/run_single_env.py \
     --n_seeds "$N_SEEDS" \
     --seed "$SEED" \
     --base_lr "$BASE_LR" \
-    --lr_multipliers 0.5 1.0 2.0 \
+    --critic_epochs $CRITIC_EPOCHS \
+    --lr_multipliers 0.5 1.0 2 10.0 \
     --out_dir "$OUT_DIR"
 
 echo "Task completed successfully for $ENV_NAME"

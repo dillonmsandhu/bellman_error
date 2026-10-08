@@ -77,41 +77,61 @@ def load_env_results(env_dir: str):
 
 
 def find_best_condition(env_data, algo_name):
-    # Dynamically detect all LR multipliers present in env_data for this algorithm
-    discovered_mults = set()
-    for k in env_data.keys():
-        if k.startswith(f"{algo_name}_"):
-            parts = k.split("_")
-            if len(parts) >= 3 and parts[1].endswith("x"):
-                discovered_mults.add(parts[1])
-    mults = sorted(list(discovered_mults)) if discovered_mults else ["0.5x", "1.0x", "2.0x", "10.0x"]
+    # Dynamically detect all conditions present in env_data for this algorithm
+    prefix = f"{algo_name}_"
+    metric_candidates = [
+        "V_start", "returned_episode_returns", "returned_episode_lengths",
+        "v_pred_start", "mean_rew", "value_loss", "sq_err", "actor_loss", "entropy"
+    ]
 
-    # Determine metric: strictly prioritize V_start, then returned_episode_returns
-    metric_candidates = ["V_start", "returned_episode_returns", "mean_rew"]
+    algo_keys = [k for k in env_data.keys() if k.startswith(prefix)]
+    if not algo_keys:
+        return None, None, None, None
+
+    discovered_conds = set()
+    for k in algo_keys:
+        rem = k[len(prefix):]
+        for m in metric_candidates:
+            if rem.endswith(f"_{m}"):
+                cond = rem[:-len(f"_{m}")]
+                discovered_conds.add(cond)
+                break
+
+    if not discovered_conds:
+        for k in algo_keys:
+            rem = k[len(prefix):]
+            parts = rem.rsplit("_", 1)
+            if len(parts) == 2:
+                discovered_conds.add(parts[0])
+
+    conditions = sorted(list(discovered_conds))
+
+    # Determine metric: strictly prioritize V_start, then returned_episode_returns, then mean_rew
+    eval_candidates = ["V_start", "returned_episode_returns", "mean_rew"]
     chosen_metric = None
-    for m in metric_candidates:
-        if any(f"{algo_name}_{mult}_{m}" in env_data for mult in mults):
+    for m in eval_candidates:
+        if any(f"{prefix}{cond}_{m}" in env_data for cond in conditions):
             chosen_metric = m
             break
 
     if chosen_metric is None:
         return None, None, None, None
 
-    best_mult = None
+    best_cond = None
     best_score = -float("inf")
     best_arr = None
 
-    for mult in mults:
-        key = f"{algo_name}_{mult}_{chosen_metric}"
+    for cond in conditions:
+        key = f"{prefix}{cond}_{chosen_metric}"
         if key in env_data:
             arr = env_data[key]
             score = np.mean(arr[:, -5:])
-            if score > best_score or best_mult is None:
+            if score > best_score or best_cond is None:
                 best_score = score
-                best_mult = mult
+                best_cond = cond
                 best_arr = arr
 
-    return best_mult, best_score, best_arr, chosen_metric
+    return best_cond, best_score, best_arr, chosen_metric
 
 
 def main():
@@ -160,6 +180,7 @@ def main():
                 summary_rows.append({
                     "environment": env_name,
                     "algorithm": algo_name,
+                    "best_condition": best_mult,
                     "best_critic_lr": best_mult,
                     "final_score": final_mean,
                     "final_sem": final_sem,

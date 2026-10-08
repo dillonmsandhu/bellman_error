@@ -6,6 +6,10 @@ Runs the 4 sampled algorithms:
   2. TD(0):       ppo/sampled_td.py (true online TD(0))
   3. TD(lambda):  ppo/sampled_td_lambda.py with VALUE_LAMBDA = 0.8
   4. E(0):        ppo/sampled_E.py         with RETURN_LAMBDA = 0.0 (corrected boundary loss)
+
+Sweeps critic epochs (default: 4, 8) and critic learning rates per algorithm while keeping
+actor LR fixed at the base config rate. For 8 critic epochs, the critic LR is halved (dropped 2x)
+to compensate for having twice as many gradient updates.
 """
 
 from __future__ import annotations
@@ -82,14 +86,16 @@ ALGORITHMS = [
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Sweep sampled algorithms over critic LRs on a single environment")
+    parser = argparse.ArgumentParser(description="Sweep sampled algorithms over critic LRs and epochs on a single environment")
     parser.add_argument("--env_name", type=str, default=None, help="Name of the environment")
     parser.add_argument("--env_idx", type=int, default=None, help="Index into ALL_ENVS (0-9)")
     parser.add_argument("--num_steps", type=int, default=256, help="Rollout steps per trajectory (default: 256)")
     parser.add_argument("--num_envs", type=int, default=64, help="Parallel environments (default: 64)")
     parser.add_argument("--total_timesteps", type=int, default=1000000, help="Total environment steps (default: 1,000,000)")
     parser.add_argument("--minibatch_size", type=int, default=1024, help="Minibatch size for PPO updates (default: 1024)")
-    parser.add_argument("--num_epochs", type=int, default=4, help="Epochs per PPO update (default: 4)")
+    parser.add_argument("--num_epochs", type=int, default=4, help="Base epochs per PPO update (default: 4)")
+    parser.add_argument("--critic_epochs", "--num_critic_epochs", type=int, nargs="+", default=[4, 8],
+                        dest="critic_epochs", help="Critic epochs to sweep over (default: 4 8)")
     parser.add_argument("--n_seeds", type=int, default=3, help="Number of random seeds (default: 3)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
     parser.add_argument("--base_lr", type=float, default=3e-4, help="Base critic learning rate (default: 3e-4)")
@@ -109,6 +115,7 @@ def build_env_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
         "TOTAL_TIMESTEPS": args.total_timesteps,
         "MINIBATCH_SIZE": args.minibatch_size,
         "NUM_EPOCHS": args.num_epochs,
+        "NUM_EPOCHS_ACTOR": args.num_epochs,
         "N_SEEDS": args.n_seeds,
         "SEED": args.seed,
         "NETWORK_TYPE": "mlp" if is_mc else "cnn",
@@ -129,15 +136,21 @@ def run_condition(
     config: Dict[str, Any],
     algo_hparams: Dict[str, Any],
     critic_lr: float,
+    critic_epochs: int,
     num_seeds: int,
     base_seed: int,
 ) -> Dict[str, np.ndarray]:
-    """Runs a single algorithm + critic LR condition across multiple seeds via jax.vmap."""
+    """Runs a single algorithm + critic LR + critic epochs condition across multiple seeds via jax.vmap."""
+    cfg = config.copy()
+    cfg["NUM_EPOCHS_CRITIC"] = critic_epochs
+
     hparams = algo_hparams.copy()
     hparams["LR"] = critic_lr
     hparams["LR_END"] = critic_lr
+    hparams["CRITIC_LR"] = critic_lr
+    hparams["CRITIC_LR_END"] = critic_lr
 
-    train_fn = train_builder(config)
+    train_fn = train_builder(cfg)
     vmapped_train = jax.jit(jax.vmap(train_fn, in_axes=(0, None)))
 
     rng = jax.random.PRNGKey(base_seed)
@@ -188,7 +201,9 @@ def main():
     print(f"Total Timesteps:   {args.total_timesteps:,}")
     print(f"Seeds:             {args.n_seeds} (base seed {args.seed})")
     print(f"Base Critic LR:    {args.base_lr}")
+    print(f"Critic Epochs:     {args.critic_epochs}")
     print(f"LR Multipliers:    {args.lr_multipliers}")
+    print(f"LR Scaling Rule:   Critic LR scaled by (4.0 / num_critic_epochs) (2x drop for 8 epochs)")
     print(f"Output Directory:  {env_dir}")
     print("=" * 80)
 
@@ -196,49 +211,54 @@ def main():
 
     # Save configuration
     cfg_to_save = {k: v for k, v in cfg.items() if isinstance(v, (int, float, str, bool, list))}
+    cfg_to_save["CRITIC_EPOCHS_SWEEP"] = args.critic_epochs
+    cfg_to_save["LR_MULTIPLIERS_SWEEP"] = args.lr_multipliers
     with open(os.path.join(env_dir, "config.json"), "w") as f:
         json.dump(cfg_to_save, f, indent=2)
 
-    critic_lrs = [args.base_lr * m for m in args.lr_multipliers]
     all_results = {}
-    summary_data = []
 
     for algo in ALGORITHMS:
         algo_name = algo["name"]
         all_results[algo_name] = {}
         print(f"\n--- Running Algorithm: {algo['display_name']} ---")
 
-        for lr_mult, lr in zip(args.lr_multipliers, critic_lrs):
-            print(f"  Critic LR = {lr:.6f} ({lr_mult}x base)...", end="", flush=True)
-            res = run_condition(
-                train_builder=algo["train_builder"],
-                config=cfg,
-                algo_hparams=algo["hparams"],
-                critic_lr=lr,
-                num_seeds=args.n_seeds,
-                base_seed=args.seed,
-            )
-            all_results[algo_name][f"{lr_mult}x"] = res
-            print(f" Done ({res['elapsed_seconds']:.1f}s)")
+        for c_epochs in args.critic_epochs:
+            # Drop learning rate 2x when running 8 epochs (scaled by 4.0 / c_epochs)
+            epoch_scale = 4.0 / float(c_epochs)
+            for lr_mult in args.lr_multipliers:
+                eff_lr = args.base_lr * lr_mult * epoch_scale
+                cond_name = f"ep{c_epochs}_{lr_mult}x"
+                print(f"  Epochs = {c_epochs}, LR Mult = {lr_mult}x -> Eff LR = {eff_lr:.6f}...", end="", flush=True)
+                res = run_condition(
+                    train_builder=algo["train_builder"],
+                    config=cfg,
+                    algo_hparams=algo["hparams"],
+                    critic_lr=eff_lr,
+                    critic_epochs=c_epochs,
+                    num_seeds=args.n_seeds,
+                    base_seed=args.seed,
+                )
+                all_results[algo_name][cond_name] = res
+                print(f" Done ({res['elapsed_seconds']:.1f}s)")
 
     # Save raw array metrics
     np.savez_compressed(os.path.join(env_dir, "results.npz"), **{
-        f"{algo}_{mult}_{k}": v
-        for algo, lrs in all_results.items()
-        for mult, data in lrs.items()
+        f"{algo}_{cond}_{k}": v
+        for algo, conds in all_results.items()
+        for cond, data in conds.items()
         for k, v in data.items()
         if isinstance(v, np.ndarray)
     })
 
-    # Find best LR for each algorithm
+    # Find best condition for each algorithm
     best_results = {}
     for algo in ALGORITHMS:
         algo_name = algo["name"]
-        best_mult = None
+        best_cond = None
         best_score = -float("inf")
 
-        for lr_mult in [f"{m}x" for m in args.lr_multipliers]:
-            data = all_results[algo_name][lr_mult]
+        for cond_name, data in all_results[algo_name].items():
             if "V_start" in data:
                 # Score by true start value computed by evaluator
                 score = np.mean(data["V_start"][:, -5:])
@@ -250,26 +270,27 @@ def main():
             else:
                 score = 0.0
 
-            if score > best_score or best_mult is None:
+            if score > best_score or best_cond is None:
                 best_score = score
-                best_mult = lr_mult
+                best_cond = cond_name
 
         best_results[algo_name] = {
-            "best_mult": best_mult,
-            "data": all_results[algo_name][best_mult],
+            "best_cond": best_cond,
+            "best_mult": best_cond,  # Alias for compatibility
+            "data": all_results[algo_name][best_cond],
             "display_name": algo["display_name"],
             "color": algo["color"],
         }
-        print(f"Algorithm {algo['name']:12s} | Best Critic LR: {best_mult} (Score: {best_score:.4f})")
+        print(f"Algorithm {algo['name']:12s} | Best Condition: {best_cond} (Score: {best_score:.4f})")
 
     # Generate Environment-level Plots
-    plot_env_summary(env_dir, env_name, ALGORITHMS, all_results, best_results, args.lr_multipliers)
+    plot_env_summary(env_dir, env_name, ALGORITHMS, all_results, best_results, args.critic_epochs, args.lr_multipliers)
     print(f"\nResults successfully saved to: {env_dir}")
 
 
-def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, lr_multipliers):
+def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, critic_epochs, lr_multipliers):
     """Generates comparison plots for the environment."""
-    # 1. Best-LR Comparison Plot
+    # 1. Best-Condition Comparison Plot
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), dpi=150)
     ax_val, ax_rew = axes[0], axes[1]
 
@@ -280,9 +301,9 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
         name = algo["name"]
         best_info = best_results[name]
         data = best_info["data"]
-        mult = best_info["best_mult"]
+        cond = best_info["best_cond"]
         color = best_info["color"]
-        label = f"{best_info['display_name']} ({mult})"
+        label = f"{best_info['display_name']} ({cond})"
 
         # True Value Metric (from evaluator), otherwise episode return
         val_metric = "V_start" if "V_start" in data else ("returned_episode_returns" if "returned_episode_returns" in data else None)
@@ -325,20 +346,25 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
     plt.savefig(os.path.join(env_dir, "best_lr_comparison.png"), bbox_inches="tight", dpi=200)
     plt.close()
 
-    # 2. Comprehensive LR Sweep Grid Plot
-    fig, axes = plt.subplots(len(algorithms), len(lr_multipliers), figsize=(4 * len(lr_multipliers), 3 * len(algorithms)), dpi=120, sharex=True)
-    if len(algorithms) == 1:
+    # 2. Comprehensive Sweep Grid Plot (all epochs and LR multipliers)
+    all_conditions = [f"ep{c}_{m}x" for c in critic_epochs for m in lr_multipliers]
+    n_cols = len(all_conditions)
+    n_rows = len(algorithms)
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 2.8 * n_rows), dpi=120, sharex=True)
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
         axes = np.expand_dims(axes, 0)
-    if len(lr_multipliers) == 1:
+    elif n_cols == 1:
         axes = np.expand_dims(axes, 1)
 
     for r_idx, algo in enumerate(algorithms):
         name = algo["name"]
         color = algo["color"]
-        for c_idx, mult_val in enumerate(lr_multipliers):
+        for c_idx, cond_name in enumerate(all_conditions):
             ax = axes[r_idx, c_idx]
-            mult_str = f"{mult_val}x"
-            data = all_results[name][mult_str]
+            data = all_results[name].get(cond_name, {})
 
             val_metric = "V_start" if "V_start" in data else ("returned_episode_returns" if "returned_episode_returns" in data else None)
             if val_metric is not None and val_metric in data:
@@ -349,14 +375,14 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
                 ax.plot(x, m, color=color, lw=1.8, label=f"$V^\\pi(s_0)$")
                 ax.fill_between(x, m - sem, m + sem, color=color, alpha=0.2)
 
-            ax.set_title(f"{algo['display_name']} | LR: {mult_str}", fontsize=9)
+            ax.set_title(f"{algo['name']} | {cond_name}", fontsize=8)
             ax.grid(True, alpha=0.3)
             if c_idx == 0:
-                ax.set_ylabel(algo["name"], fontsize=10, fontweight="bold")
-            if r_idx == len(algorithms) - 1:
-                ax.set_xlabel("PPO Updates", fontsize=9)
+                ax.set_ylabel(algo["name"], fontsize=9, fontweight="bold")
+            if r_idx == n_rows - 1:
+                ax.set_xlabel("PPO Updates", fontsize=8)
 
-    plt.suptitle(f"{env_name}: Critic LR Sweep Across Sampled Algorithms", fontsize=12, fontweight="bold", y=1.01)
+    plt.suptitle(f"{env_name}: Critic Epoch & LR Sweep Across Sampled Algorithms", fontsize=12, fontweight="bold", y=1.01)
     plt.tight_layout()
     plt.savefig(os.path.join(env_dir, "all_lrs_grid.pdf"), bbox_inches="tight")
     plt.savefig(os.path.join(env_dir, "all_lrs_grid.png"), bbox_inches="tight", dpi=200)
