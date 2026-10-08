@@ -270,18 +270,45 @@ def make_warmup_linear_schedule(init_lr, end_lr, total_steps, warmup_ratio=0.1):
     )
     return optax.join_schedules([warmup_fn, decay_fn], [warmup_steps])
 
+import flax.struct as struct
+
+class ActorCriticTrainState(TrainState):
+    actor_tx: optax.GradientTransformation = struct.field(pytree_node=False)
+    critic_tx: optax.GradientTransformation = struct.field(pytree_node=False)
+    actor_opt_state: optax.OptState = struct.field(pytree_node=True)
+    critic_opt_state: optax.OptState = struct.field(pytree_node=True)
+
+    def apply_actor_gradients(self, *, grads, **kwargs):
+        updates, new_opt_state = self.actor_tx.update(grads, self.actor_opt_state, self.params)
+        new_params = optax.apply_updates(self.params, updates)
+        return self.replace(step=self.step + 1, params=new_params, actor_opt_state=new_opt_state, **kwargs)
+
+    def apply_critic_gradients(self, *, grads, **kwargs):
+        updates, new_opt_state = self.critic_tx.update(grads, self.critic_opt_state, self.params)
+        new_params = optax.apply_updates(self.params, updates)
+        return self.replace(step=self.step + 1, params=new_params, critic_opt_state=new_opt_state, **kwargs)
+
+    def apply_gradients(self, *, grads, **kwargs):
+        updates, new_opt_state = self.tx.update(grads, self.opt_state, self.params)
+        new_params = optax.apply_updates(self.params, updates)
+        return self.replace(step=self.step + 1, params=new_params, opt_state=new_opt_state, **kwargs)
+
 def initialize_flax_train_state(config, network, params):
     # --- PPO Agent Scheduler & Optimizer ---
-    total_grad_steps = config["NUM_UPDATES"] * config.get("NUM_MINIBATCHES", 1) * config["NUM_EPOCHS"]
+    actor_epochs = config.get("NUM_EPOCHS_ACTOR", config.get("NUM_EPOCHS", 4))
+    critic_epochs = config.get("NUM_EPOCHS_CRITIC", config.get("NUM_EPOCHS", 4))
+    total_actor_steps = config["NUM_UPDATES"] * config.get("NUM_MINIBATCHES", 1) * actor_epochs
+    total_critic_steps = config["NUM_UPDATES"] * config.get("NUM_MINIBATCHES", 1) * critic_epochs
+    total_grad_steps = config["NUM_UPDATES"] * config.get("NUM_MINIBATCHES", 1) * config.get("NUM_EPOCHS", 4)
 
     if config.get('OPTIMIZER','AdamW')=='AdamW':
         # Separate learning rates for actor and critic
         actor_lr = config.get("ACTOR_LR", config["LR"])
-        critic_lr = config["LR"] # Let LR dictate the value net LR
+        critic_lr = config.get("CRITIC_LR", config["LR"]) # Let CRITIC_LR or LR dictate the value net LR
         actor_lr_end = config.get("ACTOR_LR_END")
         if actor_lr_end is None:
             actor_lr_end = actor_lr
-        critic_lr_end = config.get("LR_END")
+        critic_lr_end = config.get("CRITIC_LR_END", config.get("LR_END"))
         if critic_lr_end is None:
             critic_lr_end = critic_lr
 
@@ -290,13 +317,13 @@ def initialize_flax_train_state(config, network, params):
         actor_lr_scheduler = make_warmup_linear_schedule(
             init_lr=actor_lr,
             end_lr=actor_lr_end,
-            total_steps=total_grad_steps,
+            total_steps=total_actor_steps,
             warmup_ratio=warmup_ratio,
         )
         critic_lr_scheduler = make_warmup_linear_schedule(
             init_lr=critic_lr,
             end_lr=critic_lr_end,
-            total_steps=total_grad_steps,
+            total_steps=total_critic_steps,
             warmup_ratio=warmup_ratio,
         )
 
@@ -313,21 +340,32 @@ def initialize_flax_train_state(config, network, params):
                         eps=config.get('ADAM_EPS', 1e-5)),
         )
 
+        def param_labels_actor(path, val):
+            return any('actor' in getattr(p, 'key', '') or 'actor' in str(p) for p in path)
+
         def param_labels(path, val):
-            # The actor gets separated out, and the critic gets the rest.
-            # Assuming standard naming in your single flax class like 'actor_cnn', 'actor_head', 'actor_mlp'
-            is_actor = any('actor' in getattr(p, 'key', '') or 'actor' in str(p) for p in path)
+            is_actor = param_labels_actor(path, val)
             return 'actor' if is_actor else 'critic'
+
+        actor_mask = jax.tree_util.tree_map_with_path(param_labels_actor, params)
+        critic_mask = jax.tree_util.tree_map(lambda x: not x, actor_mask)
+
+        actor_tx_masked = optax.masked(actor_tx, actor_mask)
+        critic_tx_masked = optax.masked(critic_tx, critic_mask)
 
         tx = optax.multi_transform(
             {'actor': actor_tx, 'critic': critic_tx},
             jax.tree_util.tree_map_with_path(param_labels, params)
         )
 
-    train_state = TrainState.create(
+    train_state = ActorCriticTrainState.create(
         apply_fn=network.apply,
         params=params,
         tx=tx,
+        actor_tx=actor_tx_masked,
+        critic_tx=critic_tx_masked,
+        actor_opt_state=actor_tx_masked.init(params),
+        critic_opt_state=critic_tx_masked.init(params),
     )
     return train_state
 

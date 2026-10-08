@@ -1045,6 +1045,84 @@ def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma):
     return value_loss, magnitude_loss, laplacian_loss
 
 
+def ppo_actor_loss(params, network, obs_mb, action_mb, log_prob_mb, advantages_mb, config):
+    """
+    Standard PPO actor clipped surrogate objective with entropy bonus.
+    """
+    pi = network.apply(params, obs_mb, method=network.policy)
+    log_prob = pi.log_prob(action_mb)
+    entropy = pi.entropy().mean()
+    ratio = jnp.exp(log_prob - log_prob_mb)
+
+    adv_norm = post_process_advantage(advantages_mb, config)
+
+    surr1 = ratio * adv_norm
+    surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * adv_norm
+    actor_loss = -jnp.minimum(surr1, surr2).mean()
+
+    total_loss = actor_loss - entropy * config.get("ENT_COEF", 0.01)
+    return total_loss, {
+        "actor_loss": actor_loss,
+        "entropy": entropy,
+    }
+
+
+def critic_td_lambda_loss(params, network, obs_mb, targets_mb, value_mb, config):
+    """
+    TD(lambda) critic loss with optional value function clipping.
+    Requires precomputed lambda targets (e.g. from helpers.calculate_gae).
+    """
+    value_pred = network.apply(params, obs_mb, method=network.value)
+    if config.get("VF_CLIP", 0.0) > 0:
+        e = config["VF_CLIP"]
+        value_pred_clipped = value_mb + (value_pred - value_mb).clip(-e, e)
+        value_losses = jnp.square(value_pred - targets_mb)
+        value_losses_clipped = jnp.square(value_pred_clipped - targets_mb)
+        value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    else:
+        value_loss = 0.5 * jnp.mean((value_pred - targets_mb) ** 2)
+    return value_loss, {"value_loss": value_loss}
+
+
+def critic_td_zero_loss(params, network, obs_mb, next_obs_mb, reward_mb, mask_mb, value_mb, config):
+    """
+    TD(0) critic loss computed from scratch each minibatch using inference on v(s') and stop_gradient.
+    Requires next_obs, reward, and bootstrap_mask (1 - (done & ~is_timeout)).
+    """
+    value_pred = network.apply(params, obs_mb, method=network.value)
+    next_value_pred = network.apply(params, next_obs_mb, method=network.value)
+    td_target = reward_mb + config["GAMMA"] * mask_mb * next_value_pred
+    td_target = jax.lax.stop_gradient(td_target)
+
+    if config.get("VF_CLIP", 0.0) > 0:
+        e = config["VF_CLIP"]
+        value_pred_clipped = value_mb + (value_pred - value_mb).clip(-e, e)
+        value_losses = jnp.square(value_pred - td_target)
+        value_losses_clipped = jnp.square(value_pred_clipped - td_target)
+        value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    else:
+        value_loss = 0.5 * jnp.mean((value_pred - td_target) ** 2)
+    return value_loss, {"value_loss": value_loss}
+
+
+def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb, config):
+    """
+    Sampled E-loss for critic (magnitude anchor + Dirichlet/Laplacian smoothness + boundary correction).
+    Requires targets and aligned next_targets.
+    """
+    gamma = config["GAMMA"]
+    v_i = network.apply(params, obs_mb, method=network.value)
+    v_j = network.apply(params, next_obs_mb, method=network.value)
+    value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
+        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma
+    )
+    return value_loss, {
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "laplacian_loss": laplacian_loss,
+    }
+
+
 def e_loss_fn(
     params,
     network,
