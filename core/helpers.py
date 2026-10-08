@@ -190,15 +190,15 @@ def create_evaluator(config, env=None, env_params=None):
         return MountainCarExactValue(
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', False),
-            goal_reward=config.get('GOAL_REWARD', 100.0),
+            goal_reward=config.get('GOAL_REWARD', 1.0),
         )
     elif env_name in ['mountaincar-dense', 'mountaincardense']:
         from envs.mountaincar_exact import MountainCarDenseExactValue
         return MountainCarDenseExactValue(
             gamma=config['GAMMA'],
             use_visual_obs=config.get('USE_VISUAL_OBS', False),
-            potential_scale=config.get('POTENTIAL_SCALE', 20.0),
-            goal_reward=config.get('GOAL_REWARD', 100.0),
+            potential_scale=config.get('POTENTIAL_SCALE', 20.0/100.0),
+            goal_reward=config.get('GOAL_REWARD', 1.0),
         )
     return None
 
