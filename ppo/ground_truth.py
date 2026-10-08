@@ -134,7 +134,6 @@ def make_train(base_config):
                 "V_mean": V.mean(),
                 "Value_Grid": evaluator.get_value_grid(V),
             }
-            print(idx)
             runner_state = (train_state, idx + 1)
             return runner_state, metric
 

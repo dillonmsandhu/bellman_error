@@ -1,11 +1,11 @@
-# Sampled version of PPO: TD(lambda) for critic, standard GAE for actor
+# Sampled version of PPO: TD(0) for critic, standard GAE for actor
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
 import core.utils as utils
 import core.bellman_error as bellman_error
 
-SAVE_DIR = "ppo/td_lambda"
+SAVE_DIR = "ppo/sampled_td"
 
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -79,14 +79,17 @@ def make_train(base_config):
                 _env_step, env_step_state, None, config["NUM_STEPS"]
             )
 
-            # 2. ADVANTAGE AND TARGET CALCULATIONS
+            # 2. ADVANTAGE CALCULATION
             # GAE_LAMBDA is strictly for policy advantages
             gae_lambda = config.get("GAE_LAMBDA", 0.95)
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], gae_lambda)
 
-            # VALUE_LAMBDA is strictly for critic targets
-            value_lambda = config.get("VALUE_LAMBDA", 0.95)
-            _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], value_lambda)
+            # Terminal mask for TD(0) bootstrapping
+            if "is_timeout" in traj_batch.info:
+                true_terminal = traj_batch.done & ~traj_batch.info["is_timeout"]
+            else:
+                true_terminal = traj_batch.done
+            bootstrap_mask = (1.0 - true_terminal).astype(jnp.float32)
 
             # 3. ACTOR UPDATE EPOCHS
             num_epochs_actor = config.get("NUM_EPOCHS_ACTOR", config.get("NUM_EPOCHS", 4))
@@ -124,16 +127,16 @@ def make_train(base_config):
             else:
                 actor_loss_info = {"actor_loss": jnp.array(0.0), "entropy": jnp.array(0.0)}
 
-            # 4. CRITIC UPDATE EPOCHS (TD(lambda))
+            # 4. CRITIC UPDATE EPOCHS (TD(0): dynamic targets computed from v(s') with stop_gradient)
             num_epochs_critic = config.get("NUM_EPOCHS_CRITIC", config.get("NUM_EPOCHS", 4))
 
             def _update_critic_epoch(update_state, unused):
                 def _update_critic_minibatch(train_state, batch_info):
-                    obs_mb, targets_mb, value_mb = batch_info
+                    obs_mb, next_obs_mb, reward_mb, mask_mb, value_mb = batch_info
 
                     def critic_loss_fn(params):
-                        val_loss, val_metrics = helpers.critic_td_lambda_loss(
-                            params, network, obs_mb, targets_mb, value_mb, config
+                        val_loss, val_metrics = helpers.critic_td_zero_loss(
+                            params, network, obs_mb, next_obs_mb, reward_mb, mask_mb, value_mb, config
                         )
                         scaled_loss = config.get("VF_COEF", 0.5) * val_loss
                         return scaled_loss, val_metrics
@@ -147,7 +150,9 @@ def make_train(base_config):
                 rng, _rng = jax.random.split(rng)
                 critic_batch = (
                     traj_batch.obs,
-                    targets,
+                    traj_batch.next_obs,
+                    traj_batch.reward,
+                    bootstrap_mask,
                     traj_batch.value,
                 )
                 minibatches = helpers.shuffle_and_batch(_rng, critic_batch, config["NUM_MINIBATCHES"])

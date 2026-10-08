@@ -16,7 +16,6 @@ class Transition(NamedTuple):
     log_prob: jnp.ndarray
     obs: jnp.ndarray
     next_obs: jnp.ndarray
-    next_target: jnp.ndarray
     info: jnp.ndarray
 
 def make_train(base_config):
@@ -36,8 +35,7 @@ def make_train(base_config):
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
-        gamma = config["GAMMA"]
-        k = config.get("k", 16)
+        k = config.get("k", 32)
 
         network, network_params = networks.initialize_network(
             rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config.get("LAYER_NORM", False)
@@ -72,7 +70,7 @@ def make_train(base_config):
 
                 clean_info = {k: v for k, v in info.items() if k not in ["real_next_obs", "real_next_state"]}
                 transition = Transition(
-                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, 0.0, clean_info
+                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, clean_info
                 )
                 return (train_state, env_state, obsv, rng), transition
 
@@ -81,16 +79,19 @@ def make_train(base_config):
                 _env_step, env_step_state, None, config["NUM_STEPS"]
             )
 
-            # 2. SEPARATE ADVANTAGE AND VALUE TARGET CALCULATIONS
+            # 2. ADVANTAGE AND TARGET CALCULATIONS
             # GAE_LAMBDA is strictly for policy advantages
-            gae_lambda = config["GAE_LAMBDA"]
+            gae_lambda = config.get("GAE_LAMBDA", 0.95)
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], gae_lambda)
 
             # RETURN_LAMBDA (or VALUE_LAMBDA) is strictly for critic targets; default 0.0 for E(0)
             return_lambda = config.get("RETURN_LAMBDA", config.get("VALUE_LAMBDA", 0.0))
             _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
 
-            is_timeout = traj_batch.info["is_timeout"]
+            if "is_timeout" in traj_batch.info:
+                is_timeout = traj_batch.info["is_timeout"]
+            else:
+                is_timeout = jnp.zeros_like(traj_batch.done, dtype=bool)
             true_terminal = traj_batch.done & ~is_timeout
 
             # Align next targets G_{t+1} for adjacent state error calculation
@@ -100,91 +101,98 @@ def make_train(base_config):
             next_targets = jnp.where(is_timeout, traj_batch.next_value, next_targets)
             # On true terminal, next absorbing state target is 0.0
             next_targets = jnp.where(true_terminal, 0.0, next_targets)
-            traj_batch = traj_batch._replace(next_target=next_targets)
 
-            # 3. UPDATE EPOCHS
-            def _update_epoch(update_state, unused):
-                def _update_minbatch(train_state, batch_info):
-                    obs_mb, action_mb, log_prob_mb, next_obs_mb, true_terminal_mb, next_target_mb, advantages_mb, targets_mb = batch_info
+            # 3. ACTOR UPDATE EPOCHS
+            num_epochs_actor = config.get("NUM_EPOCHS_ACTOR", config.get("NUM_EPOCHS", 4))
 
-                    def loss_fn(params, network):
-                        # A) Actor Loss (PPO clipped surrogate)
-                        pi = network.apply(params, obs_mb, method=network.policy)
-                        log_prob = pi.log_prob(action_mb)
-                        entropy = pi.entropy().mean()
-                        ratio = jnp.exp(log_prob - log_prob_mb)
+            def _update_actor_epoch(update_state, unused):
+                def _update_actor_minibatch(train_state, batch_info):
+                    obs_mb, action_mb, log_prob_mb, advantages_mb = batch_info
 
-                        adv_norm = helpers.post_process_advantage(advantages_mb, config)
-
-                        surr1 = ratio * adv_norm
-                        surr2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * adv_norm
-                        actor_loss = -jnp.minimum(surr1, surr2).mean()
-
-                        # B) Critic Loss (Sampled E-loss)
-                        v_i = network.apply(params, obs_mb, method=network.value)
-                        v_j = network.apply(params, next_obs_mb, method=network.value)
-                        value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
-                            v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma
+                    def actor_loss_fn(params):
+                        return helpers.ppo_actor_loss(
+                            params, network, obs_mb, action_mb, log_prob_mb, advantages_mb, config
                         )
 
-                        total_loss = (
-                            actor_loss
-                            + config["VF_COEF"] * value_loss
-                            - entropy * config["ENT_COEF"]
-                        )
-                        return total_loss, {
-                            "total_loss": total_loss,
-                            "value_loss": value_loss,
-                            "magnitude_loss": magnitude_loss,
-                            "laplacian_loss": laplacian_loss,
-                            "actor_loss": actor_loss,
-                            "entropy": entropy,
-                        }
+                    grad_fn = jax.value_and_grad(actor_loss_fn, has_aux=True)
+                    (total_actor_loss, actor_metrics), grads = grad_fn(train_state.params)
+                    train_state = train_state.apply_actor_gradients(grads=grads)
+                    return train_state, actor_metrics
 
-                    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-                    (total_loss, losses), grads = grad_fn(train_state.params, network)
-                    train_state = train_state.apply_gradients(grads=grads)
-                    return train_state, losses
-
-                train_state, traj_batch, advantages, targets, rng = update_state
+                train_state, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                batch = (
+                actor_batch = (
                     traj_batch.obs,
                     traj_batch.action,
                     traj_batch.log_prob,
-                    traj_batch.next_obs,
-                    true_terminal,
-                    traj_batch.next_target,
                     advantages,
-                    targets,
                 )
-                minibatches = helpers.shuffle_and_batch(_rng, batch, config["NUM_MINIBATCHES"])
+                minibatches = helpers.shuffle_and_batch(_rng, actor_batch, config["NUM_MINIBATCHES"])
+                train_state, epoch_losses = jax.lax.scan(_update_actor_minibatch, train_state, minibatches)
+                return (train_state, rng), epoch_losses
 
-                train_state, epoch_losses = jax.lax.scan(_update_minbatch, train_state, minibatches)
-                return (train_state, traj_batch, advantages, targets, rng), epoch_losses
+            if num_epochs_actor > 0:
+                (train_state, rng), actor_loss_info = jax.lax.scan(
+                    _update_actor_epoch, (train_state, rng), None, num_epochs_actor
+                )
+            else:
+                actor_loss_info = {"actor_loss": jnp.array(0.0), "entropy": jnp.array(0.0)}
 
-            initial_update_state = (train_state, traj_batch, advantages, targets, rng)
-            update_state, loss_info = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
-            train_state, _, _, _, rng = update_state
+            # 4. CRITIC UPDATE EPOCHS (Sampled E-loss)
+            num_epochs_critic = config.get("NUM_EPOCHS_CRITIC", config.get("NUM_EPOCHS", 4))
 
-            # 4. METRICS
+            def _update_critic_epoch(update_state, unused):
+                def _update_critic_minibatch(train_state, batch_info):
+                    obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb = batch_info
+
+                    def critic_loss_fn(params):
+                        val_loss, val_metrics = helpers.critic_sampled_e_loss(
+                            params, network, obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb, config
+                        )
+                        scaled_loss = config.get("VF_COEF", 0.5) * val_loss
+                        return scaled_loss, val_metrics
+
+                    grad_fn = jax.value_and_grad(critic_loss_fn, has_aux=True)
+                    (scaled_v_loss, critic_metrics), grads = grad_fn(train_state.params)
+                    train_state = train_state.apply_critic_gradients(grads=grads)
+                    return train_state, critic_metrics
+
+                train_state, rng = update_state
+                rng, _rng = jax.random.split(rng)
+                critic_batch = (
+                    traj_batch.obs,
+                    traj_batch.next_obs,
+                    targets,
+                    next_targets,
+                    true_terminal,
+                )
+                minibatches = helpers.shuffle_and_batch(_rng, critic_batch, config["NUM_MINIBATCHES"])
+                train_state, epoch_losses = jax.lax.scan(_update_critic_minibatch, train_state, minibatches)
+                return (train_state, rng), epoch_losses
+
+            if num_epochs_critic > 0:
+                (train_state, rng), critic_loss_info = jax.lax.scan(
+                    _update_critic_epoch, (train_state, rng), None, num_epochs_critic
+                )
+            else:
+                critic_loss_info = {"value_loss": jnp.array(0.0), "magnitude_loss": jnp.array(0.0), "laplacian_loss": jnp.array(0.0)}
+
+            # 5. METRICS
             metric = {k: v.mean() for k, v in traj_batch.info.items()}
-            metric.update({k: v.mean() for k, v in loss_info.items()})
+            metric.update({k: v.mean() for k, v in actor_loss_info.items()})
+            metric.update({k: v.mean() for k, v in critic_loss_info.items()})
+            metric["total_loss"] = (
+                metric.get("actor_loss", 0.0)
+                + config.get("VF_COEF", 0.5) * metric.get("value_loss", 0.0)
+                - metric.get("entropy", 0.0) * config.get("ENT_COEF", 0.01)
+            )
             metric.update({"mean_rew": traj_batch.reward.mean()})
 
             if evaluator is not None:
-                if config.get("CALC_TRUE_VALUES", True):
-                    value_metrics = bellman_error.value_metrics(
-                        evaluator, network, train_state.params, random_policy=False, light=config.get("LIGHT_METRICS", True)
-                    )
-                    metric.update(value_metrics)
-
-                if config.get("LOG_GRADIENT_METRICS", False):
-                    from core.gradient_tracking import compute_gradient_tracking_metrics
-                    grad_metrics = compute_gradient_tracking_metrics(
-                        train_state, evaluator, network, traj_batch, targets, gamma
-                    )
-                    metric.update(grad_metrics)
+                value_metrics = bellman_error.value_metrics(
+                    evaluator, network, train_state.params, random_policy=False, light=config.get("LIGHT_METRICS", True)
+                )
+                metric.update(value_metrics)
 
                 if config.get("LOG_FEATURE_METRICS", False):
                     from core.feature_metrics import feature_metrics
