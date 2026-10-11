@@ -173,36 +173,80 @@ def compute_sampled_critic_gradients(
     traj_batch,
     targets: jnp.ndarray,
     gamma: float,
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+) -> Dict[str, jnp.ndarray]:
     """
     Computes flat sampled gradients for:
-    1. g_sampled_E: Sampled E-loss on the rollout trajectory batch
-    2. g_sampled_TD: Sampled TD(0) loss on the rollout trajectory batch
+    1. g_samp_sep14: Sept 14 (Uncorrected, magnitude + Dirichlet smoothness)
+    2. g_samp_oct5:  Oct 5 (Corrected with sample difference of second moments)
+    3. g_samp_oct8:  Oct 8 (Start-anchored with boundary weighting nu * mean(e_s0^2))
+    4. g_samp_TD:    Sampled TD(0) semi-gradient with detached target
     """
     obs = traj_batch.obs
     next_obs = traj_batch.next_obs
-    next_targets = traj_batch.next_target  # aligned next targets G_{t+1}
-    is_timeout = traj_batch.info["is_timeout"]
+    is_timeout = traj_batch.info["is_timeout"] if "is_timeout" in traj_batch.info else jnp.zeros_like(traj_batch.done, dtype=bool)
     true_terminal = traj_batch.done & ~is_timeout
 
-    # 1. Sampled E critic loss: matches the exact loss PPO critic updates on
-    def sampled_e_loss(params):
+    # Align next return targets G_{t+1} safely from targets
+    if hasattr(traj_batch, "next_target"):
+        next_targets = traj_batch.next_target
+    else:
+        next_targets = jnp.roll(targets, shift=-1, axis=0)
+        if hasattr(traj_batch, "next_value"):
+            next_targets = next_targets.at[-1].set(traj_batch.next_value[-1])
+            next_targets = jnp.where(is_timeout, traj_batch.next_value, next_targets)
+        next_targets = jnp.where(true_terminal, 0.0, next_targets)
+
+    # Start-state mask: a step is an episode start if the preceding step terminated
+    is_start = jnp.roll(traj_batch.done, shift=1, axis=0)
+    is_start = is_start.at[0].set(False)
+
+    # 1. Sept 14 (Uncorrected) Sampled E critic loss
+    def loss_sep14(params):
         v_i = network.apply(params, obs, method=network.value)
         v_j = network.apply(params, next_obs, method=network.value)
-        v_loss, _, _ = helpers.e_critic_loss(v_i, targets, v_j, next_targets, true_terminal, gamma)
+        v_loss, _, _ = helpers.e_critic_loss(
+            v_i, targets, v_j, next_targets, true_terminal, gamma, variant="sep14"
+        )
         return v_loss
 
-    # 2. Sampled TD critic loss: 0.5 * (v(s) - sg(r + gamma * (1-d) * v(s')))^2
-    def sampled_td_loss(params):
+    # 2. Oct 5 (Corrected) Sampled E critic loss
+    def loss_oct5(params):
+        v_i = network.apply(params, obs, method=network.value)
+        v_j = network.apply(params, next_obs, method=network.value)
+        v_loss, _, _ = helpers.e_critic_loss(
+            v_i, targets, v_j, next_targets, true_terminal, gamma, variant="corrected"
+        )
+        return v_loss
+
+    # 3. Oct 8 (Start-Anchored) Sampled E critic loss
+    def loss_oct8(params):
+        v_i = network.apply(params, obs, method=network.value)
+        v_j = network.apply(params, next_obs, method=network.value)
+        v_loss, _, _ = helpers.e_critic_loss(
+            v_i, targets, v_j, next_targets, true_terminal, gamma, variant="oct8", is_start=is_start
+        )
+        return v_loss
+
+    # 4. Sampled TD(0) critic loss: 0.5 * (v(s) - sg(r + gamma * (1-d) * v(s')))^2
+    def loss_td(params):
         v_s = network.apply(params, obs, method=network.value)
         v_next = network.apply(params, next_obs, method=network.value)
         td_target = traj_batch.reward + gamma * (1.0 - true_terminal.astype(jnp.float32)) * jax.lax.stop_gradient(v_next)
         td_target = jnp.where(is_timeout, jax.lax.stop_gradient(v_next), td_target)
         return 0.5 * jnp.mean((v_s - td_target) ** 2)
 
-    g_samp_E = extract_critic_flat_grads(jax.grad(sampled_e_loss)(train_state.params))
-    g_samp_TD = extract_critic_flat_grads(jax.grad(sampled_td_loss)(train_state.params))
-    return g_samp_E, g_samp_TD
+    g_samp_sep14 = extract_critic_flat_grads(jax.grad(loss_sep14)(train_state.params))
+    g_samp_oct5 = extract_critic_flat_grads(jax.grad(loss_oct5)(train_state.params))
+    g_samp_oct8 = extract_critic_flat_grads(jax.grad(loss_oct8)(train_state.params))
+    g_samp_TD = extract_critic_flat_grads(jax.grad(loss_td)(train_state.params))
+
+    return {
+        "g_samp_sep14": g_samp_sep14,
+        "g_samp_oct5": g_samp_oct5,
+        "g_samp_oct8": g_samp_oct8,
+        "g_samp_E": g_samp_oct8,  # Default sampled E gradient
+        "g_samp_TD": g_samp_TD,
+    }
 
 
 def compute_gradient_tracking_metrics(
@@ -220,19 +264,37 @@ def compute_gradient_tracking_metrics(
     g_exact_E, g_exact_TD, g_exact_MC, start_val, rel_spectral_norm, alignments = (
         compute_all_exact_critic_gradients(train_state, evaluator, network, gamma)
     )
-    g_samp_E, g_samp_TD = compute_sampled_critic_gradients(train_state, network, traj_batch, targets, gamma)
+    samp_grads = compute_sampled_critic_gradients(train_state, network, traj_batch, targets, gamma)
+    g_samp_sep14 = samp_grads["g_samp_sep14"]
+    g_samp_oct5 = samp_grads["g_samp_oct5"]
+    g_samp_oct8 = samp_grads["g_samp_oct8"]
+    g_samp_TD = samp_grads["g_samp_TD"]
 
-    sq_err_E = jnp.sum((g_samp_E - g_exact_E) ** 2)
+    # Alignments of the three sampled E formulations to exact matrix g*
+    rho_sep14 = cos_similarity(g_samp_sep14, g_exact_E)
+    rho_oct5 = cos_similarity(g_samp_oct5, g_exact_E)
+    rho_oct8 = cos_similarity(g_samp_oct8, g_exact_E)
+
+    # Squared errors to exact matrix g*
+    sq_err_sep14 = jnp.sum((g_samp_sep14 - g_exact_E) ** 2)
+    sq_err_oct5 = jnp.sum((g_samp_oct5 - g_exact_E) ** 2)
+    sq_err_oct8 = jnp.sum((g_samp_oct8 - g_exact_E) ** 2)
+
+    # TD alignments
     sq_err_TD = jnp.sum((g_samp_TD - g_exact_TD) ** 2)
-
-    rho_SE_EE = cos_similarity(g_samp_E, g_exact_E)
-    rho_SE_ETD = cos_similarity(g_samp_E, g_exact_TD)
+    rho_SE_ETD = cos_similarity(g_samp_oct8, g_exact_TD)
     rho_STD_ETD = cos_similarity(g_samp_TD, g_exact_TD)
 
     return {
-        "sq_err": sq_err_E,
+        "sq_err": sq_err_oct8,
+        "sq_err_sep14": sq_err_sep14,
+        "sq_err_oct5": sq_err_oct5,
+        "sq_err_oct8": sq_err_oct8,
         "sq_err_td": sq_err_TD,
-        "rho_SE_EE": rho_SE_EE,
+        "rho_SE_EE": rho_oct8,
+        "rho_samp_sep14_exactE": rho_sep14,
+        "rho_samp_oct5_exactE": rho_oct5,
+        "rho_samp_oct8_exactE": rho_oct8,
         "rho_SE_ETD": rho_SE_ETD,
         "rho_STD_ETD": rho_STD_ETD,
         "rho_exactE_exactTD": alignments["rho_exactE_exactTD"],
@@ -240,6 +302,11 @@ def compute_gradient_tracking_metrics(
         "rho_exactE_exactMC": alignments["rho_exactE_exactMC"],
         "relative_spectral_norm": rel_spectral_norm,
         "v_true_start": start_val,
-        "g_samp_E": g_samp_E,
+        "g_samp_E": g_samp_oct8,
+        "g_samp_sep14": g_samp_sep14,
+        "g_samp_oct5": g_samp_oct5,
+        "g_samp_oct8": g_samp_oct8,
+        "g_samp_TD": g_samp_TD,
         "g_exact_E": g_exact_E,
     }
+

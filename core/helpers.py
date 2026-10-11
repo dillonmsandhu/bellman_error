@@ -1044,14 +1044,23 @@ def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant=
     elif variant in ["corrected", "corr"]:
         corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
         value_loss = magnitude_loss + laplacian_loss + corr_loss
-    else:  # "oct8" (default: start state anchor)
+    elif variant in ["oct8", "start_anchored"]:
+        if is_start is None:
+            raise ValueError(
+                "e_critic_loss with variant='oct8' requires boolean mask 'is_start' "
+                "to evaluate the start-state anchor E_{s0 ~ d0}[e(s0)^2]. "
+                "Without is_start, the anchor cannot be placed on the initial state boundary and is biased."
+            )
         nu = jnp.mean(true_terminal)
-        if is_start is not None and jnp.any(is_start):
-            start_err_sq = jnp.sum(jnp.where(is_start, e_i ** 2, 0.0)) / jnp.maximum(jnp.sum(is_start), 1.0)
-        else:
-            start_err_sq = jnp.mean(e_i ** 2)
+        start_err_sq = jnp.where(
+            jnp.any(is_start),
+            jnp.sum(jnp.where(is_start, e_i ** 2, 0.0)) / jnp.maximum(jnp.sum(is_start), 1.0),
+            0.0,
+        )
         start_anchor_loss = 0.5 * gamma * nu * start_err_sq
         value_loss = magnitude_loss + laplacian_loss + start_anchor_loss
+    else:
+        raise ValueError(f"Unknown E variant: {variant}")
 
     return value_loss, magnitude_loss, laplacian_loss
 
@@ -1116,7 +1125,7 @@ def critic_td_zero_loss(params, network, obs_mb, next_obs_mb, reward_mb, mask_mb
     return value_loss, {"value_loss": value_loss}
 
 
-def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb, config):
+def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb, config, is_start_mb=None):
     """
     Sampled E-loss for critic (magnitude anchor + Dirichlet/Laplacian smoothness + boundary correction).
     Requires targets and aligned next_targets.
@@ -1126,7 +1135,7 @@ def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next
     v_i = network.apply(params, obs_mb, method=network.value)
     v_j = network.apply(params, next_obs_mb, method=network.value)
     value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
-        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma, variant=variant
+        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma, variant=variant, is_start=is_start_mb
     )
     return value_loss, {
         "value_loss": value_loss,
@@ -1147,6 +1156,7 @@ def e_loss_fn(
     advantages,
     targets,
     config,
+    is_start=None,
 ):
     """
     Combined loss for PPO with Sampled E critic.
@@ -1164,13 +1174,14 @@ def e_loss_fn(
 
     # 2. Critic Loss (Sampled E-loss)
     gamma = config["GAMMA"]
+    variant = config.get("E_VARIANT", "oct8")
     v_i = network.apply(params, obs, method=network.value)
     v_j = network.apply(params, next_obs, method=network.value)
     # Terminal absorbing state has value 0
     v_j = jnp.where(true_terminal, 0.0, v_j)
 
     value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
-        v_i, targets, v_j, next_target, true_terminal, gamma
+        v_i, targets, v_j, next_target, true_terminal, gamma, variant=variant, is_start=is_start
     )
 
     total_loss = (

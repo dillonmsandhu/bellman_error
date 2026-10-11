@@ -144,29 +144,28 @@ def make_multi_env_grid(
     print(f"Saved: {save_path_pdf} and {save_path_png}")
 
 
-def plot_bias_variance_decomposition(env_data: dict, save_dir: str):
+def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
     """
-    Plots the central Bias-Variance decomposition bar chart across all environments:
-    Total Bar Height = MSE
-    Solid Segment = Sample Variance Var(g)
-    Hatched Segment = Squared Bias Bias^2(g)
-    Plus a companion panel for Cosine Similarity alignment.
+    Consolidated Multi-Environment Summary of Gradient Metrics (Average during Learning):
+    Panel 1: Cosine Similarity Alignment to Exact E
+    Panel 2: Gradient MSE to Exact E (Log Scale)
+    Panel 3: Trajectory Gradient Variance (Spread across rollout trajectories, Log Scale)
     """
     valid_envs = [e for e in ALL_ENVS if e in env_data]
     if not valid_envs:
         return
 
     n_envs = len(valid_envs)
-    fig, (ax_bv, ax_cos) = plt.subplots(2, 1, figsize=(max(12, n_envs * 2.2), 10), dpi=200)
+    fig, (ax_cos, ax_mse, ax_bv) = plt.subplots(3, 1, figsize=(max(12, n_envs * 2.2), 14), dpi=200)
 
     x = np.arange(n_envs)
     width = 0.26
 
-    # Extract final metrics for each variant
+    # Extract metrics averaged across learning for each variant
     variants = [
-        ("sep14", -width, VAR_COLORS["sep14"], "Sept 14 (Uncorrected)"),
-        ("corr", 0.0, VAR_COLORS["corr"], "Oct 5 (Corrected)"),
-        ("oct8", width, VAR_COLORS["oct8"], "Oct 8 (Start-Anchored)"),
+        ("uncorr", -width, VAR_COLORS["sep14"], "Sept 14 (Biased)"),
+        ("corr", 0.0, VAR_COLORS["corr"], "Oct 5 (De-Biased)"),
+        ("oct8", width, VAR_COLORS["oct8"], "Oct 8 (Start-Anchored De-Biased)"),
     ]
 
     for v_key, offset, color, label in variants:
@@ -183,9 +182,9 @@ def plot_bias_variance_decomposition(env_data: dict, save_dir: str):
             mse_m, _ = extract_metric(m, f"mse_samp_{v_key}")
             cos_m, _ = extract_metric(m, f"rho_samp_{v_key}_exact")
 
-            val_v = float(v_traj_m[-1]) if v_traj_m is not None else 1e-12
-            val_mse = float(mse_m[-1]) if mse_m is not None else 1e-12
-            val_cos = float(cos_m[-1]) if cos_m is not None else 0.0
+            val_v = float(np.nanmean(v_traj_m)) if v_traj_m is not None else 1e-12
+            val_mse = float(np.nanmean(mse_m)) if mse_m is not None else 1e-12
+            val_cos = float(np.nanmean(cos_m)) if cos_m is not None else 0.0
 
             variances.append(max(1e-12, val_v))
             mses.append(max(1e-12, val_mse))
@@ -198,38 +197,60 @@ def plot_bias_variance_decomposition(env_data: dict, save_dir: str):
             color=color, alpha=0.85, edgecolor="black", lw=0.6,
         )
 
-        # Panel 2: Trajectory Gradient Variance (Spread across trajectories)
+        # Panel 2: Gradient MSE
+        ax_mse.bar(
+            x + offset, mses, width,
+            label=label,
+            color=color, alpha=0.85, edgecolor="black", lw=0.6,
+        )
+
+        # Panel 3: Trajectory Gradient Variance (Spread across trajectories)
         ax_bv.bar(
             x + offset, variances, width,
             label=label,
             color=color, alpha=0.85, edgecolor="black", lw=0.6,
         )
 
+    # Cosine Alignment Subplot
     ax_cos.set_xticks(x)
     ax_cos.set_xticklabels(valid_envs, fontsize=10, fontweight="bold", rotation=20, ha="right")
     ax_cos.set_ylim(-0.2, 1.05)
     ax_cos.axhline(1.0, color="black", linestyle=":", lw=1.2, alpha=0.7)
     ax_cos.axhline(0.0, color="gray", linestyle="-", lw=0.8, alpha=0.5)
     ax_cos.set_ylabel("Cosine Similarity (rho)", fontsize=11, fontweight="bold")
-    ax_cos.set_title("Full-Batch Average Gradient Cosine Alignment to Exact E", fontsize=12, fontweight="bold")
+    ax_cos.set_title("Full-Batch Average Gradient Cosine Similarity to Exact E (Average during Learning)", fontsize=12, fontweight="bold")
     ax_cos.grid(True, linestyle="--", alpha=0.3, axis="y")
     ax_cos.legend(loc="lower right", ncol=3, fontsize=8.5, frameon=True)
 
+    # Gradient MSE Subplot
+    ax_mse.set_xticks(x)
+    ax_mse.set_xticklabels(valid_envs, fontsize=10, fontweight="bold", rotation=20, ha="right")
+    ax_mse.set_yscale("log")
+    ax_mse.set_ylabel("Gradient MSE (Log Scale)\nMSE to exact E gradient", fontsize=11, fontweight="bold")
+    ax_mse.set_title("Gradient MSE to Exact E Across Environments (Average during Learning)", fontsize=12, fontweight="bold")
+    ax_mse.grid(True, linestyle="--", alpha=0.3, axis="y")
+    ax_mse.legend(loc="upper right", ncol=3, fontsize=8.5, frameon=True)
+
+    # Variance Subplot
     ax_bv.set_xticks(x)
     ax_bv.set_xticklabels(valid_envs, fontsize=10, fontweight="bold", rotation=20, ha="right")
     ax_bv.set_yscale("log")
     ax_bv.set_ylabel("Trajectory Gradient Variance (Log Scale)\nSpread across rollout trajectories", fontsize=11, fontweight="bold")
-    ax_bv.set_title("Trajectory Gradient Variance Across Environments", fontsize=12, fontweight="bold")
+    ax_bv.set_title("Trajectory Gradient Variance Across Environments (Average during Learning)", fontsize=12, fontweight="bold")
     ax_bv.grid(True, linestyle="--", alpha=0.3, axis="y")
     ax_bv.legend(loc="upper right", ncol=3, fontsize=8.5, frameon=True)
 
     plt.tight_layout()
-    pdf_path = os.path.join(save_dir, "bias_variance_decomposition_across_envs.pdf")
-    png_path = os.path.join(save_dir, "bias_variance_decomposition_across_envs.png")
-    plt.savefig(pdf_path, bbox_inches="tight")
-    plt.savefig(png_path, bbox_inches="tight", dpi=250)
+    for fname in ["aggregate_gradient_metrics_across_envs", "bias_variance_decomposition_across_envs"]:
+        pdf_path = os.path.join(save_dir, f"{fname}.pdf")
+        png_path = os.path.join(save_dir, f"{fname}.png")
+        plt.savefig(pdf_path, bbox_inches="tight")
+        plt.savefig(png_path, bbox_inches="tight", dpi=250)
     plt.close()
-    print(f"Saved Bias-Variance decomposition: {pdf_path} and {png_path}")
+    print(f"Saved aggregate gradient metrics: {os.path.join(save_dir, 'aggregate_gradient_metrics_across_envs.png')}")
+
+
+plot_bias_variance_decomposition = plot_aggregate_gradient_metrics
 
 
 def main():
@@ -364,24 +385,23 @@ def main():
     )
 
     # -------------------------------------------------------------------------
-    # Plot: Returns Across Environments
+    # Plot: Returns Across Environments (Exact V_start, Trained via exact_E)
     # -------------------------------------------------------------------------
     def plot_returns(ax, metrics, env_name):
-        mean_ret, std_ret = extract_metric(metrics, "returned_discounted_episode_returns")
-        if mean_ret is None:
-            mean_ret, std_ret = extract_metric(metrics, "returned_episode_returns")
+        mean_ret, std_ret = extract_metric(metrics, "V_start")
         if mean_ret is not None:
             x = np.arange(len(mean_ret))
-            ax.plot(x, mean_ret, color="tab:blue", lw=2, label="Discounted Return")
-            ax.fill_between(x, mean_ret - std_ret, mean_ret + std_ret, color="tab:blue", alpha=0.2)
+            ax.plot(x, mean_ret, color="tab:blue", lw=2, label=r"$V^\pi(s_0)$ (exact_E)")
+            if std_ret is not None and np.any(std_ret > 0):
+                ax.fill_between(x, mean_ret - std_ret, mean_ret + std_ret, color="tab:blue", alpha=0.2)
         ax.set_title(env_name, fontsize=11, fontweight="bold")
         ax.set_xlabel("Update Step", fontsize=9)
-        ax.set_ylabel("Return", fontsize=9)
+        ax.set_ylabel(r"Policy Value $V^\pi(s_0)$ (exact_E)", fontsize=9)
 
     make_multi_env_grid(
         env_data,
         plot_returns,
-        title="PPO Policy Learning Returns Across Environments",
+        title=r"Exact Start-State Policy Value $V^\pi(s_0)$ Across Environments (Trained via exact_E)",
         save_path_pdf=os.path.join(save_dir, "returns_across_envs.pdf"),
         save_path_png=os.path.join(save_dir, "returns_across_envs.png"),
     )
@@ -407,6 +427,7 @@ def main():
         for k in metric_keys:
             m, s = extract_metric(metrics, k)
             if m is not None:
+                row[f"{k}_mean"] = float(np.nanmean(m))
                 row[f"{k}_final"] = float(m[-1])
         summary_rows.append(row)
 
