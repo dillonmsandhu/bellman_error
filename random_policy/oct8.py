@@ -75,7 +75,7 @@ def make_train(base_config):
             return diff.T @ S_mat @ diff
 
         def _update_step(runner_state, unused):
-            train_state, env_state, last_obs, last_done, rng, idx = runner_state
+            train_state, env_state, last_obs, last_done, nu_ema, rng, idx = runner_state
 
             # COLLECT TRAJECTORIES
             def _env_step(env_scan_state, unused):
@@ -127,6 +127,13 @@ def make_train(base_config):
             next_targets = jnp.where(true_terminal, 0.0, next_targets)
             traj_batch = traj_batch._replace(next_target=next_targets)
 
+            # Running average of nu with Adam-style bias correction
+            nu_batch = jnp.mean(true_terminal.astype(jnp.float32))
+            beta_nu = config.get("NU_BETA", 0.95)
+            nu_ema = beta_nu * nu_ema + (1.0 - beta_nu) * nu_batch
+            bias_correction = 1.0 - (beta_nu ** idx)
+            nu_hat = nu_ema / jnp.maximum(bias_correction, 1e-8)
+
             # Oct 8 (Start-Anchored) Loss Function
             def E_loss_fn(params, traj_batch, targets):
                 gamma = config["GAMMA"]
@@ -135,7 +142,8 @@ def make_train(base_config):
                 true_term = traj_batch.done & ~traj_batch.info["is_timeout"]
                 
                 value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
-                    v_i, targets, v_j, traj_batch.next_target, true_term, gamma, variant="oct8", is_start=traj_batch.is_start
+                    v_i, targets, v_j, traj_batch.next_target, true_term, gamma,
+                    variant="oct8", is_start=traj_batch.is_start, nu=nu_hat
                 )
                 
                 total_loss = config["VF_COEF"] * value_loss
@@ -195,17 +203,21 @@ def make_train(base_config):
                 v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx]).squeeze()
                 metric["v_pred_start"] = v_pred_start
 
+            # Nu metrics
+            metric["nu_batch"] = nu_batch
+            metric["nu_hat"] = nu_hat
+
             # Gradient metrics
             metric["grad_mse_exact_E"] = grad_mse_exact
             metric["grad_cos_exact_E"] = grad_cos_exact
             metric["g_samp_norm"] = jnp.linalg.norm(g_samp)
             metric["g_exact_norm"] = jnp.linalg.norm(g_exact_E)
 
-            runner_state = (train_state, env_state, last_obs, last_done, rng, idx + 1)
+            runner_state = (train_state, env_state, last_obs, last_done, nu_ema, rng, idx + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, env_state, obsv, last_done, _rng, 1)
+        runner_state = (train_state, env_state, obsv, last_done, 0.0, _rng, 1)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}
 

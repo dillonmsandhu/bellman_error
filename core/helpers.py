@@ -1026,7 +1026,7 @@ def e_lambda_fixed_loss_fn(params, network, traj_batch, gae, targets, config):
     return total_loss, losses
 
 
-def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant="oct8", is_start=None):
+def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant="oct8", is_start=None, nu=None):
     """
     Computes sampled E-loss across three formulations:
     - 'sep14' / 'uncorrected': pure positive semi-definite (magnitude + Dirichlet smoothness)
@@ -1051,7 +1051,8 @@ def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant=
                 "to evaluate the start-state anchor E_{s0 ~ d0}[e(s0)^2]. "
                 "Without is_start, the anchor cannot be placed on the initial state boundary and is biased."
             )
-        nu = jnp.mean(true_terminal)
+        if nu is None:
+            nu = jnp.mean(true_terminal)
         start_err_sq = jnp.where(
             jnp.any(is_start),
             jnp.sum(jnp.where(is_start, e_i ** 2, 0.0)) / jnp.maximum(jnp.sum(is_start), 1.0),
