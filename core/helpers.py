@@ -581,7 +581,7 @@ def make_env(config):
         if len(env.observation_space(env_params).shape) > 1:
             env = FlattenObservationWrapper(env)
     if config.get("NETWORK_TYPE") == "cnn":
-        if len(env.observation_space(env_params).shape) < 3:
+        if len(env.observation_space(env_params).shape) == 2:
             env = AddChannelWrapper(env)
     if config.get("NORMALIZE_OBS", False):
         env = NormalizeObservationWrapper(env) 

@@ -45,8 +45,9 @@ class Transition(NamedTuple):
 def make_train(base_config):
 
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
-    base_config["NUM_MINIBATCHES"] = batch_size // base_config["MINIBATCH_SIZE"]
-    base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"] // batch_size
+    minibatch_size = base_config.get("MINIBATCH_SIZE", 1024)
+    base_config["NUM_MINIBATCHES"] = max(1, batch_size // minibatch_size)
+    base_config["NUM_UPDATES"] = max(1, base_config["TOTAL_TIMESTEPS"] // batch_size)
     
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
