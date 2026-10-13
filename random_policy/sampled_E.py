@@ -117,8 +117,9 @@ def make_train(base_config):
                 v_j = network.apply(params, traj_batch.next_obs)
                 true_term = traj_batch.done & ~traj_batch.info["is_timeout"]
                 
+                variant = config.get("E_VARIANT", "sep14")
                 value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
-                    v_i, targets, v_j, traj_batch.next_target, true_term, gamma
+                    v_i, targets, v_j, traj_batch.next_target, true_term, gamma, variant=variant
                 )
                 
                 total_loss = config["VF_COEF"] * value_loss

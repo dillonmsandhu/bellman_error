@@ -117,7 +117,6 @@ def make_multi_env_grid(
     plot_fn,
     title: str,
     save_path_pdf: str,
-    save_path_png: str,
 ):
     """Creates a 3x3 grid of subplots for the 9 environments."""
     fig, axes = plt.subplots(3, 3, figsize=(18, 13), sharex=False)
@@ -139,9 +138,8 @@ def make_multi_env_grid(
     fig.suptitle(title, fontsize=15, fontweight="bold", y=0.99)
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     plt.savefig(save_path_pdf, bbox_inches="tight")
-    plt.savefig(save_path_png, bbox_inches="tight", dpi=250)
     plt.close()
-    print(f"Saved: {save_path_pdf} and {save_path_png}")
+    print(f"Saved: {save_path_pdf}")
 
 
 def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
@@ -241,13 +239,10 @@ def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
     ax_bv.legend(loc="upper right", ncol=3, fontsize=8.5, frameon=True)
 
     plt.tight_layout()
-    for fname in ["aggregate_gradient_metrics_across_envs", "bias_variance_decomposition_across_envs"]:
-        pdf_path = os.path.join(save_dir, f"{fname}.pdf")
-        png_path = os.path.join(save_dir, f"{fname}.png")
-        plt.savefig(pdf_path, bbox_inches="tight")
-        plt.savefig(png_path, bbox_inches="tight", dpi=250)
+    pdf_path = os.path.join(save_dir, "aggregate_gradient_metrics_across_envs.pdf")
+    plt.savefig(pdf_path, bbox_inches="tight")
     plt.close()
-    print(f"Saved aggregate gradient metrics: {os.path.join(save_dir, 'aggregate_gradient_metrics_across_envs.png')}")
+    print(f"Saved aggregate gradient metrics: {pdf_path}")
 
 
 plot_bias_variance_decomposition = plot_aggregate_gradient_metrics
@@ -318,7 +313,6 @@ def main():
         plot_grad_mse,
         title="Gradient MSE to Exact E Across Training Updates (Lower is Better)",
         save_path_pdf=os.path.join(save_dir, "gradient_mse_across_envs.pdf"),
-        save_path_png=os.path.join(save_dir, "gradient_mse_across_envs.png"),
     )
 
     # -------------------------------------------------------------------------
@@ -350,7 +344,6 @@ def main():
         plot_grad_cosine,
         title="Sample Gradient Alignment to Exact E Across Training Updates",
         save_path_pdf=os.path.join(save_dir, "gradient_cosine_across_envs.pdf"),
-        save_path_png=os.path.join(save_dir, "gradient_cosine_across_envs.png"),
     )
 
     # -------------------------------------------------------------------------
@@ -381,7 +374,6 @@ def main():
         plot_loss_e,
         title="Sampled E Objective vs Exact E Across Training Updates",
         save_path_pdf=os.path.join(save_dir, "loss_E_variants_across_envs.pdf"),
-        save_path_png=os.path.join(save_dir, "loss_E_variants_across_envs.png"),
     )
 
     # -------------------------------------------------------------------------
@@ -403,7 +395,6 @@ def main():
         plot_returns,
         title=r"Exact Start-State Policy Value $V^\pi(s_0)$ Across Environments (Trained via exact_E)",
         save_path_pdf=os.path.join(save_dir, "returns_across_envs.pdf"),
-        save_path_png=os.path.join(save_dir, "returns_across_envs.png"),
     )
 
     # -------------------------------------------------------------------------
