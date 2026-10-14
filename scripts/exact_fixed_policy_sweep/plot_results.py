@@ -416,7 +416,7 @@ def plot_skew_symmetry_scatter(
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.legend(frameon=True, fontsize=9, loc="upper right")
 
-    ax1.set_ylabel(r"$\mathrm{AUC\text{ }Value\text{ }Error}(E(0))\;/\;\mathrm{AUC\text{ }Value\text{ }Error}(\mathrm{TD}(0))$", fontsize=11)
+    ax1.set_ylabel(r"$\mathrm{AUC\ VE}(E(0))\;/\;\mathrm{AUC\ VE}(\mathrm{TD}(0))$", fontsize=11)
     fig.suptitle(r"Impact of Markov Chain Skew-Symmetry on $E(0)$ vs. $\mathrm{TD}(0)$ Performance", fontsize=13, fontweight="bold", y=0.98)
 
     plt.tight_layout(rect=[0, 0.02, 1, 0.94])
