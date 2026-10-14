@@ -1041,7 +1041,7 @@ def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant=
 
     if variant in ["sep14", "uncorrected"]:
         value_loss = magnitude_loss + laplacian_loss
-    elif variant in ["corrected", "corr"]:
+    elif variant in ["corrected", "corr", "oct5"]:
         corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
         value_loss = magnitude_loss + laplacian_loss + corr_loss
     elif variant in ["oct8", "start_anchored"]:
@@ -1126,7 +1126,7 @@ def critic_td_zero_loss(params, network, obs_mb, next_obs_mb, reward_mb, mask_mb
     return value_loss, {"value_loss": value_loss}
 
 
-def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb, config, is_start_mb=None):
+def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next_target_mb, true_terminal_mb, config, is_start_mb=None, nu=None):
     """
     Sampled E-loss for critic (magnitude anchor + Dirichlet/Laplacian smoothness + boundary correction).
     Requires targets and aligned next_targets.
@@ -1136,7 +1136,7 @@ def critic_sampled_e_loss(params, network, obs_mb, next_obs_mb, targets_mb, next
     v_i = network.apply(params, obs_mb, method=network.value)
     v_j = network.apply(params, next_obs_mb, method=network.value)
     value_loss, magnitude_loss, laplacian_loss = e_critic_loss(
-        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma, variant=variant, is_start=is_start_mb
+        v_i, targets_mb, v_j, next_target_mb, true_terminal_mb, gamma, variant=variant, is_start=is_start_mb, nu=nu
     )
     return value_loss, {
         "value_loss": value_loss,

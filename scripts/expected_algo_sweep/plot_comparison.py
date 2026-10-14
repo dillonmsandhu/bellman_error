@@ -56,6 +56,7 @@ ALGORITHMS = [
     {"name": "TD0", "display_name": "TD(0) [Exact]", "color": "#ff7f0e"},
     {"name": "TD_lambda", "display_name": "TD($\\lambda=0.8$) [Exact]", "color": "#2ca02c"},
     {"name": "E0", "display_name": "E(0) [Exact]", "color": "#d62728"},
+    {"name": "E_lambda", "display_name": "E($\\lambda=0.8$) [Exact]", "color": "#9467bd"},
 ]
 
 LR_MULTIPLIERS = ["0.5x", "1.0x", "2.0x"]
@@ -167,12 +168,10 @@ def main():
     plt.tight_layout()
 
     pdf_path = os.path.join(out_dir, "expected_algo_cross_env_comparison.pdf")
-    png_path = os.path.join(out_dir, "expected_algo_cross_env_comparison.png")
     plt.savefig(pdf_path, bbox_inches="tight")
-    plt.savefig(png_path, bbox_inches="tight", dpi=200)
     plt.close()
 
-    print(f"Saved cross-environment plot to:\n  - {pdf_path}\n  - {png_path}")
+    print(f"Saved cross-environment plot to:\n  - {pdf_path}")
 
     # Save summary metrics table
     if summary_rows:

@@ -40,6 +40,7 @@ from ppo.exact_mc import make_train as make_mc_train
 from ppo.exact_td import make_train as make_td0_train
 from ppo.exact_td_lambda import make_train as make_td_lambda_train
 from ppo.exact_E import make_train as make_e_train
+from ppo.exact_E_lambda import make_train as make_e_lambda_train
 
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
@@ -85,6 +86,13 @@ ALGORITHMS = [
         "train_builder": make_e_train,
         "hparams": {},
         "color": "#d62728",
+    },
+    {
+        "name": "E_lambda",
+        "display_name": "E($\\lambda=0.8$) [Exact]",
+        "train_builder": make_e_lambda_train,
+        "hparams": {"VALUE_LAMBDA": 0.8},
+        "color": "#9467bd",
     },
 ]
 
@@ -308,7 +316,6 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
 
     plt.tight_layout()
     plt.savefig(os.path.join(env_dir, "best_lr_comparison.pdf"), bbox_inches="tight")
-    plt.savefig(os.path.join(env_dir, "best_lr_comparison.png"), bbox_inches="tight", dpi=200)
     plt.close()
 
     # 2. Comprehensive LR Sweep Grid Plot
@@ -345,7 +352,6 @@ def plot_env_summary(env_dir, env_name, algorithms, all_results, best_results, l
     plt.suptitle(f"{env_name}: Critic LR Sweep Across Expected Algorithms", fontsize=12, fontweight="bold", y=1.01)
     plt.tight_layout()
     plt.savefig(os.path.join(env_dir, "all_lrs_grid.pdf"), bbox_inches="tight")
-    plt.savefig(os.path.join(env_dir, "all_lrs_grid.png"), bbox_inches="tight", dpi=200)
     plt.close()
 
 
