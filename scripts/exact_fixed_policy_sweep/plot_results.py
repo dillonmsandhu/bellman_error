@@ -6,11 +6,15 @@ Generates:
 1. Comparison Set A: MC vs TD(0) vs E(0)
    - Learning curves across all envs for k=8 and k=64 (ve_curves_mc_td0_e0.pdf)
    - Advantage cosine similarity curves (advantage_cossim_curves_mc_td0_e0.pdf)
-   - Clustered AUC bar charts comparing algorithms across environments (auc_ve_bars_mc_td0_e0.pdf)
+   - Clustered AUC bar charts for Value Error (auc_ve_bars_mc_td0_e0_k{8,64}.pdf)
+   - Clustered AUC bar charts for Advantage Cosine Sim (auc_cossim_bars_mc_td0_e0_k{8,64}.pdf)
+   - Clustered AUC bar charts for Greedy Policy V_start (auc_vstart_bars_mc_td0_e0_k{8,64}.pdf)
 2. Comparison Set B: Full Spectrum (MC, TD(0), E(0), TD(lambda=0.8), E(lambda=0.8))
    - Learning curves across all envs for k=8 and k=64 (ve_curves_all_algos.pdf)
    - Advantage cosine similarity curves (advantage_cossim_curves_all_algos.pdf)
-   - Full AUC bar charts (auc_ve_bars_all_algos.pdf)
+   - Full AUC bar charts for Value Error (auc_ve_bars_all_algos_k{8,64}.pdf)
+   - Full AUC bar charts for Advantage Cosine Sim (auc_cossim_bars_all_algos_k{8,64}.pdf)
+   - Full AUC bar charts for Greedy Policy V_start (auc_vstart_bars_all_algos_k{8,64}.pdf)
 3. Capacity Comparison (k=8 vs k=64):
    - Capacity effect plot (k_capacity_effect.pdf)
 4. Comprehensive Summary Tables:
@@ -194,15 +198,19 @@ def plot_auc_grouped_bars(
     summary_df: pd.DataFrame,
     algo_subset: list[str],
     k_val: int,
+    metric_col: str,
+    sem_col: str | None,
+    ylabel: str,
+    title: str,
     out_pdf_path: str,
-    title_suffix: str = "",
+    log_scale: bool = False,
 ):
-    """Plots clustered bar chart of Normalized AUC of Value Error across environments."""
+    """Plots clustered bar chart of a metric across environments for specified algorithms and k."""
     if summary_df.empty:
         return
 
     sub_df = summary_df[(summary_df["k"] == k_val) & (summary_df["algo"].isin(algo_subset))].copy()
-    if sub_df.empty:
+    if sub_df.empty or metric_col not in sub_df.columns:
         return
 
     envs_present = [e for e in ALL_ENVS if e in sub_df["env"].unique()]
@@ -220,8 +228,8 @@ def plot_auc_grouped_bars(
 
     for i, algo in enumerate(algo_subset):
         algo_data = sub_df[sub_df["algo"] == algo].set_index("env")
-        means = [algo_data.loc[e, "auc_ve_mean"] if e in algo_data.index else 0.0 for e in envs_present]
-        sems = [algo_data.loc[e, "auc_ve_sem"] if e in algo_data.index else 0.0 for e in envs_present]
+        means = [float(algo_data.loc[e, metric_col]) if (e in algo_data.index and not np.isnan(algo_data.loc[e, metric_col])) else 0.0 for e in envs_present]
+        sems = [float(algo_data.loc[e, sem_col]) if (sem_col and sem_col in algo_data.columns and e in algo_data.index and not np.isnan(algo_data.loc[e, sem_col])) else 0.0 for e in envs_present]
 
         offset = (i - n_algos / 2 + 0.5) * bar_width
         ax.bar(
@@ -237,12 +245,13 @@ def plot_auc_grouped_bars(
             alpha=0.9,
         )
 
-    ax.set_ylabel("Normalized AUC of Value Error (Log Scale)", fontsize=12)
-    ax.set_yscale("log")
-    ax.set_title(f"Fixed Policy Evaluation: Normalized AUC of Value Error (k={k_val}) {title_suffix}", fontsize=13, fontweight="bold", pad=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    if log_scale:
+        ax.set_yscale("log")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.set_xticks(x)
     ax.set_xticklabels([ENV_TITLES.get(e, e) for e in envs_present], rotation=30, ha="right", fontsize=10)
-    ax.grid(True, which="both", axis="y", linestyle="--", alpha=0.35)
+    ax.grid(True, which="both" if log_scale else "major", axis="y", linestyle="--", alpha=0.35)
     ax.legend(frameon=True, fontsize=10, loc="upper right")
 
     plt.tight_layout()
@@ -307,7 +316,110 @@ def plot_k_capacity_effect(
     handles, labels = ax1.get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=len(algo_subset), frameon=True, fontsize=11)
 
-    plt.tight_layout(rect=[0, 0.02, 1, 0.93])
+ENV_COLORS = {
+    "FourRooms-misc": "#1f77b4",
+    "fourrooms-dense": "#aec7e8",
+    "fourrooms-mines": "#d62728",
+    "fourrooms-mines-dense": "#ff9896",
+    "eightrooms-misc": "#2ca02c",
+    "eightrooms-dense": "#98df8a",
+    "whirlpool-misc": "#9467bd",
+    "MountainCar-v0": "#ff7f0e",
+    "mountaincar-dense": "#ffbb78",
+    "SpaceInvadersExactValue": "#8c564b",
+}
+
+
+def plot_skew_symmetry_scatter(
+    summary_df: pd.DataFrame,
+    out_pdf_path: str,
+):
+    """
+    Plots scatter of Skew-Symmetry (||K|| / ||S||) vs. Ratio of AUC Value Error (E(0) / TD(0)).
+    Compares k=8 and k=64 side-by-side.
+    """
+    if summary_df.empty:
+        return
+
+    required = ["env", "k", "algo", "auc_ve_mean"]
+    if not all(c in summary_df.columns for c in required):
+        return
+
+    e0_df = summary_df[summary_df["algo"] == "e0"].set_index(["env", "k"])
+    td0_df = summary_df[summary_df["algo"] == "td0"].set_index(["env", "k"])
+
+    common_indices = e0_df.index.intersection(td0_df.index)
+    if len(common_indices) == 0:
+        return
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6), sharey=True)
+
+    for ax, k_val in [(ax1, 8), (ax2, 64)]:
+        pts_x = []
+        pts_y = []
+        labels = []
+        envs = []
+
+        for env_name in ALL_ENVS:
+            idx = (env_name, k_val)
+            if idx not in common_indices:
+                continue
+
+            e0_auc = float(e0_df.loc[idx, "auc_ve_mean"])
+            td0_auc = float(td0_df.loc[idx, "auc_ve_mean"])
+            skew = e0_df.loc[idx, "k_over_s_ratio"] if "k_over_s_ratio" in e0_df.columns else np.nan
+
+            if np.isnan(e0_auc) or np.isnan(td0_auc) or td0_auc <= 0 or np.isnan(skew):
+                continue
+
+            ratio = e0_auc / td0_auc
+            pts_x.append(float(skew))
+            pts_y.append(float(ratio))
+            labels.append(ENV_TITLES.get(env_name, env_name))
+            envs.append(env_name)
+
+        if not pts_x:
+            ax.text(0.5, 0.5, "Pending Data", ha="center", va="center", transform=ax.transAxes, color="gray")
+            ax.set_title(f"k = {k_val}", fontsize=12, fontweight="bold")
+            continue
+
+        pts_x = np.array(pts_x)
+        pts_y = np.array(pts_y)
+
+        # Plot parity reference line
+        ax.axhline(1.0, color="#d9534f", linestyle="--", linewidth=1.5, alpha=0.8, label=r"Parity ($E(0) = \mathrm{TD}(0)$)")
+        # Shade region where E(0) wins
+        y_min_vis = max(0.0, float(np.min(pts_y) * 0.8))
+        ax.axhspan(y_min_vis, 1.0, color="#5cb85c", alpha=0.08, label=r"$E(0)$ beats $\mathrm{TD}(0)$ ($y < 1.0$)")
+
+        # Scatter points with custom colors and labels
+        for x_val, y_val, lab, env_n in zip(pts_x, pts_y, labels, envs):
+            color = ENV_COLORS.get(env_n, "#1f77b4")
+            ax.scatter(x_val, y_val, s=90, color=color, edgecolors="#222222", linewidth=1.2, zorder=5)
+            ax.annotate(
+                lab,
+                (x_val, y_val),
+                xytext=(6, 4),
+                textcoords="offset points",
+                fontsize=9,
+                alpha=0.9,
+            )
+
+        # Linear regression trendline if enough points
+        if len(pts_x) >= 3:
+            slope, intercept = np.polyfit(pts_x, pts_y, 1)
+            x_line = np.linspace(float(np.min(pts_x) * 0.9), float(np.max(pts_x) * 1.1), 100)
+            ax.plot(x_line, slope * x_line + intercept, color="#333333", linestyle="-.", linewidth=1.4, alpha=0.7, label=f"Trend (slope={slope:+.2f})")
+
+        ax.set_title(f"Feature Dimension k={k_val} {'(Bottleneck)' if k_val==8 else '(High Capacity)'}", fontsize=12, fontweight="bold")
+        ax.set_xlabel(r"Degree of Skew Symmetry ($\|K\|_F / \|S\|_F$)", fontsize=11)
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend(frameon=True, fontsize=9, loc="upper right")
+
+    ax1.set_ylabel(r"$\mathrm{AUC\text{ }Value\text{ }Error}(E(0))\;/\;\mathrm{AUC\text{ }Value\text{ }Error}(\mathrm{TD}(0))$", fontsize=11)
+    fig.suptitle(r"Impact of Markov Chain Skew-Symmetry on $E(0)$ vs. $\mathrm{TD}(0)$ Performance", fontsize=13, fontweight="bold", y=0.98)
+
+    plt.tight_layout(rect=[0, 0.02, 1, 0.94])
     plt.savefig(out_pdf_path, dpi=300)
     plt.close()
     print(f"[Plot Generated] {out_pdf_path}")
@@ -371,12 +483,39 @@ def main():
             out_pdf_path=os.path.join(save_dir, f"advantage_cossim_curves_mc_td0_e0_k{k_val}.pdf"),
             log_scale=False,
         )
+        # Set A AUC Bar Charts: Value Error, Advantage Cosine Sim, and V_start Return
         plot_auc_grouped_bars(
             summary_df,
             algo_subset=core_algos,
             k_val=k_val,
+            metric_col="auc_ve_mean",
+            sem_col="auc_ve_sem",
+            ylabel="Normalized AUC of Value Error (Log Scale)",
+            title=f"Fixed Policy Evaluation: Normalized AUC of Value Error (k={k_val}) [MC vs TD(0) vs E(0)]",
             out_pdf_path=os.path.join(save_dir, f"auc_ve_bars_mc_td0_e0_k{k_val}.pdf"),
-            title_suffix="(MC vs TD(0) vs E(0))",
+            log_scale=True,
+        )
+        plot_auc_grouped_bars(
+            summary_df,
+            algo_subset=core_algos,
+            k_val=k_val,
+            metric_col="auc_cossim_mean",
+            sem_col="auc_cossim_sem",
+            ylabel="Normalized AUC of Advantage Cosine Sim",
+            title=f"Fixed Policy Evaluation: Normalized AUC of Advantage Cosine Sim (k={k_val}) [MC vs TD(0) vs E(0)]",
+            out_pdf_path=os.path.join(save_dir, f"auc_cossim_bars_mc_td0_e0_k{k_val}.pdf"),
+            log_scale=False,
+        )
+        plot_auc_grouped_bars(
+            summary_df,
+            algo_subset=core_algos,
+            k_val=k_val,
+            metric_col="auc_greedy_perf",
+            sem_col="auc_greedy_perf_sem",
+            ylabel=r"Normalized AUC of Greedy $V_{\mathrm{start}}$ Return",
+            title=f"Fixed Policy Evaluation: Normalized AUC of Greedy $V_{{\mathrm{{start}}}}$ Return (k={k_val}) [MC vs TD(0) vs E(0)]",
+            out_pdf_path=os.path.join(save_dir, f"auc_vstart_bars_mc_td0_e0_k{k_val}.pdf"),
+            log_scale=False,
         )
 
         # Set B Plots (Full Spectrum)
@@ -398,12 +537,39 @@ def main():
             out_pdf_path=os.path.join(save_dir, f"advantage_cossim_curves_all_algos_k{k_val}.pdf"),
             log_scale=False,
         )
+        # Set B AUC Bar Charts: Value Error, Advantage Cosine Sim, and V_start Return
         plot_auc_grouped_bars(
             summary_df,
             algo_subset=all_algos,
             k_val=k_val,
+            metric_col="auc_ve_mean",
+            sem_col="auc_ve_sem",
+            ylabel="Normalized AUC of Value Error (Log Scale)",
+            title=f"Fixed Policy Evaluation: Normalized AUC of Value Error (k={k_val}) [All Algorithms]",
             out_pdf_path=os.path.join(save_dir, f"auc_ve_bars_all_algos_k{k_val}.pdf"),
-            title_suffix="(All Algorithms)",
+            log_scale=True,
+        )
+        plot_auc_grouped_bars(
+            summary_df,
+            algo_subset=all_algos,
+            k_val=k_val,
+            metric_col="auc_cossim_mean",
+            sem_col="auc_cossim_sem",
+            ylabel="Normalized AUC of Advantage Cosine Sim",
+            title=f"Fixed Policy Evaluation: Normalized AUC of Advantage Cosine Sim (k={k_val}) [All Algorithms]",
+            out_pdf_path=os.path.join(save_dir, f"auc_cossim_bars_all_algos_k{k_val}.pdf"),
+            log_scale=False,
+        )
+        plot_auc_grouped_bars(
+            summary_df,
+            algo_subset=all_algos,
+            k_val=k_val,
+            metric_col="auc_greedy_perf",
+            sem_col="auc_greedy_perf_sem",
+            ylabel=r"Normalized AUC of Greedy $V_{\mathrm{start}}$ Return",
+            title=f"Fixed Policy Evaluation: Normalized AUC of Greedy $V_{{\mathrm{{start}}}}$ Return (k={k_val}) [All Algorithms]",
+            out_pdf_path=os.path.join(save_dir, f"auc_vstart_bars_all_algos_k{k_val}.pdf"),
+            log_scale=False,
         )
 
     # Set C: Capacity Effect
@@ -412,10 +578,10 @@ def main():
         algo_subset=core_algos,
         out_pdf_path=os.path.join(save_dir, "k_capacity_effect_mc_td0_e0.pdf"),
     )
-    plot_k_capacity_effect(
+    # Set D: Skew-Symmetry Diagnostic Scatter (||K|| / ||S|| vs E(0) / TD(0))
+    plot_skew_symmetry_scatter(
         summary_df,
-        algo_subset=all_algos,
-        out_pdf_path=os.path.join(save_dir, "k_capacity_effect_all_algos.pdf"),
+        out_pdf_path=os.path.join(save_dir, "skew_symmetry_vs_e0_td0_scatter.pdf"),
     )
 
     print("\n[Done] All publication-ready PDFs and summary tables exported successfully.")

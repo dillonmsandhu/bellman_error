@@ -138,6 +138,43 @@ def build_env_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
     return cfg
 
 
+def compute_skew_symmetry_ratio(env_name: str, config: Dict[str, Any]) -> float:
+    """Computes Frobenius norm ratio ||K||_F / ||S||_F for the environment under uniform random policy."""
+    try:
+        env, env_params = helpers.make_env(config)
+        evaluator = helpers.initialize_evaluator(config, env, env_params)
+        n_states = len(evaluator.obs_stack)
+        n_actions = env.action_space(env_params).n
+        pi_active = jnp.ones((n_states, n_actions)) / n_actions
+        pi_terminal = jnp.ones((1, n_actions)) / n_actions
+        Pi = np.array(jnp.vstack([pi_active, pi_terminal]))
+
+        P = np.array(evaluator.P)
+        gamma = float(config.get("GAMMA", 0.99))
+        n_total = P.shape[0]
+
+        P_pi = np.einsum("sa,sam->sm", Pi[:n_total, :], P)
+        mu_raw, _ = evaluator.compute_stationary_distribution_raw(Pi[:n_states, :])
+        mu = np.array(mu_raw)
+        mu = np.maximum(mu, 0.0)
+        if np.sum(mu) > 0:
+            mu = mu / np.sum(mu)
+        else:
+            mu = np.ones(n_states) / n_states
+
+        D = np.diag(mu[:n_states])
+        P_pi_cont = P_pi[:n_states, :n_states]
+        A = D @ (np.eye(n_states) - gamma * P_pi_cont)
+        S = 0.5 * (A + A.T)
+        K = 0.5 * (A - A.T)
+        norm_s = float(np.linalg.norm(S, ord="fro"))
+        norm_k = float(np.linalg.norm(K, ord="fro"))
+        return float(norm_k / (norm_s + 1e-12))
+    except Exception as e:
+        print(f"[Warning] Could not compute random policy skew symmetry: {e}")
+        return np.nan
+
+
 def compute_normalized_auc(trajectory_1d: np.ndarray) -> float:
     """Computes trapezoidal Area Under the Curve normalized by steps (average metric value)."""
     if len(trajectory_1d) < 2:
@@ -214,6 +251,8 @@ def main():
     print("=" * 75)
 
     base_env_cfg = build_env_config(env_name, args)
+    k_over_s_ratio = compute_skew_symmetry_ratio(env_name, base_env_cfg)
+    print(f"Degree of Skew Symmetry (||K||_F / ||S||_F): {k_over_s_ratio:.4f}")
 
     # Storage structure:
     # results[k][algo][lr] = dict of stacked metrics (n_seeds, num_updates)
@@ -275,23 +314,25 @@ def main():
                 if perf_trajectories is not None:
                     seed_perf_aucs = [compute_normalized_auc(perf_trajectories[s]) for s in range(args.n_seeds)]
                     mean_perf_auc = float(np.mean(seed_perf_aucs))
+                    sem_perf_auc = float(np.std(seed_perf_aucs) / np.sqrt(max(1, args.n_seeds)))
                     final_perf_mean = float(np.mean(perf_trajectories[:, -1]))
                 else:
-                    mean_perf_auc, final_perf_mean = np.nan, np.nan
+                    mean_perf_auc, sem_perf_auc, final_perf_mean = np.nan, np.nan, np.nan
 
-                lr_aucs_ve.append((lr_val, mean_auc, sem_auc, mean_cos_auc, sem_cos_auc, final_ve_mean, final_ve_sem, mean_perf_auc, final_perf_mean))
+                lr_aucs_ve.append((lr_val, mean_auc, sem_auc, mean_cos_auc, sem_cos_auc, final_ve_mean, final_ve_sem, mean_perf_auc, sem_perf_auc, final_perf_mean))
                 print(f" done in {dt:.1f}s | VE AUC: {mean_auc:.4e} | Final VE: {final_ve_mean:.4e}")
 
             # Determine best LR based on minimum normalized AUC of Value Error
             valid_aucs = [item for item in lr_aucs_ve if not np.isnan(item[1])]
             if valid_aucs:
                 best_item = min(valid_aucs, key=lambda x: x[1])
-                best_lr, best_auc_ve, best_sem_ve, best_auc_cos, best_sem_cos, best_fin_ve, best_fin_sem, best_auc_perf, best_fin_perf = best_item
+                best_lr, best_auc_ve, best_sem_ve, best_auc_cos, best_sem_cos, best_fin_ve, best_fin_sem, best_auc_perf, best_sem_perf, best_fin_perf = best_item
                 summary_rows.append({
                     "env": env_name,
                     "k": k_val,
                     "algo": algo_key,
                     "display_name": algo_info["display_name"],
+                    "k_over_s_ratio": k_over_s_ratio,
                     "best_lr": best_lr,
                     "auc_ve_mean": best_auc_ve,
                     "auc_ve_sem": best_sem_ve,
@@ -300,6 +341,7 @@ def main():
                     "final_ve_mean": best_fin_ve,
                     "final_ve_sem": best_fin_sem,
                     "auc_greedy_perf": best_auc_perf,
+                    "auc_greedy_perf_sem": best_sem_perf,
                     "final_greedy_perf": best_fin_perf,
                 })
 
