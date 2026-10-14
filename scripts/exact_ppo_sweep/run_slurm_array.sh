@@ -53,9 +53,9 @@ N_SEEDS=${N_SEEDS:-10}
 SEED=${SEED:-42}
 K_VAL=${K_VAL:-32}
 ACTOR_LR=${ACTOR_LR:-0.0001}
-CRITIC_LR=${CRITIC_LR:-0.001}
-GAE_LAMBDA=${GAE_LAMBDA:-0.2}
-CLIP_EPS=${CLIP_EPS:-0.2}
+CRITIC_LRS=${CRITIC_LRS:-"0.001 0.005 0.02"}
+GAE_LAMBDA=${GAE_LAMBDA:-0.1}
+CLIP_EPS=${CLIP_EPS:-0.05}
 VAL_LAMBDA=${VAL_LAMBDA:-0.8}
 OUT_DIR=${OUT_DIR:-"results/exact_ppo_sweep"}
 
@@ -86,7 +86,7 @@ echo "Num Updates:   $NUM_UPDATES"
 echo "Num Seeds:     $N_SEEDS"
 echo "Critic k:      $K_VAL"
 echo "Actor LR:      $ACTOR_LR"
-echo "Critic LR:     $CRITIC_LR"
+echo "Critic LRs:    $CRITIC_LRS"
 echo "GAE Lambda:    $GAE_LAMBDA"
 echo "Clip Epsilon:  $CLIP_EPS"
 echo "Value Lambda:  $VAL_LAMBDA"
@@ -101,7 +101,7 @@ $PYTHON scripts/exact_ppo_sweep/run_single_env.py \
     --seed "$SEED" \
     --k "$K_VAL" \
     --actor_lr "$ACTOR_LR" \
-    --critic_lr "$CRITIC_LR" \
+    --critic_lrs $CRITIC_LRS \
     --gae_lambda "$GAE_LAMBDA" \
     --clip_eps "$CLIP_EPS" \
     --val_lambda "$VAL_LAMBDA" \

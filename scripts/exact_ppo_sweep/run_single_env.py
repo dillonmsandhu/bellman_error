@@ -102,8 +102,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
     parser.add_argument("--k", type=int, default=32, help="Critic feature dimension (default: 32)")
     parser.add_argument("--actor_lr", type=float, default=0.0001, help="Actor learning rate (default: 0.0001)")
-    parser.add_argument("--critic_lr", type=float, default=0.005, help="Critic learning rate (default: 0.001)")
-    parser.add_argument("--gae_lambda", type=float, default=0.1, help="GAE lambda (default: 0.2)")
+    parser.add_argument("--critic_lrs", type=float, nargs="+", default=[0.001, 0.005, 0.02], help="Critic learning rates to sweep (default: 0.001 0.005 0.02)")
+    parser.add_argument("--gae_lambda", type=float, default=0.1, help="GAE lambda (default: 0.1)")
     parser.add_argument("--clip_eps", type=float, default=0.05, help="PPO clip epsilon (default: 0.05)")
     parser.add_argument("--val_lambda", type=float, default=0.8, help="Value lambda for TD(lambda) and E(lambda)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma (default: 0.99)")
@@ -127,7 +127,7 @@ def load_env_baseline(env_name: str) -> tuple[float, float, float]:
     return 1.0, 0.0, 1.0
 
 
-def build_env_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
+def build_env_config(env_name: str, args: argparse.Namespace, critic_lr: float) -> Dict[str, Any]:
     """Configures environment parameters matching PPO exact evaluation standards."""
     is_mc = "mountaincar" in env_name.lower()
     cfg = base_cfg.copy()
@@ -145,10 +145,10 @@ def build_env_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
         "k": args.k,
         "ACTOR_LR": args.actor_lr,
         "ACTOR_LR_END": args.actor_lr,
-        "CRITIC_LR": args.critic_lr,
-        "CRITIC_LR_END": args.critic_lr,
-        "LR": args.critic_lr,
-        "LR_END": args.critic_lr,
+        "CRITIC_LR": critic_lr,
+        "CRITIC_LR_END": critic_lr,
+        "LR": critic_lr,
+        "LR_END": critic_lr,
         "GAE_LAMBDA": args.gae_lambda,
         "CLIP_EPS": args.clip_eps,
         "VALUE_LAMBDA": args.val_lambda,
@@ -221,7 +221,7 @@ def main():
     print(f"Num Seeds:         {args.n_seeds} (base seed: {args.seed})")
     print(f"Critic Feature k:  {args.k}")
     print(f"Actor LR:          {args.actor_lr}")
-    print(f"Critic LR:         {args.critic_lr}")
+    print(f"Critic LRs:        {args.critic_lrs}")
     print(f"GAE Lambda:        {args.gae_lambda}")
     print(f"Clip Epsilon:      {args.clip_eps}")
     print(f"Algorithms:        {list(ALGORITHMS.keys())}")
@@ -231,75 +231,120 @@ def main():
     print(f"Output Directory:  {out_env_dir}")
     print("=" * 75)
 
-    base_env_cfg = build_env_config(args.env_name, args)
-
     full_results = {
         "env_name": args.env_name,
         "k": args.k,
         "args": vars(args),
         "baselines": {"v_star": v_star, "v_rand": v_rand, "delta": delta},
-        "runs": {},
+        "runs": {},          # winning run per algo (for direct plot compatibility)
+        "all_runs": {},      # all runs: algo -> lr -> res
+        "best_critic_lrs": {},
     }
 
     summary_rows = []
+    all_lrs_rows = []
 
     for algo_key, algo_info in ALGORITHMS.items():
-        print(f"\n--> Running {algo_key} ({algo_info['display_name']}) ...", end="", flush=True)
+        print(f"\n========================================================")
+        print(f"Algorithm: {algo_key} ({algo_info['display_name']})")
+        print(f"========================================================")
 
-        res = run_algo_condition(
-            train_builder=algo_info["train_builder"],
-            config=base_env_cfg,
-            algo_hparams=algo_info["hparams"],
-            n_seeds=args.n_seeds,
-            base_seed=args.seed,
-        )
+        full_results["all_runs"][algo_key] = {}
+        lr_candidates = []
 
-        dt = res["_runtime_sec"]
-        v_start_seeds = res.get("V_start")  # shape: (n_seeds, num_updates)
+        for c_lr in args.critic_lrs:
+            print(f"  --> Testing Critic LR = {c_lr} ...", end="", flush=True)
+            env_cfg = build_env_config(args.env_name, args, critic_lr=c_lr)
 
-        if v_start_seeds is not None:
-            # Standardized performance: (V_start - V_rand) / Delta
-            std_perf_seeds = (v_start_seeds - v_rand) / (delta + 1e-12)
-            res["standardized_v_start"] = std_perf_seeds
+            res = run_algo_condition(
+                train_builder=algo_info["train_builder"],
+                config=env_cfg,
+                algo_hparams=algo_info["hparams"],
+                n_seeds=args.n_seeds,
+                base_seed=args.seed,
+            )
 
-            final_perf_per_seed = std_perf_seeds[:, -1]
-            auc_perf_per_seed = np.array([compute_normalized_auc(s) for s in std_perf_seeds])
+            dt = res["_runtime_sec"]
+            v_start_seeds = res.get("V_start")  # shape: (n_seeds, num_updates)
 
-            mean_final = float(np.mean(final_perf_per_seed))
-            sem_final = float(np.std(final_perf_per_seed, ddof=1) / np.sqrt(args.n_seeds)) if args.n_seeds > 1 else 0.0
+            if v_start_seeds is not None:
+                std_perf_seeds = (v_start_seeds - v_rand) / (delta + 1e-12)
+                res["standardized_v_start"] = std_perf_seeds
 
-            mean_auc = float(np.mean(auc_perf_per_seed))
-            sem_auc = float(np.std(auc_perf_per_seed, ddof=1) / np.sqrt(args.n_seeds)) if args.n_seeds > 1 else 0.0
+                final_perf_per_seed = std_perf_seeds[:, -1]
+                auc_perf_per_seed = np.array([compute_normalized_auc(s) for s in std_perf_seeds])
 
-            raw_final_mean = float(np.mean(v_start_seeds[:, -1]))
+                mean_final = float(np.mean(final_perf_per_seed))
+                sem_final = float(np.std(final_perf_per_seed, ddof=1) / np.sqrt(args.n_seeds)) if args.n_seeds > 1 else 0.0
+
+                mean_auc = float(np.mean(auc_perf_per_seed))
+                sem_auc = float(np.std(auc_perf_per_seed, ddof=1) / np.sqrt(args.n_seeds)) if args.n_seeds > 1 else 0.0
+
+                raw_final_mean = float(np.mean(v_start_seeds[:, -1]))
+            else:
+                mean_final = sem_final = mean_auc = sem_auc = raw_final_mean = np.nan
+
+            full_results["all_runs"][algo_key][c_lr] = res
+
+            row_data = {
+                "env": args.env_name,
+                "algo": algo_key,
+                "display_name": algo_info["display_name"],
+                "k": args.k,
+                "critic_lr": c_lr,
+                "actor_lr": args.actor_lr,
+                "gae_lambda": args.gae_lambda,
+                "clip_eps": args.clip_eps,
+                "runtime_sec": dt,
+                "v_start_final_mean": raw_final_mean,
+                "std_perf_final_mean": mean_final,
+                "std_perf_final_sem": sem_final,
+                "std_perf_auc_mean": mean_auc,
+                "std_perf_auc_sem": sem_auc,
+            }
+            all_lrs_rows.append(row_data)
+            lr_candidates.append((c_lr, mean_auc, sem_auc, mean_final, sem_final, raw_final_mean, res, dt))
+
+            print(f" done in {dt:.1f}s | AUC Std Perf: {mean_auc:.4f} ± {sem_auc:.4f} | Final: {mean_final:.4f}")
+
+        # Select best critic LR based on maximum AUC of standardized performance
+        valid_candidates = [c for c in lr_candidates if not np.isnan(c[1])]
+        if valid_candidates:
+            best_cand = max(valid_candidates, key=lambda x: x[1])
+            best_lr, best_auc, best_auc_sem, best_fin, best_fin_sem, best_raw_fin, best_res, best_dt = best_cand
+            print(f"  [Selected Best Critic LR] {best_lr} (AUC: {best_auc:.4f})")
         else:
-            mean_final = sem_final = mean_auc = sem_auc = raw_final_mean = np.nan
+            best_lr, best_auc, best_auc_sem, best_fin, best_fin_sem, best_raw_fin, best_res, best_dt = lr_candidates[0]
 
-        full_results["runs"][algo_key] = res
+        full_results["runs"][algo_key] = best_res
+        full_results["best_critic_lrs"][algo_key] = best_lr
 
         summary_rows.append({
             "env": args.env_name,
             "algo": algo_key,
             "display_name": algo_info["display_name"],
             "k": args.k,
+            "best_critic_lr": best_lr,
+            "critic_lr": best_lr,
             "actor_lr": args.actor_lr,
-            "critic_lr": args.critic_lr,
             "gae_lambda": args.gae_lambda,
             "clip_eps": args.clip_eps,
-            "runtime_sec": dt,
-            "v_start_final_mean": raw_final_mean,
-            "std_perf_final_mean": mean_final,
-            "std_perf_final_sem": sem_final,
-            "std_perf_auc_mean": mean_auc,
-            "std_perf_auc_sem": sem_auc,
+            "runtime_sec": best_dt,
+            "v_start_final_mean": best_raw_fin,
+            "std_perf_final_mean": best_fin,
+            "std_perf_final_sem": best_fin_sem,
+            "std_perf_auc_mean": best_auc,
+            "std_perf_auc_sem": best_auc_sem,
         })
 
-        print(f" done in {dt:.1f}s | Final Std Perf: {mean_final:.4f} ± {sem_final:.4f} | AUC Std Perf: {mean_auc:.4f}")
-
-    # Save summary dataframe
+    # Save summary dataframes
     df_summary = pd.DataFrame(summary_rows)
     csv_path = os.path.join(out_env_dir, "summary.csv")
     df_summary.to_csv(csv_path, index=False)
+
+    df_all_lrs = pd.DataFrame(all_lrs_rows)
+    all_lrs_csv = os.path.join(out_env_dir, "summary_all_lrs.csv")
+    df_all_lrs.to_csv(all_lrs_csv, index=False)
 
     # Save out.pkl
     pkl_path = os.path.join(out_env_dir, "out.pkl")
@@ -308,6 +353,7 @@ def main():
 
     # Save config.json
     cfg_path = os.path.join(out_env_dir, "config.json")
+    base_env_cfg = build_env_config(args.env_name, args, critic_lr=args.critic_lrs[0])
     serializable_cfg = {k: v for k, v in base_env_cfg.items() if isinstance(v, (int, float, str, bool, list, dict)) or v is None}
     with open(cfg_path, "w") as f:
         json.dump(serializable_cfg, f, indent=4)

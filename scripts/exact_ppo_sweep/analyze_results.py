@@ -371,6 +371,32 @@ def render_table_to_pdf(df: pd.DataFrame, bold_cells: dict, title: str, out_pdf_
     plt.close()
 
 
+def generate_tuned_critic_lrs_table(summary_df: pd.DataFrame):
+    """Generates a reference table of the selected best critic learning rates per algorithm and environment."""
+    envs_present = [e for e in ALL_ENVS if e in summary_df["env"].unique()]
+    algos_present = [a for a in ALGO_ORDER if a in summary_df["algo"].unique()]
+
+    if not envs_present or not algos_present:
+        return pd.DataFrame(), {}
+
+    data_matrix = []
+    col_to_check = "best_critic_lr" if "best_critic_lr" in summary_df.columns else "critic_lr"
+
+    for env in envs_present:
+        row = {"Environment": ENV_DISPLAY_NAMES.get(env, env)}
+        for a in algos_present:
+            col_name = ALGO_DISPLAY_NAMES.get(a, a)
+            sub = summary_df[(summary_df["env"] == env) & (summary_df["algo"] == a)]
+            if not sub.empty:
+                val = sub[col_to_check].values[0]
+                row[col_name] = str(val)
+            else:
+                row[col_name] = "-"
+        data_matrix.append(row)
+
+    return pd.DataFrame(data_matrix), {}
+
+
 def main():
     args = parse_args()
     results_dir = os.path.abspath(args.results_dir)
@@ -429,6 +455,16 @@ def main():
         bold_cells=bold_t3,
         title="Table 3: Pairwise Head-to-Head Records [Wins - Losses - Ties]",
         base_filename="table3_pairwise_head_to_head",
+        out_dir=out_dir,
+    )
+
+    # Table 4: Tuned Critic Learning Rates
+    df_t4, bold_t4 = generate_tuned_critic_lrs_table(summary_df)
+    export_table_formats(
+        df=df_t4,
+        bold_cells=bold_t4,
+        title="Table 4: Selected Tuned Critic Learning Rates",
+        base_filename="table4_tuned_critic_lrs",
         out_dir=out_dir,
     )
 

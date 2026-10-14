@@ -15,13 +15,13 @@ N_SEEDS=${2:-10}
 SEED=${3:-42}
 K_VAL=${4:-32}
 ACTOR_LR=${5:-0.0001}
-CRITIC_LR=${6:-0.001}
-GAE_LAMBDA=${7:-0.2}
-CLIP_EPS=${8:-0.2}
+CRITIC_LRS=${6:-"0.001 0.005 0.02"}
+GAE_LAMBDA=${7:-0.1}
+CLIP_EPS=${8:-0.05}
 VAL_LAMBDA=${9:-0.8}
 OUT_DIR=${10:-"results/exact_ppo_sweep"}
 
-export NUM_UPDATES N_SEEDS SEED K_VAL ACTOR_LR CRITIC_LR GAE_LAMBDA CLIP_EPS VAL_LAMBDA OUT_DIR REPO_ROOT
+export NUM_UPDATES N_SEEDS SEED K_VAL ACTOR_LR CRITIC_LRS GAE_LAMBDA CLIP_EPS VAL_LAMBDA OUT_DIR REPO_ROOT
 
 echo "================================================================"
 echo "Submitting Exact PPO Evaluation SLURM Array"
@@ -29,7 +29,7 @@ echo "Num Updates:        $NUM_UPDATES"
 echo "Num Seeds:          $N_SEEDS"
 echo "Critic k:           $K_VAL"
 echo "Actor LR:           $ACTOR_LR"
-echo "Critic LR:          $CRITIC_LR"
+echo "Critic LRs:         $CRITIC_LRS"
 echo "GAE Lambda:         $GAE_LAMBDA"
 echo "Clip Epsilon:       $CLIP_EPS"
 echo "Value Lambda:       $VAL_LAMBDA"
@@ -40,7 +40,7 @@ echo "================================================================"
 ARRAY_SCRIPT="scripts/exact_ppo_sweep/run_slurm_array.sh"
 SBATCH_ARRAY_CMD="sbatch --parsable \
     --chdir=\"$REPO_ROOT\" \
-    --export=ALL,NUM_UPDATES=$NUM_UPDATES,N_SEEDS=$N_SEEDS,SEED=$SEED,K_VAL=$K_VAL,ACTOR_LR=$ACTOR_LR,CRITIC_LR=$CRITIC_LR,GAE_LAMBDA=$GAE_LAMBDA,CLIP_EPS=$CLIP_EPS,VAL_LAMBDA=$VAL_LAMBDA,OUT_DIR=\"$OUT_DIR\",REPO_ROOT=\"$REPO_ROOT\" \
+    --export=ALL,NUM_UPDATES=$NUM_UPDATES,N_SEEDS=$N_SEEDS,SEED=$SEED,K_VAL=$K_VAL,ACTOR_LR=$ACTOR_LR,CRITIC_LRS=\"$CRITIC_LRS\",GAE_LAMBDA=$GAE_LAMBDA,CLIP_EPS=$CLIP_EPS,VAL_LAMBDA=$VAL_LAMBDA,OUT_DIR=\"$OUT_DIR\",REPO_ROOT=\"$REPO_ROOT\" \
     \"$ARRAY_SCRIPT\""
 
 ARRAY_JOB_ID=$(eval "$SBATCH_ARRAY_CMD")

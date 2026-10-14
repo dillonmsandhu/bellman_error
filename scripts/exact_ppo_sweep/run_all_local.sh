@@ -28,9 +28,9 @@ N_SEEDS=${N_SEEDS:-10}
 SEED=${SEED:-42}
 K_VAL=${K_VAL:-32}
 ACTOR_LR=${ACTOR_LR:-0.0001}
-CRITIC_LR=${CRITIC_LR:-0.001}
-GAE_LAMBDA=${GAE_LAMBDA:-0.2}
-CLIP_EPS=${CLIP_EPS:-0.2}
+CRITIC_LRS=${CRITIC_LRS:-"0.001 0.005 0.02"}
+GAE_LAMBDA=${GAE_LAMBDA:-0.1}
+CLIP_EPS=${CLIP_EPS:-0.05}
 VAL_LAMBDA=${VAL_LAMBDA:-0.8}
 OUT_DIR=${OUT_DIR:-"results/exact_ppo_sweep"}
 SKIP_COMPLETED=${SKIP_COMPLETED:-0}
@@ -146,7 +146,7 @@ for i in "${!ENVS[@]}"; do
         --seed "$SEED" \
         --k "$K_VAL" \
         --actor_lr "$ACTOR_LR" \
-        --critic_lr "$CRITIC_LR" \
+        --critic_lrs $CRITIC_LRS \
         --gae_lambda "$GAE_LAMBDA" \
         --clip_eps "$CLIP_EPS" \
         --val_lambda "$VAL_LAMBDA" \
