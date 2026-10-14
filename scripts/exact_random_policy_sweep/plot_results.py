@@ -45,7 +45,7 @@ matplotlib.rcParams["axes.edgecolor"] = "#333333"
 matplotlib.rcParams["axes.linewidth"] = 0.8
 
 ALL_ENVS = [
-    "fourrooms-dense",
+    "mountaincar",
     "FourRooms-misc",
     "fourrooms-mines",
     "fourrooms-mines-dense",
@@ -73,6 +73,7 @@ ALGO_LABELS = {
 }
 
 ENV_TITLES = {
+    "mountaincar": "Mountain Car (Sparse)",
     "fourrooms-dense": "FourRooms (Dense)",
     "FourRooms-misc": "FourRooms (Sparse)",
     "fourrooms-mines": "FourRooms + Mines",
@@ -368,6 +369,7 @@ ENV_COLORS = {
     "eightrooms-dense": "#98df8a",
     "whirlpool-misc": "#9467bd",
     "MountainCar-v0": "#ff7f0e",
+    "mountaincar": "#ff7f0e",
     "mountaincar-dense": "#ffbb78",
     "SpaceInvadersExactValue": "#8c564b",
 }

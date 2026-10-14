@@ -25,7 +25,7 @@ else
 fi
 
 NUM_UPDATES=${NUM_UPDATES:-100}
-N_SEEDS=${N_SEEDS:-3}
+N_SEEDS=${N_SEEDS:-10}
 SEED=${SEED:-42}
 K_VALUES=${K_VALUES:-"8 64"}
 LRS=${LRS:-"0.0003 0.001 0.003"}
@@ -81,7 +81,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 ENVS=(
-    "fourrooms-dense"
+    "mountaincar"
     "FourRooms-misc"
     "fourrooms-mines"
     "fourrooms-mines-dense"

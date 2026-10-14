@@ -11,7 +11,7 @@ mkdir -p slurm
 export PYTHONPATH="$REPO_ROOT"
 
 NUM_UPDATES=${1:-100}
-N_SEEDS=${2:-3}
+N_SEEDS=${2:-10}
 SEED=${3:-42}
 K_VALUES=${4:-"8 64"}
 LRS=${5:-"0.0003 0.001 0.003"}
@@ -64,7 +64,7 @@ SBATCH_POST_CMD="sbatch --parsable \
     --mem=16G \
     --dependency=afterany:$ARRAY_JOB_ID \
     --chdir=\"$REPO_ROOT\" \
-    --wrap=\"$PYTHON $POST_SCRIPT --results_dir '$OUT_DIR'\""
+    --wrap=\"$PYTHON $POST_SCRIPT --results_dir '$OUT_DIR' && $PYTHON scripts/exact_random_policy_sweep/analyze_results.py --results_dir '$OUT_DIR'\""
 
 POST_JOB_ID=$(eval "$SBATCH_POST_CMD")
 echo "Submitted Chained Post-Processing Job ID: $POST_JOB_ID (will run after $ARRAY_JOB_ID completes)"

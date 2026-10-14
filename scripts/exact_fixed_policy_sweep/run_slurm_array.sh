@@ -36,7 +36,7 @@ else
 fi
 
 ENVS=(
-    "fourrooms-dense"
+    "mountaincar"
     "FourRooms-misc"
     "fourrooms-mines"
     "fourrooms-mines-dense"
@@ -49,7 +49,7 @@ ENVS=(
 
 TARGET_ARG=${1:-$SLURM_ARRAY_TASK_ID}
 NUM_UPDATES=${NUM_UPDATES:-100}
-N_SEEDS=${N_SEEDS:-3}
+N_SEEDS=${N_SEEDS:-10}
 SEED=${SEED:-42}
 K_VALUES=${K_VALUES:-"8 64"}
 LRS=${LRS:-"0.0003 0.001 0.003"}

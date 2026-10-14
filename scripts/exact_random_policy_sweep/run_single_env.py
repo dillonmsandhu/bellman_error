@@ -43,6 +43,7 @@ import numpy as np
 import pandas as pd
 
 from core.config import config as base_cfg
+import core.helpers as helpers
 from random_policy.exact_mc import make_train as make_mc_train
 from random_policy.exact_td import make_train as make_td0_train
 from random_policy.exact_E_gd import make_train as make_e0_train
@@ -53,7 +54,7 @@ from random_policy.exact_E_lambda import make_train as make_e_lambda_train
 trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 ALL_ENVS = [
-    "fourrooms-dense",
+    "mountaincar",
     "FourRooms-misc",
     "fourrooms-mines",
     "fourrooms-mines-dense",
@@ -103,7 +104,7 @@ def parse_args():
     parser.add_argument("--env_name", type=str, default="FourRooms-misc", help="Name of the environment")
     parser.add_argument("--env_idx", type=int, default=None, help="Index into ALL_ENVS (0-8)")
     parser.add_argument("--num_updates", type=int, default=100, help="Number of exact gradient updates (default: 100)")
-    parser.add_argument("--n_seeds", type=int, default=3, help="Number of random seeds (default: 3)")
+    parser.add_argument("--n_seeds", type=int, default=10, help="Number of random seeds (default: 10)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
     parser.add_argument("--k_values", type=int, nargs="+", default=[8, 64], help="Feature dimensions to evaluate (default: 8 64)")
     parser.add_argument("--lrs", type=float, nargs="+", default=[0.0003, 0.001, 0.003], help="Learning rates to sweep (default: 0.0003 0.001 0.003)")

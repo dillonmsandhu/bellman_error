@@ -36,7 +36,7 @@ from core.config import config as base_cfg
 from ppo.ground_truth import make_train as make_ground_truth_train
 
 ALL_ENVS = [
-    "fourrooms-dense",
+    "mountaincar",
     "FourRooms-misc",
     "fourrooms-mines",
     "fourrooms-mines-dense",
