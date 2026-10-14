@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import sys
 import glob
+import json
 import argparse
 import pickle
 import numpy as np
@@ -119,6 +120,20 @@ def load_all_env_data(results_dir: str):
     return env_data, combined_df
 
 
+def load_env_baselines(project_root: str | None = None) -> dict:
+    """Loads precomputed environment baselines (v_star, v_rand, delta) from JSON."""
+    if project_root is None:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    json_path = os.path.join(project_root, "reference", "env_performance_baselines.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[Warning] Failed to load {json_path}: {e}")
+    return {}
+
+
 def plot_learning_curves_grid(
     env_data: dict,
     algo_subset: list[str],
@@ -207,6 +222,7 @@ def plot_auc_grouped_bars(
     title: str,
     out_pdf_path: str,
     log_scale: bool = False,
+    baseline_dict: dict | None = None,
 ):
     """Plots clustered bar chart of a metric across environments for specified algorithms and k."""
     if summary_df.empty:
@@ -231,8 +247,20 @@ def plot_auc_grouped_bars(
 
     for i, algo in enumerate(algo_subset):
         algo_data = sub_df[sub_df["algo"] == algo].set_index("env")
-        means = [float(algo_data.loc[e, metric_col]) if (e in algo_data.index and not np.isnan(algo_data.loc[e, metric_col])) else 0.0 for e in envs_present]
-        sems = [float(algo_data.loc[e, sem_col]) if (sem_col and sem_col in algo_data.columns and e in algo_data.index and not np.isnan(algo_data.loc[e, sem_col])) else 0.0 for e in envs_present]
+        means = []
+        sems = []
+        for e in envs_present:
+            val = float(algo_data.loc[e, metric_col]) if (e in algo_data.index and not np.isnan(algo_data.loc[e, metric_col])) else 0.0
+            sem = float(algo_data.loc[e, sem_col]) if (sem_col and sem_col in algo_data.columns and e in algo_data.index and not np.isnan(algo_data.loc[e, sem_col])) else 0.0
+            if baseline_dict and e in baseline_dict:
+                v_star = baseline_dict[e].get("v_star", 1.0)
+                v_base = baseline_dict[e].get("v_rand", 0.0)
+                denom = v_star - v_base
+                if abs(denom) > 1e-8:
+                    val = (val - v_base) / denom
+                    sem = sem / denom
+            means.append(val)
+            sems.append(sem)
 
         offset = (i - n_algos / 2 + 0.5) * bar_width
         ax.bar(
@@ -247,6 +275,11 @@ def plot_auc_grouped_bars(
             capsize=3,
             alpha=0.9,
         )
+
+    if baseline_dict:
+        ax.axhline(1.0, color="#d9534f", linestyle="--", linewidth=1.2, alpha=0.8, label=r"Optimal Policy ($V^*$)")
+        ax.axhline(0.0, color="#777777", linestyle=":", linewidth=1.2, alpha=0.8, label=r"Random Policy ($V^{\pi}$)")
+        ax.set_ylim(-0.08, 1.15)
 
     ax.set_ylabel(ylabel, fontsize=12)
     if log_scale:
@@ -448,6 +481,9 @@ def main():
     print("=" * 75)
 
     env_data, summary_df = load_all_env_data(results_dir)
+    baselines = load_env_baselines()
+    if baselines:
+        print(f"[Baselines Loaded] Found reference baselines for {len(baselines)} environments.")
 
     if not env_data and summary_df.empty:
         print(f"[Notice] No experimental results found in {results_dir}. Skipping plot generation until runs finish.")
@@ -525,10 +561,11 @@ def main():
             k_val=k_val,
             metric_col="auc_greedy_perf",
             sem_col="auc_greedy_perf_sem",
-            ylabel=r"Normalized AUC of Greedy $V_{\mathrm{start}}$ Return",
-            title=f"Random Policy Evaluation: Normalized AUC of Greedy $V_{{\mathrm{{start}}}}$ Return (k={k_val}) [MC vs TD(0) vs E(0)]",
+            ylabel=r"Normalized Return Score (0 = Random $V^{\pi}$, 1 = Optimal $V^*$)",
+            title=f"Random Policy Evaluation: Normalized Return Score (k={k_val}) [MC vs TD(0) vs E(0)]",
             out_pdf_path=os.path.join(save_dir, f"auc_vstart_bars_mc_td0_e0_k{k_val}.pdf"),
             log_scale=False,
+            baseline_dict=baselines,
         )
 
         # Set B Plots (Full Spectrum)
@@ -579,10 +616,11 @@ def main():
             k_val=k_val,
             metric_col="auc_greedy_perf",
             sem_col="auc_greedy_perf_sem",
-            ylabel=r"Normalized AUC of Greedy $V_{\mathrm{start}}$ Return",
-            title=f"Random Policy Evaluation: Normalized AUC of Greedy $V_{{\mathrm{{start}}}}$ Return (k={k_val}) [All Algorithms]",
+            ylabel=r"Normalized Return Score (0 = Random $V^{\pi}$, 1 = Optimal $V^*$)",
+            title=f"Random Policy Evaluation: Normalized Return Score (k={k_val}) [All Algorithms]",
             out_pdf_path=os.path.join(save_dir, f"auc_vstart_bars_all_algos_k{k_val}.pdf"),
             log_scale=False,
+            baseline_dict=baselines,
         )
 
     # Set C: Capacity Effect Comparison (k=8 vs k=64)
