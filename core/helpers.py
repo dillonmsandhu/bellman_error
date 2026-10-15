@@ -1051,14 +1051,12 @@ def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant=
                 "to evaluate the start-state anchor E_{s0 ~ d0}[e(s0)^2]. "
                 "Without is_start, the anchor cannot be placed on the initial state boundary and is biased."
             )
-        if nu is None:
-            nu = jnp.mean(true_terminal)
-        start_err_sq = jnp.where(
-            jnp.any(is_start),
-            jnp.sum(jnp.where(is_start, e_i ** 2, 0.0)) / jnp.maximum(jnp.sum(is_start), 1.0),
-            0.0,
-        )
-        start_anchor_loss = 0.5 * gamma * nu * start_err_sq
+        # Refinement 1 (Unbiased batch mask normalization):
+        # In a rollout buffer, the sample frequency of start states is an unbiased
+        # sample estimator of the termination/reset rate nu: E[1_{s in start}] = nu.
+        # Thus (1/B) * sum_{i=1}^B 1_{s_i in start} * e(s_i)^2 is an exact, unbiased, and low-variance
+        # sample estimator of nu * E_{s0 ~ d0}[e(s0)^2] without dividing by N_start or tracking nu_ema.
+        start_anchor_loss = 0.5 * gamma * jnp.mean(jnp.where(is_start, e_i ** 2, 0.0))
         value_loss = magnitude_loss + laplacian_loss + start_anchor_loss
     else:
         raise ValueError(f"Unknown E variant: {variant}")
