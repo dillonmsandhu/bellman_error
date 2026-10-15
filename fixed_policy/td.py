@@ -125,6 +125,7 @@ def make_train(base_config):
             if hasattr(evaluator, "obs_stack") and hasattr(evaluator, "start_idx"):
                 v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx]).squeeze()
                 metric["v_pred_start"] = v_pred_start
+            runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
