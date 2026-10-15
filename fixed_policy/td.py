@@ -122,8 +122,9 @@ def make_train(base_config):
                 evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn, light=config.get("LIGHT_METRICS", True)
             )
             metric.update(value_metrics)
-
-            runner_state = (train_state, env_state, last_obs, rng, idx + 1)
+            if hasattr(evaluator, "obs_stack") and hasattr(evaluator, "start_idx"):
+                v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx]).squeeze()
+                metric["v_pred_start"] = v_pred_start
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
