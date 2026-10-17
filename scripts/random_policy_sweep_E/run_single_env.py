@@ -62,7 +62,7 @@ def parse_args():
     parser.add_argument("--num_steps", type=int, default=128, help="Rollout steps per environment")
     parser.add_argument("--minibatch_size", type=int, default=1024, help="Minibatch size for updates")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--out_dir", type=str, default="results/random_policy_sweep_E", help="Output directory root")
     return parser.parse_args()
 

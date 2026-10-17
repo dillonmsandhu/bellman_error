@@ -10,14 +10,14 @@ REPO_ROOT="$(pwd)"
 mkdir -p slurm
 export PYTHONPATH="$REPO_ROOT"
 
-NUM_UPDATES=${1:-100}
+NUM_UPDATES=${1:-400}
 N_SEEDS=${2:-10}
 SEED=${3:-42}
 K_VAL=${4:-32}
-ACTOR_LR=${5:-0.0001}
-CRITIC_LRS=${6:-"0.001 0.005 0.02"}
-GAE_LAMBDA=${7:-0.1}
-CLIP_EPS=${8:-0.05}
+ACTOR_LR=${5:-0.0003}
+CRITIC_LRS=${CRITIC_LRS:-"0.001 0.005 0.01"}
+GAE_LAMBDA=${7:-0.2}
+CLIP_EPS=${8:-0.1}
 VAL_LAMBDA=${9:-0.8}
 OUT_DIR=${10:-"results/exact_ppo_sweep"}
 
