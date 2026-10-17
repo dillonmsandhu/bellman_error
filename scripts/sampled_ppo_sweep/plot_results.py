@@ -56,6 +56,9 @@ ALGO_COLORS = {
     "e0_sep14": "#2ca02c",    # Forest Green
     "e0_oct5": "#17becf",     # Cyan
     "e0_oct8": "#9467bd",     # Purple
+    "e0_sep14_lam1": "#2ca02c",
+    "e0_oct5_lam1": "#17becf",
+    "e0_oct8_lam1": "#9467bd",
 }
 
 ALGO_LABELS = {
@@ -64,6 +67,9 @@ ALGO_LABELS = {
     "e0_sep14": "E(0) [Sept 14 / Uncorr]",
     "e0_oct5": "E(0) [Oct 5 / Corr]",
     "e0_oct8": "E(0) [Oct 8 / Start-Anchored]",
+    "e0_sep14_lam1": "E(0) [Sept 14] (λ=1)",
+    "e0_oct5_lam1": "E(0) [Oct 5] (λ=1)",
+    "e0_oct8_lam1": "E(0) [Oct 8] (λ=1)",
 }
 
 ENV_TITLES = {
@@ -124,6 +130,7 @@ def plot_learning_curves_grid(
     add_baselines: bool = False,
     algo_subset: list[str] | None = None,
     plot_title: str | None = None,
+    use_lam1_for_e: bool = False,
 ):
     """Generates a 3x3 grid of learning curves across all 9 environments."""
     algos_to_plot = algo_subset if algo_subset is not None else list(ALGO_COLORS.keys())
@@ -141,13 +148,17 @@ def plot_learning_curves_grid(
             continue
 
         data = env_data[env_name]
-        runs = data.get("runs", {})
 
         for algo_key in algos_to_plot:
-            if algo_key not in runs:
+            res = None
+            if use_lam1_for_e and algo_key.startswith("e0") and "runs_lam1" in data:
+                res = data["runs_lam1"].get(algo_key)
+            if res is None:
+                res = data.get("runs", {}).get(algo_key)
+
+            if res is None:
                 continue
 
-            res = runs[algo_key]
             arr = res.get(metric_key)
 
             if arr is None:
@@ -161,6 +172,8 @@ def plot_learning_curves_grid(
 
             color = ALGO_COLORS.get(algo_key, "#333333")
             label = ALGO_LABELS.get(algo_key, algo_key)
+            if use_lam1_for_e and algo_key.startswith("e0") and not label.endswith("(λ=1)"):
+                label = f"{label} (λ=1)"
 
             ax.plot(x_steps, mean_curve, label=label, color=color, linewidth=1.8)
             ax.fill_between(x_steps, mean_curve - sem_curve, mean_curve + sem_curve, color=color, alpha=0.15)
@@ -293,7 +306,7 @@ def main():
         print("[Error] No data found in results directory. Run the sweep first.")
         return
 
-    # 1. Full 5-Algorithm Standardized Performance Curves
+    # 1. Full 5-Algorithm Standardized Performance Curves (Cross Comparison: E with lambda=1)
     plot_learning_curves_grid(
         env_data=env_data,
         metric_key="standardized_v_start",
@@ -301,10 +314,11 @@ def main():
         y_label="Standardized Policy Return",
         y_limits=(-0.1, 1.15),
         add_baselines=True,
-        plot_title="Full Sampled PPO: Standardized Policy Return Learning Curves",
+        use_lam1_for_e=True,
+        plot_title="Full Sampled PPO: Standardized Policy Return Learning Curves (E: λ=1)",
     )
 
-    # 2. Focused E(0) Sampling Variants Triad Comparison
+    # 2. Focused E(0) Sampling Variants Triad Comparison (E Variants: tuned lambda in {0.95, 1.0})
     plot_learning_curves_grid(
         env_data=env_data,
         metric_key="standardized_v_start",
@@ -313,10 +327,11 @@ def main():
         y_limits=(-0.1, 1.15),
         add_baselines=True,
         algo_subset=["e0_sep14", "e0_oct5", "e0_oct8"],
-        plot_title="E(0) Sampling Formulations: Sept 14 (Uncorrected) vs Oct 5 (Corrected) vs Oct 8 (Start-Anchored)",
+        use_lam1_for_e=False,
+        plot_title="E(0) Formulations Triad: Sept 14 vs Oct 5 vs Oct 8 (Tuned λ ∈ {0.95, 1.0})",
     )
 
-    # 3. Core Baseline Comparison (MC vs TD(0) vs E(0) [Oct 8])
+    # 3. Core Baseline Comparison (MC vs TD(0) vs E(0) [Oct 8, lambda=1])
     plot_learning_curves_grid(
         env_data=env_data,
         metric_key="standardized_v_start",
@@ -325,10 +340,11 @@ def main():
         y_limits=(-0.1, 1.15),
         add_baselines=True,
         algo_subset=["mc", "td0", "e0_oct8"],
-        plot_title="Core Critic Comparison: MC vs TD(0) vs E(0) [Oct 8]",
+        use_lam1_for_e=True,
+        plot_title="Core Critic Comparison: MC vs TD(0) vs E(0) [Oct 8, λ=1]",
     )
 
-    # 4. Learned Critic Value Error Learning Curves
+    # 4. Learned Critic Value Error Learning Curves (Cross Comparison: E with lambda=1)
     plot_learning_curves_grid(
         env_data=env_data,
         metric_key="nn_weighted_VE",
@@ -336,10 +352,11 @@ def main():
         y_label="Critic Value Error (VE)",
         y_limits=None,
         add_baselines=False,
-        plot_title="Full Sampled PPO: Critic Value Error (nn_weighted_VE) Across Updates",
+        use_lam1_for_e=True,
+        plot_title="Full Sampled PPO: Critic Value Error (nn_weighted_VE) Across Updates (E: λ=1)",
     )
 
-    # 5. Advantage Cosine Similarity Learning Curves
+    # 5. Advantage Cosine Similarity Learning Curves (Cross Comparison: E with lambda=1)
     plot_learning_curves_grid(
         env_data=env_data,
         metric_key="nn_advantage_cossim",
@@ -347,18 +364,24 @@ def main():
         y_label="Advantage CosSim",
         y_limits=(-0.2, 1.05),
         add_baselines=False,
-        plot_title="Full Sampled PPO: Policy Advantage Cosine Similarity",
+        use_lam1_for_e=True,
+        plot_title="Full Sampled PPO: Policy Advantage Cosine Similarity (E: λ=1)",
     )
 
     # 6. Grouped Bar Charts
     if not summary_df.empty:
+        # Cross comparison bars (using lambda=1 for E)
+        has_lam1 = "e0_oct8_lam1" in summary_df["algo"].unique()
+        core_cross_order = ["mc", "td0", "e0_oct8_lam1" if has_lam1 else "e0_oct8"]
+
         plot_bar_chart(
             df=summary_df,
             metric_mean_col="std_perf_final_mean",
             metric_sem_col="std_perf_final_sem",
             output_pdf=os.path.join(save_dir, "final_standardized_performance_bars.pdf"),
             y_label="Final Standardized Return",
-            title="Final Standardized Policy Return Across Benchmark Environments",
+            title="Core Final Return: MC vs TD(0) vs E(0) [Oct 8, λ=1]",
+            algo_order=core_cross_order,
         )
 
         plot_bar_chart(
@@ -367,7 +390,30 @@ def main():
             metric_sem_col="std_perf_auc_sem",
             output_pdf=os.path.join(save_dir, "auc_standardized_performance_bars.pdf"),
             y_label="AUC Standardized Return",
-            title="Area Under the Curve (AUC) Standardized Policy Return",
+            title="Core AUC Return: MC vs TD(0) vs E(0) [Oct 8, λ=1]",
+            algo_order=core_cross_order,
+        )
+
+        # E(0) Variants Triad bars (tuned lambda in {0.95, 1.0})
+        e_order = ["e0_sep14", "e0_oct5", "e0_oct8"]
+        plot_bar_chart(
+            df=summary_df,
+            metric_mean_col="std_perf_final_mean",
+            metric_sem_col="std_perf_final_sem",
+            output_pdf=os.path.join(save_dir, "e0_variants_final_performance_bars.pdf"),
+            y_label="Final Standardized Return",
+            title="E(0) Formulations Final Return (Tuned λ ∈ {0.95, 1.0})",
+            algo_order=e_order,
+        )
+
+        plot_bar_chart(
+            df=summary_df,
+            metric_mean_col="std_perf_auc_mean",
+            metric_sem_col="std_perf_auc_sem",
+            output_pdf=os.path.join(save_dir, "e0_variants_auc_performance_bars.pdf"),
+            y_label="AUC Standardized Return",
+            title="E(0) Formulations AUC Return (Tuned λ ∈ {0.95, 1.0})",
+            algo_order=e_order,
         )
 
     print("All publication charts successfully generated!")

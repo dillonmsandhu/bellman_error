@@ -242,11 +242,13 @@ def main():
         "k": args.k,
         "args": vars(args),
         "baselines": {"v_star": v_star, "v_rand": v_rand, "delta": delta},
-        "runs": {},          # winning run per algo
-        "all_runs": {},      # all runs: algo -> cond_key -> res
+        "runs": {},               # winning run per algo (E variants: tuned lambda)
+        "runs_lam1": {},          # winning run with lambda=1.0 for cross-algo comparison
+        "all_runs": {},           # all runs: algo -> cond_key -> res
         "best_critic_lrs": {},
         "best_return_lambdas": {},
         "best_conditions": {},
+        "best_conditions_lam1": {},
         "selection_metric": args.select_by,
     }
 
@@ -261,12 +263,20 @@ def main():
         full_results["all_runs"][algo_key] = {}
         lr_candidates = []
 
-        # TD(0) bootstraps from v(s') so return_lambda is not applicable (fixed to 0.0)
-        cand_lambdas = [0.0] if algo_key == "td0" else args.return_lambdas
+        # Return lambdas:
+        # - TD(0) bootstraps from v(s') so return_lambda is 0.0
+        # - MC strictly uses lambda=1.0 (pure Monte Carlo, no return lambda sweep)
+        # - E variants sweep return_lambdas (e.g. [0.95, 1.0])
+        if algo_key == "td0":
+            cand_lambdas = [0.0]
+        elif algo_key == "mc":
+            cand_lambdas = [1.0]
+        else:
+            cand_lambdas = args.return_lambdas
 
         for c_lr in args.critic_lrs:
             for r_lam in cand_lambdas:
-                lam_str = f" | RetLambda = {r_lam}" if algo_key != "td0" else ""
+                lam_str = f" | RetLambda = {r_lam}" if algo_key.startswith("e0") else ""
                 print(f"  --> Testing Critic LR = {c_lr}{lam_str} ...", end="", flush=True)
                 env_cfg = build_env_config(args.env_name, args, critic_lr=c_lr)
 
@@ -391,6 +401,7 @@ def main():
 
         # Select best condition for algorithm
         if lr_candidates:
+            # 1. Best overall condition (for E variants, allows tuning over both 0.95 and 1.0)
             best_cand = max(lr_candidates, key=lambda c: c["score"])
             best_lr = best_cand["critic_lr"]
             best_r_lam = best_cand["return_lambda"]
@@ -405,8 +416,29 @@ def main():
             best_row["best_return_lambda"] = best_r_lam
             summary_rows.append(best_row)
 
-            lam_desc = f", ReturnLambda={best_r_lam}" if algo_key != "td0" else ""
+            lam_desc = f", ReturnLambda={best_r_lam}" if algo_key.startswith("e0") else ""
             print(f"  ==> Selected Best Condition for {algo_key}: Critic LR={best_lr}{lam_desc} (Score={best_cand['score']:.4f})")
+
+            # 2. For cross-algorithm comparison, record condition strictly with lambda=1.0
+            if algo_key.startswith("e0"):
+                lam1_candidates = [c for c in lr_candidates if c["return_lambda"] == 1.0]
+                if lam1_candidates:
+                    best_cand_lam1 = max(lam1_candidates, key=lambda c: c["score"])
+                    key_lam1 = f"{algo_key}_lam1"
+                    full_results["runs_lam1"][algo_key] = best_cand_lam1["res"]
+                    full_results["best_conditions_lam1"][algo_key] = {
+                        "critic_lr": best_cand_lam1["critic_lr"],
+                        "return_lambda": 1.0,
+                    }
+                    row_lam1 = dict(best_cand_lam1["row_data"])
+                    row_lam1["algo"] = key_lam1
+                    row_lam1["display_name"] = f"{algo_info['display_name']} (λ=1)"
+                    row_lam1["best_critic_lr"] = best_cand_lam1["critic_lr"]
+                    row_lam1["best_return_lambda"] = 1.0
+                    summary_rows.append(row_lam1)
+            else:
+                full_results["runs_lam1"][algo_key] = best_cand["res"]
+                full_results["best_conditions_lam1"][algo_key] = {"critic_lr": best_lr, "return_lambda": best_r_lam}
 
     # Save outputs
     pkl_path = os.path.join(out_env_dir, "out.pkl")

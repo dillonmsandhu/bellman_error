@@ -62,6 +62,9 @@ ALGO_DISPLAY_NAMES = {
     "e0_sep14": "E(0) [Sept 14 / Uncorrected]",
     "e0_oct5": "E(0) [Oct 5 / Corrected]",
     "e0_oct8": "E(0) [Oct 8 / Start-Anchored]",
+    "e0_sep14_lam1": "E(0) [Sept 14, λ=1]",
+    "e0_oct5_lam1": "E(0) [Oct 5, λ=1]",
+    "e0_oct8_lam1": "E(0) [Oct 8, λ=1]",
 }
 
 
@@ -248,14 +251,24 @@ def build_comparison_table(
 
 def build_pairwise_record_table(df: pd.DataFrame) -> pd.DataFrame:
     """Builds pairwise head-to-head records across key matchups."""
+    available_algos = set(df["algo"].unique())
+
+    oct8_cross = "e0_oct8_lam1" if "e0_oct8_lam1" in available_algos else "e0_oct8"
+    oct5_cross = "e0_oct5_lam1" if "e0_oct5_lam1" in available_algos else "e0_oct5"
+    oct8_cross_label = "E(0) [Oct 8, λ=1]" if "e0_oct8_lam1" in available_algos else "E(0) [Oct 8]"
+    oct5_cross_label = "E(0) [Oct 5, λ=1]" if "e0_oct5_lam1" in available_algos else "E(0) [Oct 5]"
+
     matchups = [
-        ("e0_oct8", "td0", "E(0) [Oct 8] vs TD(0)"),
-        ("e0_oct8", "mc", "E(0) [Oct 8] vs MC"),
+        # Cross-algorithm comparisons (E constrained to lambda=1.0)
+        (oct8_cross, "td0", f"{oct8_cross_label} vs TD(0)"),
+        (oct8_cross, "mc", f"{oct8_cross_label} vs MC"),
+        (oct5_cross, "td0", f"{oct5_cross_label} vs TD(0)"),
+        (oct5_cross, "mc", f"{oct5_cross_label} vs MC"),
+        ("td0", "mc", "TD(0) vs MC"),
+        # E-variant comparisons (E tuned over both lambda=0.95 and lambda=1.0)
         ("e0_oct8", "e0_sep14", "E(0) [Oct 8] vs E(0) [Sept 14]"),
         ("e0_oct8", "e0_oct5", "E(0) [Oct 8] vs E(0) [Oct 5]"),
         ("e0_oct5", "e0_sep14", "E(0) [Oct 5] vs E(0) [Sept 14]"),
-        ("e0_oct5", "td0", "E(0) [Oct 5] vs TD(0)"),
-        ("td0", "mc", "TD(0) vs MC"),
     ]
 
     metrics_to_eval = [
@@ -318,7 +331,7 @@ def build_tuned_lrs_table(df: pd.DataFrame) -> pd.DataFrame:
     df_copy = df.copy()
     if "best_return_lambda" in df_copy.columns:
         df_copy["config_str"] = df_copy.apply(
-            lambda r: f"lr={r['best_critic_lr']}" if r["algo"] == "td0" or pd.isna(r.get("best_return_lambda"))
+            lambda r: f"lr={r['best_critic_lr']}" if r["algo"] in ["td0", "mc"] or pd.isna(r.get("best_return_lambda"))
             else f"lr={r['best_critic_lr']}, λ={r['best_return_lambda']}",
             axis=1,
         )
@@ -346,17 +359,22 @@ def main():
     print("=" * 80)
 
     df = load_data(args.results_dir)
+    available_algos = set(df["algo"].unique())
 
-    # 1. Table 1: Core Comparison (MC vs TD(0) vs E(0) [Oct 8])
+    oct8_cross = "e0_oct8_lam1" if "e0_oct8_lam1" in available_algos else "e0_oct8"
+    oct5_cross = "e0_oct5_lam1" if "e0_oct5_lam1" in available_algos else "e0_oct5"
+    sep14_cross = "e0_sep14_lam1" if "e0_sep14_lam1" in available_algos else "e0_sep14"
+
+    # 1. Table 1: Core Comparison (MC vs TD(0) vs E(0) [Oct 8, lambda=1])
     t1 = build_comparison_table(
         df=df,
-        algo_keys=["mc", "td0", "e0_oct8"],
+        algo_keys=["mc", "td0", oct8_cross],
         table_title="Table 1: Core Critic Comparison [Sampled PPO, k=32]",
     )
     if not t1.empty:
         save_table_outputs(t1, out_dir, "table_1_core_comparison", "Table 1: Core Critic Comparison [Sampled PPO, k=32]")
 
-    # 2. Table 2: E(0) Variants Triad (Sept 14 vs Oct 5 vs Oct 8)
+    # 2. Table 2: E(0) Variants Triad (Sept 14 vs Oct 5 vs Oct 8, tuned lambda in [0.95, 1.0])
     t2 = build_comparison_table(
         df=df,
         algo_keys=["e0_sep14", "e0_oct5", "e0_oct8"],
@@ -365,10 +383,10 @@ def main():
     if not t2.empty:
         save_table_outputs(t2, out_dir, "table_2_e0_variants_triad", "Table 2: E(0) Sampling Formulations Triad [Sampled PPO, k=32]")
 
-    # 3. Table 3: Full 5 Spectrum
+    # 3. Table 3: Full 5 Spectrum (Cross-comparison, E variants with lambda=1)
     t3 = build_comparison_table(
         df=df,
-        algo_keys=["mc", "td0", "e0_sep14", "e0_oct5", "e0_oct8"],
+        algo_keys=["mc", "td0", sep14_cross, oct5_cross, oct8_cross],
         table_title="Table 3: Full 5-Algorithm Spectrum [Sampled PPO, k=32]",
     )
     if not t3.empty:
