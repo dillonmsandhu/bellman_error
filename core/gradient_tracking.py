@@ -196,8 +196,8 @@ def compute_sampled_critic_gradients(
             next_targets = jnp.where(is_timeout, traj_batch.next_value, next_targets)
         next_targets = jnp.where(true_terminal, 0.0, next_targets)
 
-    # Start-state mask: a step is an episode start if the preceding step terminated
-    is_start = jnp.roll(traj_batch.done, shift=1, axis=0)
+    # Start-state mask: a step is an episode start if the preceding step terminated via true terminal (not timeout)
+    is_start = jnp.roll(true_terminal, shift=1, axis=0)
     is_start = is_start.at[0].set(False)
 
     # 1. Sept 14 (Uncorrected) Sampled E critic loss

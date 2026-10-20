@@ -52,15 +52,15 @@ def make_train(base_config):
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
-        last_done = jnp.ones(config["NUM_ENVS"], dtype=bool)
+        last_true_terminal = jnp.zeros(config["NUM_ENVS"], dtype=bool)
         nu_ema = jnp.array(0.0, dtype=jnp.float32)
 
         def _update_step(runner_state, unused):
-            train_state, env_state, last_obs, last_done, rng, idx, nu_ema = runner_state
+            train_state, env_state, last_obs, last_true_terminal, rng, idx, nu_ema = runner_state
 
             # COLLECT TRAJECTORIES
             def _env_step(env_scan_state, unused):
-                train_state, env_state, last_obs, last_done, rng = env_scan_state
+                train_state, env_state, last_obs, last_true_terminal, rng = env_scan_state
 
                 rng, _rng = jax.random.split(rng)
                 value = network.apply(train_state.params, last_obs)
@@ -76,14 +76,19 @@ def make_train(base_config):
                 true_next_obs = info['real_next_obs']
                 next_val = network.apply(train_state.params, true_next_obs)
 
-                is_start = last_done
+                if "is_timeout" in info:
+                    is_timeout = info["is_timeout"]
+                else:
+                    is_timeout = jnp.zeros_like(done, dtype=bool)
+                true_terminal = done & ~is_timeout
+                is_start = last_true_terminal
                 transition = Transition(
                     done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, 0.0, is_start, info
                 )
-                return (train_state, env_state, obsv, done, rng), transition
+                return (train_state, env_state, obsv, true_terminal, rng), transition
 
-            env_step_state = (train_state, env_state, last_obs, last_done, rng)
-            (_, env_state, last_obs, last_done, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
+            env_step_state = (train_state, env_state, last_obs, last_true_terminal, rng)
+            (_, env_state, last_obs, last_true_terminal, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
 
             # --- MC RETURN / TARGET CALCULATION ---
             # Using GAE with RETURN_LAMBDA (1.0) gives MC returns G_t
@@ -178,11 +183,11 @@ def make_train(base_config):
             if hasattr(evaluator, "obs_stack") and hasattr(evaluator, "start_idx"):
                 v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx]).squeeze()
                 metric["v_pred_start"] = v_pred_start
-            runner_state = (train_state, env_state, last_obs, last_done, rng, idx + 1, nu_ema)
+            runner_state = (train_state, env_state, last_obs, last_true_terminal, rng, idx + 1, nu_ema)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, env_state, obsv, last_done, _rng, 1, nu_ema)
+        runner_state = (train_state, env_state, obsv, last_true_terminal, _rng, 1, nu_ema)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}
 

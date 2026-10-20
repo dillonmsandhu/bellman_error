@@ -46,17 +46,17 @@ def make_train(base_config):
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
-        last_done = jnp.ones(config["NUM_ENVS"], dtype=bool)
+        last_true_terminal = jnp.zeros(config["NUM_ENVS"], dtype=bool)
         nu_ema = jnp.array(0.0)
 
-        runner_state = (train_state, env_state, obsv, last_done, nu_ema, rng, 1)
+        runner_state = (train_state, env_state, obsv, last_true_terminal, nu_ema, rng, 1)
 
         def _update_step(runner_state, unused):
-            train_state, env_state, last_obs, last_done, nu_ema, rng, idx = runner_state
+            train_state, env_state, last_obs, last_true_terminal, nu_ema, rng, idx = runner_state
 
             # 1. COLLECT TRAJECTORIES
             def _env_step(env_scan_state, unused):
-                train_state, env_state, last_obs, last_done, rng = env_scan_state
+                train_state, env_state, last_obs, last_true_terminal, rng = env_scan_state
 
                 rng, _rng = jax.random.split(rng)
                 pi, value = network.apply(train_state.params, last_obs)
@@ -72,14 +72,19 @@ def make_train(base_config):
                 next_val = network.apply(train_state.params, true_next_obs, method=network.value)
 
                 clean_info = {k: v for k, v in info.items() if k not in ["real_next_obs", "real_next_state"]}
-                is_start = last_done
+                if "is_timeout" in info:
+                    is_timeout = info["is_timeout"]
+                else:
+                    is_timeout = jnp.zeros_like(done, dtype=bool)
+                true_terminal = done & ~is_timeout
+                is_start = last_true_terminal
                 transition = Transition(
                     done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, is_start, clean_info
                 )
-                return (train_state, env_state, obsv, done, rng), transition
+                return (train_state, env_state, obsv, true_terminal, rng), transition
 
-            env_step_state = (train_state, env_state, last_obs, last_done, rng)
-            (_, env_state, last_obs, last_done, rng), traj_batch = jax.lax.scan(
+            env_step_state = (train_state, env_state, last_obs, last_true_terminal, rng)
+            (_, env_state, last_obs, last_true_terminal, rng), traj_batch = jax.lax.scan(
                 _env_step, env_step_state, None, config["NUM_STEPS"]
             )
 
@@ -218,11 +223,11 @@ def make_train(base_config):
                     if hasattr(evaluator, "start_idx"):
                         metric["v_pred_start"] = v_pred_all[evaluator.start_idx]
 
-            runner_state = (train_state, env_state, last_obs, last_done, nu_ema, rng, idx + 1)
+            runner_state = (train_state, env_state, last_obs, last_true_terminal, nu_ema, rng, idx + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, env_state, obsv, last_done, nu_ema, _rng, 1)
+        runner_state = (train_state, env_state, obsv, last_true_terminal, nu_ema, _rng, 1)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}
 
