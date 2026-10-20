@@ -3,11 +3,14 @@ scripts/sampled_ppo_sweep/analyze_results.py
 
 Comprehensive publication-focused data analysis for Sampled PPO Sweeps.
 Designed for ICML / NeurIPS reviewer standards:
-1. Table 1 (Core Baselines): Head-to-head comparison of MC, TD(0), and E(0) [Oct 8]
+1. Table 1 (Core Baselines): Head-to-head comparison of MC, TD(0), and E(0) [Oct 8, λ=1]
 2. Table 2 (E(0) Variants Triad): Focused comparison of E(0) [Sept 14], E(0) [Oct 5], and E(0) [Oct 8]
 3. Table 3 (Full 5 Spectrum): Full spectrum across all 5 algorithms
 4. Table 4 (Pairwise Tournament Record): Head-to-head decisive records with statistical ties (|v1 - v2| <= s1 + s2)
 5. Table 5 (Tuned Critic LRs): Selected critic learning rates across algorithms and environments
+6. Table 6 (AUC Return Matrix): Area Under Curve (AUC) Standardized Policy Performance (Envs on rows, Algos on cols)
+7. Table 7 (Final Return Matrix): Final Standardized Policy Performance (Envs on rows, Algos on cols)
+8. Table 8 (E(0) Formulations & Return Lambdas): Multi-variant breakdown comparing all 6 E(0) conditions (3 variants x 2 lambdas)
 
 Outputs all tables to CSV (.csv), Markdown (.md), LaTeX booktabs (.tex), and vector PDF (.pdf)
 under <results_dir>/analysis_tables/.
@@ -106,36 +109,64 @@ def load_data(results_dir: str) -> pd.DataFrame:
     return df
 
 
-def save_table_outputs(df: pd.DataFrame, out_dir: str, base_name: str, title: str):
+def save_table_outputs(
+    df: pd.DataFrame,
+    out_dir: str,
+    base_name: str,
+    title: str,
+    bold_cells: dict | None = None,
+):
     """Exports a dataframe to CSV, Markdown, LaTeX booktabs, and vector PDF."""
     os.makedirs(out_dir, exist_ok=True)
+    bold_dict = bold_cells if bold_cells is not None else {}
 
+    # 1. Raw CSV
     csv_file = os.path.join(out_dir, f"{base_name}.csv")
     df.to_csv(csv_file, index=False)
 
+    # 2. Markdown with bolding
     md_file = os.path.join(out_dir, f"{base_name}.md")
+    df_md = df.copy()
+    for (r, c), is_bold in bold_dict.items():
+        if is_bold and r < len(df_md) and c < len(df_md.columns):
+            val = str(df_md.iloc[r, c])
+            if val != "-":
+                df_md.iloc[r, c] = f"**{val}**"
     with open(md_file, "w") as f:
         f.write(f"### {title}\n\n")
-        f.write(df.to_markdown(index=False))
+        f.write(df_md.to_markdown(index=False))
         f.write("\n")
 
+    # 3. LaTeX with booktabs and bolding
     tex_file = os.path.join(out_dir, f"{base_name}.tex")
-    tex_str = df.to_latex(index=False, escape=False)
+    df_tex = df.copy()
+    for (r, c), is_bold in bold_dict.items():
+        if is_bold and r < len(df_tex) and c < len(df_tex.columns):
+            val = str(df_tex.iloc[r, c])
+            if val != "-":
+                df_tex.iloc[r, c] = f"\\textbf{{{val}}}"
+    latex_str = df_tex.to_latex(index=False, escape=False)
     with open(tex_file, "w") as f:
         f.write(f"% {title}\n")
-        f.write(tex_str)
+        f.write(latex_str)
 
-    # Render vector PDF
+    # 4. Render vector PDF table
     pdf_file = os.path.join(out_dir, f"{base_name}.pdf")
-    render_table_to_pdf(df, pdf_file, title)
+    render_table_to_pdf(df, pdf_file, title, bold_cells=bold_dict)
     print(f"[Table Saved] {base_name} -> {md_file}, {tex_file}, {pdf_file}")
 
 
-def render_table_to_pdf(df: pd.DataFrame, pdf_path: str, title: str):
+def render_table_to_pdf(
+    df: pd.DataFrame,
+    pdf_path: str,
+    title: str,
+    bold_cells: dict | None = None,
+):
     """Renders a pandas DataFrame as a publication-grade vector PDF table."""
+    bold_dict = bold_cells if bold_cells is not None else {}
     n_rows, n_cols = df.shape
-    fig_width = max(10, n_cols * 1.8)
-    fig_height = max(3.5, 0.45 * (n_rows + 4))
+    fig_width = max(10, n_cols * 2.2)
+    fig_height = max(4.0, 0.45 * (n_rows + 4))
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis("off")
@@ -153,8 +184,8 @@ def render_table_to_pdf(df: pd.DataFrame, pdf_path: str, title: str):
     )
 
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1.05, 1.4)
+    table.set_fontsize(9.5)
+    table.scale(1.05, 1.45)
 
     for (r, c), cell in table.get_celld().items():
         cell.set_edgecolor("#cccccc")
@@ -162,8 +193,15 @@ def render_table_to_pdf(df: pd.DataFrame, pdf_path: str, title: str):
         if r == 0:
             cell.set_text_props(weight="bold", color="#ffffff")
             cell.set_facecolor("#2b5c8f")
+        elif r == n_rows or r == n_rows - 1:
+            # Summary rows (Mean Performance, Envs Won)
+            cell.set_facecolor("#f0f4f8")
+            cell.set_text_props(weight="bold")
         else:
-            if r % 2 == 1:
+            if (r - 1, c) in bold_dict and bold_dict[(r - 1, c)]:
+                cell.set_text_props(weight="bold", color="#0b6623")
+                cell.set_facecolor("#eef8ee")
+            elif r % 2 == 1:
                 cell.set_facecolor("#f9fbfd")
             else:
                 cell.set_facecolor("#ffffff")
@@ -172,6 +210,331 @@ def render_table_to_pdf(df: pd.DataFrame, pdf_path: str, title: str):
     plt.tight_layout()
     fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
+
+
+def generate_env_by_algo_table(
+    summary_df: pd.DataFrame,
+    algo_keys: list[str],
+    metric_prefix: str = "std_perf_auc",
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Generates a table with environments on rows and algorithms on columns.
+    Winner in each environment row in bold, accounting for statistical ties (within 1 combined SEM).
+    Includes summary rows for Mean Performance and Envs Won.
+    """
+    mean_col = f"{metric_prefix}_mean"
+    sem_col = f"{metric_prefix}_sem"
+
+    envs_present = [e for e in ALL_ENVS if e in summary_df["env"].unique()]
+    algos_present = [a for a in algo_keys if a in summary_df["algo"].unique()]
+
+    if not envs_present or not algos_present:
+        return pd.DataFrame(), {}
+
+    data_matrix = []
+    bold_cells = {}  # (row_idx, col_idx) -> bool
+    win_counts = {a: 0.0 for a in algos_present}
+
+    for row_idx, env in enumerate(envs_present):
+        row = {"Environment": ENV_DISPLAY_NAMES.get(env, env)}
+        env_sub = summary_df[summary_df["env"] == env]
+
+        row_vals = {}
+        row_sems = {}
+        for a in algos_present:
+            sub = env_sub[env_sub["algo"] == a]
+            if not sub.empty:
+                v = float(sub[mean_col].values[0])
+                s = float(sub[sem_col].values[0]) if sem_col in sub.columns else 0.0
+                row_vals[a] = v
+                row_sems[a] = s
+            else:
+                row_vals[a] = np.nan
+                row_sems[a] = 0.0
+
+        valid_algos = [a for a in algos_present if not np.isnan(row_vals[a])]
+        if valid_algos:
+            best_algo = max(valid_algos, key=lambda a: row_vals[a])
+            best_val = row_vals[best_algo]
+            best_sem = row_sems[best_algo]
+
+            # Winners and statistical ties: (best_val - val) <= best_sem + sem
+            winners = []
+            for a in valid_algos:
+                val = row_vals[a]
+                sem = row_sems[a]
+                if (best_val - val) <= (best_sem + sem + 1e-6):
+                    winners.append(a)
+
+            # Split wins evenly
+            for w in winners:
+                win_counts[w] += 1.0 / len(winners)
+
+            # Format cells
+            for col_idx, a in enumerate(algos_present):
+                col_name = ALGO_DISPLAY_NAMES.get(a, a)
+                v = row_vals[a]
+                s = row_sems[a]
+                if np.isnan(v):
+                    row[col_name] = "-"
+                else:
+                    row[col_name] = f"{v:.3f} ± {s:.3f}"
+                    if a in winners:
+                        bold_cells[(row_idx, col_idx + 1)] = True
+        else:
+            for col_idx, a in enumerate(algos_present):
+                col_name = ALGO_DISPLAY_NAMES.get(a, a)
+                row[col_name] = "-"
+
+        data_matrix.append(row)
+
+    # Summary Row 1: Overall Mean Performance
+    mean_row = {"Environment": "Mean Performance"}
+    for a in algos_present:
+        col_name = ALGO_DISPLAY_NAMES.get(a, a)
+        sub = summary_df[summary_df["algo"] == a]
+        if not sub.empty:
+            vals = sub[mean_col].values
+            avg = float(np.mean(vals))
+            sem = float(np.std(vals, ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else 0.0
+            mean_row[col_name] = f"{avg:.3f} ± {sem:.3f}"
+        else:
+            mean_row[col_name] = "-"
+    data_matrix.append(mean_row)
+
+    # Summary Row 2: Envs Won (accounting for shared ties)
+    win_row = {"Environment": f"Envs Won (out of {len(envs_present)})"}
+    for a in algos_present:
+        col_name = ALGO_DISPLAY_NAMES.get(a, a)
+        win_row[col_name] = f"{win_counts[a]:.1f}/{len(envs_present)}"
+    data_matrix.append(win_row)
+
+    df_out = pd.DataFrame(data_matrix)
+    return df_out, bold_cells
+
+
+def generate_e0_all_variants_and_lambdas_table(
+    results_dir: str,
+    metric_prefix: str = "std_perf_auc",
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Generates a table comparing all 6 E(0) conditions across all environments:
+    - E(0) [Oct 8, λ=1.0]
+    - E(0) [Oct 8, λ=0.95]
+    - E(0) [Oct 5, λ=1.0]
+    - E(0) [Oct 5, λ=0.95]
+    - E(0) [Sept 14, λ=1.0]
+    - E(0) [Sept 14, λ=0.95]
+    """
+    import glob
+    all_files = glob.glob(os.path.join(results_dir, "*", "summary_all_lrs.csv"))
+    if not all_files:
+        return pd.DataFrame(), {}
+
+    dfs = [pd.read_csv(f) for f in all_files]
+    df = pd.concat(dfs, ignore_index=True)
+
+    e_df = df[df["algo"].isin(["e0_sep14", "e0_oct5", "e0_oct8"])].copy()
+    if e_df.empty:
+        return pd.DataFrame(), {}
+
+    mean_col = f"{metric_prefix}_mean"
+    sem_col = f"{metric_prefix}_sem"
+
+    e_df["condition"] = e_df["algo"] + "_lam_" + e_df["return_lambda"].astype(str)
+    best_runs = e_df.loc[e_df.groupby(["env", "condition"])[mean_col].idxmax()].copy()
+
+    cond_order = [
+        "e0_oct8_lam_1.0",
+        "e0_oct8_lam_0.95",
+        "e0_oct5_lam_1.0",
+        "e0_oct5_lam_0.95",
+        "e0_sep14_lam_1.0",
+        "e0_sep14_lam_0.95",
+    ]
+
+    cond_display = {
+        "e0_oct8_lam_1.0": "E(0) [Oct 8, λ=1.0]",
+        "e0_oct8_lam_0.95": "E(0) [Oct 8, λ=0.95]",
+        "e0_oct5_lam_1.0": "E(0) [Oct 5, λ=1.0]",
+        "e0_oct5_lam_0.95": "E(0) [Oct 5, λ=0.95]",
+        "e0_sep14_lam_1.0": "E(0) [Sept 14, λ=1.0]",
+        "e0_sep14_lam_0.95": "E(0) [Sept 14, λ=0.95]",
+    }
+
+    envs_present = [e for e in ALL_ENVS if e in best_runs["env"].unique()]
+    if not envs_present:
+        return pd.DataFrame(), {}
+
+    data_matrix = []
+    bold_cells = {}
+    win_counts = {c: 0.0 for c in cond_order}
+
+    for row_idx, env in enumerate(envs_present):
+        row = {"Environment": ENV_DISPLAY_NAMES.get(env, env)}
+        env_sub = best_runs[best_runs["env"] == env]
+
+        row_vals = {}
+        row_sems = {}
+        for c in cond_order:
+            sub = env_sub[env_sub["condition"] == c]
+            if not sub.empty:
+                v = float(sub[mean_col].values[0])
+                s = float(sub[sem_col].values[0]) if sem_col in sub.columns else 0.0
+                row_vals[c] = v
+                row_sems[c] = s
+            else:
+                row_vals[c] = np.nan
+                row_sems[c] = 0.0
+
+        valid_conds = [c for c in cond_order if not np.isnan(row_vals[c])]
+        if valid_conds:
+            best_c = max(valid_conds, key=lambda c: row_vals[c])
+            best_val = row_vals[best_c]
+            best_sem = row_sems[best_c]
+
+            winners = []
+            for c in valid_conds:
+                val = row_vals[c]
+                sem = row_sems[c]
+                if (best_val - val) <= (best_sem + sem + 1e-6):
+                    winners.append(c)
+
+            for w in winners:
+                win_counts[w] += 1.0 / len(winners)
+
+            for col_idx, c in enumerate(cond_order):
+                col_name = cond_display.get(c, c)
+                v = row_vals[c]
+                s = row_sems[c]
+                if np.isnan(v):
+                    row[col_name] = "-"
+                else:
+                    row[col_name] = f"{v:.3f} ± {s:.3f}"
+                    if c in winners:
+                        bold_cells[(row_idx, col_idx + 1)] = True
+        else:
+            for col_idx, c in enumerate(cond_order):
+                col_name = cond_display.get(c, c)
+                row[col_name] = "-"
+
+        data_matrix.append(row)
+
+    # Summary Row 1: Overall Mean Performance
+    mean_row = {"Environment": "Mean Performance"}
+    for c in cond_order:
+        col_name = cond_display.get(c, c)
+        sub = best_runs[best_runs["condition"] == c]
+        if not sub.empty:
+            vals = sub[mean_col].values
+            avg = float(np.mean(vals))
+            sem = float(np.std(vals, ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else 0.0
+            mean_row[col_name] = f"{avg:.3f} ± {sem:.3f}"
+        else:
+            mean_row[col_name] = "-"
+    data_matrix.append(mean_row)
+
+    # Summary Row 2: Envs Won
+    win_row = {"Environment": f"Envs Won (out of {len(envs_present)})"}
+    for c in cond_order:
+        col_name = cond_display.get(c, c)
+        win_row[col_name] = f"{win_counts[c]:.1f}/{len(envs_present)}"
+    data_matrix.append(win_row)
+
+    df_out = pd.DataFrame(data_matrix)
+    return df_out, bold_cells
+
+
+def plot_performance_heatmap_matrix(
+    summary_df: pd.DataFrame,
+    algo_keys: list[str],
+    metric_prefix: str = "std_perf_auc",
+    output_pdf: str = "auc_performance_by_env_heatmap.pdf",
+    title: str = "AUC Standardized Performance Matrix",
+):
+    """
+    Generates a publication-grade heatmap matrix plot:
+    Rows = Environments, Columns = Algorithms.
+    Each cell contains the numerical value (mean ± sem) and color-coded background.
+    """
+    mean_col = f"{metric_prefix}_mean"
+    sem_col = f"{metric_prefix}_sem"
+
+    envs_present = [e for e in ALL_ENVS if e in summary_df["env"].unique()]
+    algos_present = [a for a in algo_keys if a in summary_df["algo"].unique()]
+
+    if not envs_present or not algos_present:
+        return
+
+    matrix_mean = np.zeros((len(envs_present), len(algos_present)))
+    matrix_sem = np.zeros((len(envs_present), len(algos_present)))
+    text_labels = []
+
+    for r_idx, env in enumerate(envs_present):
+        row_labels = []
+        env_sub = summary_df[summary_df["env"] == env]
+        for c_idx, a in enumerate(algos_present):
+            sub = env_sub[env_sub["algo"] == a]
+            if not sub.empty:
+                v = float(sub[mean_col].values[0])
+                s = float(sub[sem_col].values[0]) if sem_col in sub.columns else 0.0
+                matrix_mean[r_idx, c_idx] = v
+                matrix_sem[r_idx, c_idx] = s
+                row_labels.append(f"{v:.3f}\n±{s:.3f}")
+            else:
+                matrix_mean[r_idx, c_idx] = np.nan
+                matrix_sem[r_idx, c_idx] = 0.0
+                row_labels.append("-")
+        text_labels.append(row_labels)
+
+    fig_width = max(8.5, len(algos_present) * 2.0)
+    fig_height = max(6.5, len(envs_present) * 0.75 + 1.8)
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    cmap = plt.cm.Blues
+    im = ax.imshow(matrix_mean, cmap=cmap, vmin=0.0, vmax=1.0, aspect="auto")
+
+    # Ticks & labels
+    ax.set_xticks(np.arange(len(algos_present)))
+    col_labels = [ALGO_DISPLAY_NAMES.get(a, a) for a in algos_present]
+    ax.set_xticklabels(col_labels, fontsize=10, rotation=20, ha="right", fontweight="bold")
+    ax.set_yticks(np.arange(len(envs_present)))
+    ax.set_yticklabels([ENV_DISPLAY_NAMES.get(e, e) for e in envs_present], fontsize=10, fontweight="bold")
+
+    # Add text annotations in each cell
+    for r in range(len(envs_present)):
+        row_vals = matrix_mean[r, :]
+        valid_indices = [c for c in range(len(algos_present)) if not np.isnan(row_vals[c])]
+        best_c = max(valid_indices, key=lambda c: row_vals[c]) if valid_indices else -1
+        best_v = row_vals[best_c] if best_c >= 0 else -1
+        best_s = matrix_sem[r, best_c] if best_c >= 0 else 0
+
+        for c in range(len(algos_present)):
+            val = matrix_mean[r, c]
+            txt = text_labels[r][c]
+            if np.isnan(val):
+                ax.text(c, r, "-", ha="center", va="center", color="#888888", fontsize=9.5)
+            else:
+                is_winner = (best_v - val) <= (best_s + matrix_sem[r, c] + 1e-6)
+                text_color = "white" if val > 0.65 else "black"
+                weight = "bold" if is_winner else "normal"
+                if is_winner:
+                    rect = plt.Rectangle((c - 0.48, r - 0.48), 0.96, 0.96, fill=False, edgecolor="#0b6623", linewidth=2.2)
+                    ax.add_patch(rect)
+                ax.text(c, r, txt, ha="center", va="center", color=text_color, fontsize=9.5, fontweight=weight)
+
+    # Colorbar
+    cbar = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.04)
+    cbar.set_label("Standardized Performance (0=Random, 1=Optimal)", fontsize=10)
+
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(os.path.abspath(output_pdf)), exist_ok=True)
+    fig.savefig(output_pdf, format="pdf", bbox_inches="tight")
+    png_path = output_pdf.replace(".pdf", ".png")
+    fig.savefig(png_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[Plot Saved] {output_pdf} and {png_path}")
 
 
 def build_comparison_table(
@@ -402,7 +765,71 @@ def main():
     if not t5.empty:
         save_table_outputs(t5, out_dir, "table_5_tuned_critic_lrs", "Table 5: Tuned Critic Learning Rates [Sampled PPO, k=32]")
 
-    print("\nAll publication tables successfully generated!")
+    # 6. Table 6: Area Under Curve (AUC) Standardized Policy Performance (Envs on rows, Algos on cols)
+    full_cross_algos = ["mc", "td0", sep14_cross, oct5_cross, oct8_cross]
+    t_auc_by_env, bold_auc_by_env = generate_env_by_algo_table(
+        summary_df=df,
+        algo_keys=full_cross_algos,
+        metric_prefix="std_perf_auc",
+    )
+    if not t_auc_by_env.empty:
+        save_table_outputs(
+            t_auc_by_env,
+            out_dir,
+            "table_auc_performance_by_env",
+            "Table 6: Area Under Curve (AUC) Standardized Policy Performance",
+            bold_cells=bold_auc_by_env,
+        )
+
+    # 7. Table 7: Final Standardized Policy Performance (Envs on rows, Algos on cols)
+    t_final_by_env, bold_final_by_env = generate_env_by_algo_table(
+        summary_df=df,
+        algo_keys=full_cross_algos,
+        metric_prefix="std_perf_final",
+    )
+    if not t_final_by_env.empty:
+        save_table_outputs(
+            t_final_by_env,
+            out_dir,
+            "table_final_performance_by_env",
+            "Table 7: Final Standardized Policy Performance (Random=0, Optimal=1)",
+            bold_cells=bold_final_by_env,
+        )
+
+    # 8. Heatmap Matrix Plot: AUC Performance Matrix (Envs on rows, Algos on cols)
+    plot_pdf = os.path.join(out_dir, "auc_performance_by_env_heatmap.pdf")
+    plot_performance_heatmap_matrix(
+        summary_df=df,
+        algo_keys=full_cross_algos,
+        metric_prefix="std_perf_auc",
+        output_pdf=plot_pdf,
+        title="Sampled PPO: Area Under Curve (AUC) Performance Matrix",
+    )
+    plots_dir = os.path.join(args.results_dir, "plots")
+    if os.path.exists(plots_dir):
+        plot_performance_heatmap_matrix(
+            summary_df=df,
+            algo_keys=full_cross_algos,
+            metric_prefix="std_perf_auc",
+            output_pdf=os.path.join(plots_dir, "auc_performance_by_env_heatmap.pdf"),
+            title="Sampled PPO: Area Under Curve (AUC) Performance Matrix",
+        )
+
+    # 9. Table 8: All E(0) Sampling Formulations & Return Lambdas AUC Return Table
+    t_e_all, bold_e_all = generate_e0_all_variants_and_lambdas_table(
+        results_dir=args.results_dir,
+        metric_prefix="std_perf_auc",
+    )
+    if not t_e_all.empty:
+        save_table_outputs(
+            t_e_all,
+            out_dir,
+            "table_e0_all_variants_and_lambdas_auc",
+            "Table 8: E(0) Sampling Formulations & Return Lambdas AUC Standardized Return",
+            bold_cells=bold_e_all,
+        )
+
+    print("\nAll publication tables and matrix plots successfully generated!")
 
 
 if __name__ == "__main__":

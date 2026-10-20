@@ -17,7 +17,10 @@ minimizing normalized AUC of Value Error (nn_weighted_VE).
 Outputs:
   - out.pkl
   - summary_auc.csv
+  - summary.csv
+  - summary_all_lrs.csv
   - lr_selection_summary.json
+  - config.json
 """
 
 from __future__ import annotations
@@ -457,15 +460,41 @@ def main():
 
     # 5. Save summary CSV
     df_summary = pd.DataFrame(summary_rows)
-    summary_csv_path = os.path.join(save_env_dir, "summary_auc.csv")
+    summary_auc_csv_path = os.path.join(save_env_dir, "summary_auc.csv")
+    df_summary.to_csv(summary_auc_csv_path, index=False)
+    # Also save standard summary.csv matching exact_ppo_sweep convention
+    summary_csv_path = os.path.join(save_env_dir, "summary.csv")
     df_summary.to_csv(summary_csv_path, index=False)
-    print(f"Saved summary AUC table to: {summary_csv_path}")
+    print(f"Saved summary AUC table to: {summary_auc_csv_path} and {summary_csv_path}")
 
-    # 6. Save LR tuning summary JSON
+    # 6. Save LR tuning summary JSON and CSV
     lr_json_path = os.path.join(save_env_dir, "lr_selection_summary.json")
     with open(lr_json_path, "w") as f:
         json.dump(lr_tuning_records, f, indent=2)
     print(f"Saved learning rate tuning summary to: {lr_json_path}")
+
+    df_all_lrs = pd.DataFrame(lr_tuning_records)
+    all_lrs_csv_path = os.path.join(save_env_dir, "summary_all_lrs.csv")
+    df_all_lrs.to_csv(all_lrs_csv_path, index=False)
+    print(f"Saved all LRs summary to: {all_lrs_csv_path}")
+
+    # 7. Save config.json matching exact_ppo_sweep convention
+    cfg_path = os.path.join(save_env_dir, "config.json")
+    base_env_cfg = build_env_config(
+        env_name,
+        args,
+        critic_lr=args.critic_lrs[0],
+        k=args.k_values[0] if args.k_values else 32,
+    )
+    base_env_cfg["SWEEP_K_VALUES"] = list(args.k_values)
+    base_env_cfg["SWEEP_CRITIC_LRS"] = list(args.critic_lrs)
+    serializable_cfg = {
+        k: v for k, v in base_env_cfg.items()
+        if isinstance(v, (int, float, str, bool, list, dict)) or v is None
+    }
+    with open(cfg_path, "w") as f:
+        json.dump(serializable_cfg, f, indent=4)
+    print(f"Saved experiment configuration to: {cfg_path}")
 
 
 if __name__ == "__main__":
