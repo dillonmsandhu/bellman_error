@@ -279,6 +279,59 @@ def compute_win_loss_rates(df: pd.DataFrame, k_val: int) -> pd.DataFrame:
     return pd.DataFrame(summary_rows)
 
 
+def build_greedy_benchmark_table(
+    df: pd.DataFrame,
+    k_val: int,
+    algos: list[str] = ALGO_ORDER,
+) -> pd.DataFrame:
+    """Builds a formatted greedy policy start value (V^{\pi_{greedy}}(s_0)) benchmark table for a given k."""
+    sub_df = df[df["k"] == k_val].copy()
+    if sub_df.empty:
+        return pd.DataFrame()
+
+    present_envs = [e for e in ALL_ENVS if e in sub_df["env_name"].unique()]
+    for e in sub_df["env_name"].unique():
+        if e not in present_envs:
+            present_envs.append(e)
+
+    rows = []
+    for env_name in present_envs:
+        env_rows = sub_df[sub_df["env_name"] == env_name]
+        if env_rows.empty:
+            continue
+
+        row = {"Environment": ENV_DISPLAY_NAMES.get(env_name, env_name)}
+        perf_dict = {}
+
+        for algo in algos:
+            algo_row = env_rows[env_rows["algo"] == algo]
+            display = ALGO_DISPLAY_NAMES.get(algo, algo)
+            if not algo_row.empty and "final_greedy_perf_mean" in algo_row and not pd.isna(algo_row["final_greedy_perf_mean"].values[0]):
+                mean = algo_row["final_greedy_perf_mean"].values[0]
+                sem = algo_row["final_greedy_perf_sem"].values[0] if "final_greedy_perf_sem" in algo_row else 0.0
+                row[display] = f"{mean:.4f} ± {sem:.4f}"
+                perf_dict[algo] = mean
+            elif not algo_row.empty and "final_normalized_greedy_perf" in algo_row and not pd.isna(algo_row["final_normalized_greedy_perf"].values[0]):
+                mean = algo_row["final_normalized_greedy_perf"].values[0]
+                sem = algo_row["final_greedy_perf_sem"].values[0] if "final_greedy_perf_sem" in algo_row else 0.0
+                row[display] = f"{mean:.4f} ± {sem:.4f}"
+                perf_dict[algo] = mean
+            else:
+                row[display] = "N/A"
+
+        # Determine winner for this env (highest greedy return)
+        if perf_dict:
+            best_algo = max(perf_dict, key=perf_dict.get)
+            row["Winner"] = ALGO_DISPLAY_NAMES.get(best_algo, best_algo)
+        else:
+            row["Winner"] = "N/A"
+
+        rows.append(row)
+
+    res_df = pd.DataFrame(rows)
+    return res_df
+
+
 def main():
     args = parse_args()
     results_dir = os.path.abspath(args.results_dir)
@@ -295,7 +348,7 @@ def main():
     k_values = sorted(df["k"].unique())
 
     for k in k_values:
-        # 1. Main algorithm benchmark table
+        # 1. Main algorithm benchmark table (Value Error)
         t1 = build_algorithm_benchmark_table(df, k_val=k)
         if not t1.empty:
             export_multi_format(
@@ -305,7 +358,17 @@ def main():
                 f"tab:ve_benchmark_k{k}",
             )
 
-        # 2. Pairwise Win-Loss-Tie table
+        # 2. Greedy Policy Start Value benchmark table
+        t_greedy = build_greedy_benchmark_table(df, k_val=k)
+        if not t_greedy.empty:
+            export_multi_format(
+                t_greedy,
+                os.path.join(out_dir, f"table_greedy_perf_benchmark_k{k}"),
+                f"Sampled E-Aux Greedy Policy Start-State Value Benchmark (k={k})",
+                f"tab:greedy_perf_benchmark_k{k}",
+            )
+
+        # 3. Pairwise Win-Loss-Tie table
         wlt = compute_win_loss_rates(df, k_val=k)
         if not wlt.empty:
             export_multi_format(

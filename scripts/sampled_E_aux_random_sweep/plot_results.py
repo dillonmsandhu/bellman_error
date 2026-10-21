@@ -91,7 +91,17 @@ def load_all_env_data(results_dir: str):
     env_data = {}
     summary_dfs = []
 
-    for env_name in ALL_ENVS:
+    checked = set()
+    candidate_envs = list(ALL_ENVS)
+    if os.path.isdir(results_dir):
+        for item in sorted(os.listdir(results_dir)):
+            if os.path.isdir(os.path.join(results_dir, item)) and item not in candidate_envs:
+                candidate_envs.append(item)
+
+    for env_name in candidate_envs:
+        if env_name in checked:
+            continue
+        checked.add(env_name)
         env_dir = os.path.join(results_dir, env_name)
         pkl_path = os.path.join(env_dir, "out.pkl")
         csv_path = os.path.join(env_dir, "summary_auc.csv")
@@ -187,6 +197,103 @@ def plot_learning_curves_grid(
     plt.savefig(out_pdf_path, dpi=300)
     plt.close()
     print(f"Generated learning curve grid: {out_pdf_path}")
+
+
+def plot_greedy_perf_curves_grid(
+    env_data: dict,
+    algo_subset: list[str],
+    k_val: int,
+    out_pdf_path: str,
+    normalized: bool = False,
+):
+    """
+    Plots a 3x3 grid of learning curves for the start state's value under the greedy policy
+    (V^{\pi_{greedy}}(s_0)) across all 9 environments for a specific k.
+    Adds reference lines for V^*(s_0) (Optimal) and V^{rand}(s_0) (Random).
+    """
+    fig, axes = plt.subplots(3, 3, figsize=(15, 12), sharex=True)
+    axes = axes.flatten()
+
+    for idx, env_name in enumerate(ALL_ENVS):
+        ax = axes[idx]
+        title = ENV_TITLES.get(env_name, env_name)
+        ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+        if env_name not in env_data:
+            ax.text(0.5, 0.5, "Data Pending", ha="center", va="center", transform=ax.transAxes, color="gray")
+            continue
+
+        env_dict = env_data[env_name]
+        v_star = env_dict.get("v_star", None)
+        v_rand = env_dict.get("v_rand", None)
+        res_by_algo = env_dict.get("results_by_algo", {})
+
+        # Plot algorithm curves
+        for algo_key in algo_subset:
+            if algo_key not in res_by_algo:
+                continue
+
+            k_dict = res_by_algo[algo_key].get(k_val, {})
+            if not k_dict:
+                continue
+
+            traj = k_dict.get("metrics", {}).get("nn_greedy_performance", None)
+            if traj is not None:
+                if normalized and v_star is not None and v_rand is not None and abs(v_star - v_rand) > 1e-12:
+                    delta = v_star - v_rand
+                    norm_traj = (traj - v_rand) / delta
+                    mean_curve = np.nanmean(norm_traj, axis=0)
+                    sem_curve = np.nanstd(norm_traj, axis=0) / np.sqrt(max(1, norm_traj.shape[0]))
+                else:
+                    mean_curve = np.nanmean(traj, axis=0)
+                    sem_curve = np.nanstd(traj, axis=0) / np.sqrt(max(1, traj.shape[0]))
+
+                steps = np.arange(len(mean_curve))
+                color = ALGO_COLORS.get(algo_key, "#333333")
+                label = ALGO_LABELS.get(algo_key, algo_key)
+
+                ax.plot(steps, mean_curve, color=color, label=label, linewidth=1.8)
+                ax.fill_between(steps, mean_curve - sem_curve, mean_curve + sem_curve, color=color, alpha=0.18)
+
+        # Plot reference baselines (V^* and V^{rand})
+        if normalized:
+            ax.axhline(1.0, color="#222222", linestyle="--", linewidth=1.2, alpha=0.7, label=r"$V^*$ (Optimal)")
+            ax.axhline(0.0, color="#888888", linestyle=":", linewidth=1.2, alpha=0.7, label=r"$V^{\mathrm{rand}}$ (Random)")
+        else:
+            if v_star is not None:
+                ax.axhline(v_star, color="#222222", linestyle="--", linewidth=1.2, alpha=0.7, label=r"$V^*$ (Optimal)")
+            if v_rand is not None:
+                ax.axhline(v_rand, color="#888888", linestyle=":", linewidth=1.2, alpha=0.7, label=r"$V^{\mathrm{rand}}$ (Random)")
+
+        if idx % 3 == 0:
+            ylabel = r"Normalized $V^{\pi_{\mathrm{greedy}}}(s_0)$" if normalized else r"Greedy $V^{\pi_{\mathrm{greedy}}}(s_0)$"
+            ax.set_ylabel(ylabel, fontsize=11)
+        if idx >= 6:
+            ax.set_xlabel("Rollout Updates", fontsize=11)
+
+    # Dedup legend handles and labels
+    handles, labels = axes[0].get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    if by_label:
+        fig.legend(
+            by_label.values(),
+            by_label.keys(),
+            loc="lower center",
+            ncol=min(len(by_label), 7),
+            bbox_to_anchor=(0.5, 0.02),
+            frameon=True,
+            framealpha=0.9,
+            facecolor="white",
+            edgecolor="#cccccc",
+            fontsize=11,
+        )
+
+    plt.tight_layout(rect=[0, 0.06, 1, 0.98])
+    os.makedirs(os.path.dirname(out_pdf_path), exist_ok=True)
+    plt.savefig(out_pdf_path, dpi=300)
+    plt.close()
+    print(f"Generated greedy performance curve grid: {out_pdf_path}")
 
 
 def plot_clustered_bar_chart(
@@ -348,6 +455,10 @@ def export_summary_tables(combined_df: pd.DataFrame, out_dir: str):
         "final_weighted_ve_sem",
         "auc_advantage_cossim_mean",
         "auc_advantage_cossim_sem",
+        "final_greedy_perf_mean",
+        "final_greedy_perf_sem",
+        "auc_greedy_perf_mean",
+        "auc_greedy_perf_sem",
         "final_normalized_greedy_perf",
     ]
     present_cols = [c for c in cols if c in combined_df.columns]
@@ -400,6 +511,22 @@ def main():
             log_scale=False,
         )
 
+        # Greedy performance learning curves (start state value under greedy policy)
+        plot_greedy_perf_curves_grid(
+            env_data=env_data,
+            algo_subset=all_algos,
+            k_val=k,
+            out_pdf_path=os.path.join(save_dir, f"v_greedy_start_curves_all_algos_k{k}.pdf"),
+            normalized=False,
+        )
+        plot_greedy_perf_curves_grid(
+            env_data=env_data,
+            algo_subset=all_algos,
+            k_val=k,
+            out_pdf_path=os.path.join(save_dir, f"v_greedy_normalized_curves_all_algos_k{k}.pdf"),
+            normalized=True,
+        )
+
         # 2. Clustered bar charts
         plot_clustered_bar_chart(
             combined_df=combined_df,
@@ -435,10 +562,30 @@ def main():
             combined_df=combined_df,
             algo_subset=all_algos,
             k_val=k,
+            metric_col_mean="final_greedy_perf_mean",
+            metric_col_sem="final_greedy_perf_sem",
+            metric_label=r"Final Greedy Policy Start Value $V^{\pi_{\mathrm{greedy}}}(s_0)$",
+            out_pdf_path=os.path.join(save_dir, f"final_greedy_start_bars_all_algos_k{k}.pdf"),
+            log_scale=False,
+        )
+        plot_clustered_bar_chart(
+            combined_df=combined_df,
+            algo_subset=all_algos,
+            k_val=k,
             metric_col_mean="final_normalized_greedy_perf",
             metric_col_sem="final_greedy_perf_sem",
-            metric_label="Final Normalized Policy Return",
+            metric_label=r"Final Normalized Return $\bar{V}^{\pi_{\mathrm{greedy}}}(s_0)$ (0=Rand, 1=Opt)",
             out_pdf_path=os.path.join(save_dir, f"final_greedy_bars_all_algos_k{k}.pdf"),
+            log_scale=False,
+        )
+        plot_clustered_bar_chart(
+            combined_df=combined_df,
+            algo_subset=all_algos,
+            k_val=k,
+            metric_col_mean="auc_greedy_perf_mean",
+            metric_col_sem="auc_greedy_perf_sem",
+            metric_label=r"AUC of Greedy Policy Start Value $V^{\pi_{\mathrm{greedy}}}(s_0)$",
+            out_pdf_path=os.path.join(save_dir, f"auc_greedy_perf_bars_all_algos_k{k}.pdf"),
             log_scale=False,
         )
 
