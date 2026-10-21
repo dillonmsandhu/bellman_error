@@ -1048,7 +1048,7 @@ def e_critic_loss(
     - 'corrected' / 'oct5': adds difference of second moments 0.5 * gamma * (mean(e_i^2) - mean(e_j^2))
     - 'oct8' / 'start_anchored': adds positive start-state anchor 0.5 * gamma * E_{s0}[e(s0)^2]
     - 'bilinear_v_aux': direct unbiased bilinear form <e, delta>_D using v_aux for the adjoint error
-    - 'surgical_v_aux': Oct 8 Dirichlet form using v_aux ONLY in the biased Term 4 (+e_i * grad(v_j))
+    - 'surgical_v_aux': Split-branch Dirichlet form: real returns on v_i branch (1-step TD reward, zero return noise), v_aux on v_j branch (smooth Dirichlet Laplacian, zero return noise & zero double-sampling bias)
     - 'dirichlet_v_aux': Oct 8 Dirichlet form using v_aux in the entire Laplacian term and G_t in anchors
     """
     sg = jax.lax.stop_gradient
@@ -1088,10 +1088,10 @@ def e_critic_loss(
     if variant in ["surgical_v_aux", "surgical"]:
         if v_aux_i is None:
             raise ValueError("variant='surgical_v_aux' requires v_aux_i and v_aux_j.")
-        # Terms 1 & 2 (-e_i grad v_i + e_j grad v_i) use real returns e_i, e_j
+        # Terms 1 & 2 (-e_i grad v_i + e_j grad v_i): real returns cancel post-(t+1) noise, yielding exact 1-step TD(0) reward
         branch_v_i = (e_i - sg(e_j)) ** 2
-        # Terms 3 & 4 (-e_j grad v_j + e_tilde_i grad v_j) use e_tilde_i for Term 4
-        branch_v_j = jnp.where(true_terminal, 0.0, (sg(e_tilde_i) - e_j) ** 2)
+        # Terms 3 & 4 (-e_tilde_j grad v_j + e_tilde_i grad v_j): v_aux predictions eliminate all post-(t+1) return noise & double-sampling bias
+        branch_v_j = jnp.where(true_terminal, 0.0, (sg(e_tilde_i) - e_tilde_j) ** 2)
         laplacian_loss = 0.5 * gamma * jnp.mean(branch_v_i + branch_v_j)
     elif variant in ["dirichlet_v_aux", "dirichlet"]:
         if v_aux_i is None:
