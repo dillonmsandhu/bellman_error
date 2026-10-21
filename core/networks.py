@@ -254,6 +254,83 @@ class MLP_Critic(nn.Module):
         """Returns V(s)"""
         return self.value_from_features(self.value_features(x))
 
+class PQN_DualCritic(nn.Module):
+    """Critic with a CNN torso and two value heads: main value (v) and auxiliary value (v_aux)."""
+    action_dim: int
+    final_hidden_dim: int
+    norm_type: str = "none"
+
+    def setup(self):
+        self.critic_cnn = PQN_CNN(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+        self.aux_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+
+    def __call__(self, x: jnp.ndarray):
+        """Returns main V(s) by default for evaluator compatibility, ensuring both heads are traced."""
+        v, _ = self.both(x)
+        return v
+
+    def value_features(self, x: jnp.ndarray):
+        return self.critic_cnn(x)
+
+    def value_from_features(self, phi: jnp.ndarray):
+        return self.critic_head(phi).squeeze(-1)
+
+    def aux_from_features(self, phi: jnp.ndarray):
+        return self.aux_head(phi).squeeze(-1)
+
+    def value(self, x: jnp.ndarray):
+        """Returns main V(s)."""
+        return self.value_from_features(self.value_features(x))
+
+    def v_aux(self, x: jnp.ndarray):
+        """Returns auxiliary V_aux(s)."""
+        return self.aux_from_features(self.value_features(x))
+
+    def both(self, x: jnp.ndarray):
+        """Returns (V(s), V_aux(s)) with a single forward pass through the torso."""
+        phi = self.value_features(x)
+        return self.value_from_features(phi), self.aux_from_features(phi)
+
+
+class MLP_DualCritic(nn.Module):
+    """Critic with an MLP torso and two value heads: main value (v) and auxiliary value (v_aux)."""
+    action_dim: int
+    final_hidden_dim: int
+    norm_type: str = "none"
+
+    def setup(self):
+        self.critic_mlp = MLP(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+        self.aux_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+
+    def __call__(self, x: jnp.ndarray):
+        """Returns main V(s) by default for evaluator compatibility, ensuring both heads are traced."""
+        v, _ = self.both(x)
+        return v
+
+    def value_features(self, x: jnp.ndarray):
+        return self.critic_mlp(x)
+
+    def value_from_features(self, phi: jnp.ndarray):
+        return self.critic_head(phi).squeeze(-1)
+
+    def aux_from_features(self, phi: jnp.ndarray):
+        return self.aux_head(phi).squeeze(-1)
+
+    def value(self, x: jnp.ndarray):
+        """Returns main V(s)."""
+        return self.value_from_features(self.value_features(x))
+
+    def v_aux(self, x: jnp.ndarray):
+        """Returns auxiliary V_aux(s)."""
+        return self.aux_from_features(self.value_features(x))
+
+    def both(self, x: jnp.ndarray):
+        """Returns (V(s), V_aux(s)) with a single forward pass through the torso."""
+        phi = self.value_features(x)
+        return self.value_from_features(phi), self.aux_from_features(phi)
+
 def make_warmup_linear_schedule(init_lr, end_lr, total_steps, warmup_ratio=0.1):
     """Linear warmup from 0.0 to init_lr over warmup_steps, followed by linear decay to end_lr."""
     if warmup_ratio is None or warmup_ratio <= 0.0 or total_steps <= 1:
@@ -457,6 +534,26 @@ def initialize_network(rng, obs_shape, env, env_params, k, n_heads: int, layer_n
             model = MLP_Critic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
         else:
             model = PQN_Critic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
+
+    rng, init_rng = jax.random.split(rng)
+    params = model.init(init_rng, jnp.zeros(obs_shape))
+    print('number of features is ', model.final_hidden_dim)
+    return model, params
+
+def initialize_dual_critic_network(rng, obs_shape, env, env_params, k, layer_norm: bool):
+    try:
+        action_dim = env.action_space(env_params).n
+    except:
+        action_dim = env.action_space(env_params).shape[0]
+    
+    norm_type = 'layer_norm' if layer_norm else 'None'
+    use_mlp = len(obs_shape) < 3
+    
+    print('- obs shape for dual critic initialization is ', obs_shape)
+    if use_mlp:
+        model = MLP_DualCritic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
+    else:
+        model = PQN_DualCritic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
 
     rng, init_rng = jax.random.split(rng)
     params = model.init(init_rng, jnp.zeros(obs_shape))

@@ -1026,38 +1026,97 @@ def e_lambda_fixed_loss_fn(params, network, traj_batch, gae, targets, config):
     return total_loss, losses
 
 
-def e_critic_loss(v_i, targets_i, v_j, targets_j, true_terminal, gamma, variant="oct8", is_start=None, nu=None):
+def e_critic_loss(
+    v_i,
+    targets_i,
+    v_j,
+    targets_j,
+    true_terminal,
+    gamma,
+    variant="oct8",
+    is_start=None,
+    is_timeout=None,
+    nu=None,
+    v_aux_i=None,
+    v_aux_j=None,
+    rewards=None,
+    aux_coef=1.0,
+):
     """
-    Computes sampled E-loss across three formulations:
+    Computes sampled E-loss across original and debiased v_aux formulations:
     - 'sep14' / 'uncorrected': pure positive semi-definite (magnitude + Dirichlet smoothness)
-    - 'corrected': adds difference of second moments 0.5 * gamma * (mean(e_i^2) - mean(e_j^2))
-    - 'oct8': adds positive start-state anchor 0.5 * gamma * nu * mean(e_start^2)
+    - 'corrected' / 'oct5': adds difference of second moments 0.5 * gamma * (mean(e_i^2) - mean(e_j^2))
+    - 'oct8' / 'start_anchored': adds positive start-state anchor 0.5 * gamma * E_{s0}[e(s0)^2]
+    - 'bilinear_v_aux': direct unbiased bilinear form <e, delta>_D using v_aux for the adjoint error
+    - 'surgical_v_aux': Oct 8 Dirichlet form using v_aux ONLY in the biased Term 4 (+e_i * grad(v_j))
+    - 'dirichlet_v_aux': Oct 8 Dirichlet form using v_aux in the entire Laplacian term and G_t in anchors
     """
+    sg = jax.lax.stop_gradient
+
+    # Empirical MC errors (from trajectory returns G_t, G_{t+1})
     e_i = targets_i - v_i
     e_j = jnp.where(true_terminal, 0.0, targets_j - v_j)
 
+    # Auxiliary MC head loss (trains v_aux_i to predict targets_i = G_t)
+    if v_aux_i is not None:
+        aux_mc_loss = aux_coef * jnp.mean((sg(targets_i) - v_aux_i) ** 2)
+        e_tilde_i = sg(v_aux_i) - v_i
+        e_tilde_j = jnp.where(true_terminal, 0.0, sg(v_aux_j) - v_j)
+    else:
+        aux_mc_loss = 0.0
+        e_tilde_i = None
+        e_tilde_j = None
+
+    # --- VARIANT: Bilinear <e, delta>_D (Direct sample, zero boundary terms needed) ---
+    if variant == "bilinear_v_aux":
+        if v_aux_i is None:
+            raise ValueError("variant='bilinear_v_aux' requires v_aux_i and v_aux_j.")
+        r_t = rewards if rewards is not None else sg(targets_i - gamma * jnp.where(true_terminal, 0.0, targets_j))
+        v_j_masked = jnp.where(true_terminal, 0.0, v_j)
+        delta_t = r_t + gamma * v_j_masked - v_i
+
+        # Forward TD(0) term + Adjoint E term (matches exact gradient of E = <e, delta>_D)
+        bilinear_surrogate = sg(delta_t) * (-v_i) + sg(e_tilde_i) * delta_t
+        value_loss = jnp.mean(bilinear_surrogate) + aux_mc_loss
+
+        magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
+        laplacian_loss = 0.5 * gamma * jnp.mean((e_tilde_i - e_tilde_j) ** 2)
+        return value_loss, magnitude_loss, laplacian_loss
+
     magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
-    laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
+
+    if variant in ["surgical_v_aux", "surgical"]:
+        if v_aux_i is None:
+            raise ValueError("variant='surgical_v_aux' requires v_aux_i and v_aux_j.")
+        # Terms 1 & 2 (-e_i grad v_i + e_j grad v_i) use real returns e_i, e_j
+        branch_v_i = (e_i - sg(e_j)) ** 2
+        # Terms 3 & 4 (-e_j grad v_j + e_tilde_i grad v_j) use e_tilde_i for Term 4
+        branch_v_j = jnp.where(true_terminal, 0.0, (sg(e_tilde_i) - e_j) ** 2)
+        laplacian_loss = 0.5 * gamma * jnp.mean(branch_v_i + branch_v_j)
+    elif variant in ["dirichlet_v_aux", "dirichlet"]:
+        if v_aux_i is None:
+            raise ValueError("variant='dirichlet_v_aux' requires v_aux_i and v_aux_j.")
+        laplacian_loss = 0.5 * gamma * jnp.mean((e_tilde_i - e_tilde_j) ** 2)
+    else:
+        laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
 
     if variant in ["sep14", "uncorrected"]:
         value_loss = magnitude_loss + laplacian_loss
     elif variant in ["corrected", "corr", "oct5"]:
         corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
         value_loss = magnitude_loss + laplacian_loss + corr_loss
-    elif variant in ["oct8", "start_anchored"]:
+    elif variant in ["oct8", "start_anchored", "surgical_v_aux", "dirichlet_v_aux"]:
         if is_start is None:
             raise ValueError(
-                "e_critic_loss with variant='oct8' requires boolean mask 'is_start' "
-                "to evaluate the start-state anchor E_{s0 ~ d0}[e(s0)^2]. "
-                "Without is_start, the anchor cannot be placed on the initial state boundary and is biased."
+                f"e_critic_loss with variant='{variant}' requires boolean mask 'is_start' "
+                "to evaluate the start-state anchor E_{s0 ~ d0}[e(s0)^2]."
             )
-        # Refinement 1 (Unbiased batch mask normalization):
-        # In a rollout buffer, the sample frequency of start states is an unbiased
-        # sample estimator of the termination/reset rate nu: E[1_{s in start}] = nu.
-        # Thus (1/B) * sum_{i=1}^B 1_{s_i in start} * e(s_i)^2 is an exact, unbiased, and low-variance
-        # sample estimator of nu * E_{s0 ~ d0}[e(s0)^2] without dividing by N_start or tracking nu_ema.
         start_anchor_loss = 0.5 * gamma * jnp.mean(jnp.where(is_start, e_i ** 2, 0.0))
-        value_loss = magnitude_loss + laplacian_loss + start_anchor_loss
+        if is_timeout is not None:
+            timeout_corr_loss = -0.5 * gamma * jnp.mean(jnp.where(is_timeout, e_j ** 2, 0.0))
+        else:
+            timeout_corr_loss = 0.0
+        value_loss = magnitude_loss + laplacian_loss + start_anchor_loss + timeout_corr_loss + aux_mc_loss
     else:
         raise ValueError(f"Unknown E variant: {variant}")
 
