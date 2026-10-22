@@ -1,5 +1,12 @@
-# Sampled E-loss (Dirichlet / spectral decomposition) using trajectory sampling
-# Evaluates the random policy using on-policy trajectories and Monte-Carlo returns
+# random_policy/sampled_E.py
+# Unified Sampled E-loss Policy Evaluation for Random Policy.
+# Supports multiple loss variants via config:
+#   - 'mc': Standard Monte Carlo target MSE regression
+#   - 'oct8' / 'start_anchored': Oct 8 biased start-state anchored Dirichlet formulation
+#   - 'surgical_v_aux': Surgical auxiliary substitution (with SHARED_TORSO=True/False)
+#   - 'dirichlet_v_aux': Full auxiliary substitution
+#   - 'sep14', 'oct5': Earlier uncorrected / boundary-corrected formulations
+
 from core.imports import *
 import core.helpers as helpers
 import core.networks as networks
@@ -7,8 +14,6 @@ import distrax
 import core.bellman_error as bellman_error
 from core.feature_metrics import feature_metrics
 import core.utils as utils
-
-# jax.config.update("jax_enable_x64", True)
 
 SAVE_DIR = "random/sampled_E"
 
@@ -26,8 +31,9 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 def make_train(base_config):
+    base_config = base_config.copy()
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
-    base_config["NUM_MINIBATCHES"] = batch_size // base_config["MINIBATCH_SIZE"]
+    base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config.get("MINIBATCH_SIZE", 256))
     base_config["NUM_UPDATES"] = base_config["TOTAL_TIMESTEPS"] // batch_size
     
     env, env_params = helpers.make_env(base_config)
@@ -43,37 +49,48 @@ def make_train(base_config):
 
     def train(rng, hparams=None):
         config = utils.merge_hparams(base_config, hparams)
-        k = config['k']
-        network, network_params = networks.initialize_network(
-            rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
-        )
+        k = config.get("k", 32)
+        loss_variant = config.get("LOSS_VARIANT", config.get("E_VARIANT", "oct8"))
+        shared_torso = config.get("SHARED_TORSO", True)
+        uses_aux = loss_variant in ["surgical_v_aux", "surgical", "dirichlet_v_aux", "bilinear_v_aux"]
+
+        # Network Initialization: DualCritic if uses_aux, standard network otherwise
+        if uses_aux:
+            network, network_params = networks.initialize_dual_critic_network(
+                rng, obs_shape, env, env_params, k, layer_norm=config.get("LAYER_NORM", True), shared_torso=shared_torso
+            )
+        else:
+            network, network_params = networks.initialize_network(
+                rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config.get("LAYER_NORM", True)
+            )
+
         train_state = networks.initialize_flax_train_state(config, network, network_params)
         
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
         last_true_terminal = jnp.zeros(config["NUM_ENVS"], dtype=bool)
-        nu_ema = jnp.array(0.0, dtype=jnp.float32)
 
         def _update_step(runner_state, unused):
-            train_state, env_state, last_obs, last_true_terminal, rng, idx, nu_ema = runner_state
+            train_state, env_state, last_obs, last_true_terminal, rng, idx = runner_state
 
             # COLLECT TRAJECTORIES
             def _env_step(env_scan_state, unused):
                 train_state, env_state, last_obs, last_true_terminal, rng = env_scan_state
 
                 rng, _rng = jax.random.split(rng)
-                value = network.apply(train_state.params, last_obs)
+                value = network.apply(train_state.params, last_obs, method=network.value)
+
                 if is_continuous:
                     pi = distrax.Independent(
                         distrax.Uniform(
-                            low=jnp.full((config['NUM_ENVS'], *action_shape), -1.0),
-                            high=jnp.full((config['NUM_ENVS'], *action_shape), 1.0),
+                            low=jnp.full((config["NUM_ENVS"], *action_shape), -1.0),
+                            high=jnp.full((config["NUM_ENVS"], *action_shape), 1.0),
                         ),
                         reinterpreted_batch_ndims=1,
                     )
                 else:
-                    pi = distrax.Categorical(logits=jnp.zeros((config['NUM_ENVS'], n_actions)))
+                    pi = distrax.Categorical(logits=jnp.zeros((config["NUM_ENVS"], n_actions)))
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action)
 
@@ -82,8 +99,8 @@ def make_train(base_config):
                 obsv, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None))(
                     rng_step, env_state, action, env_params
                 )
-                true_next_obs = info['real_next_obs']
-                next_val = network.apply(train_state.params, true_next_obs)
+                true_next_obs = info["real_next_obs"]
+                next_val = network.apply(train_state.params, true_next_obs, method=network.value)
 
                 if "is_timeout" in info:
                     is_timeout = info["is_timeout"]
@@ -92,55 +109,58 @@ def make_train(base_config):
                 true_terminal = done & ~is_timeout
                 is_start = last_true_terminal
 
+                clean_info = {k_i: v_i for k_i, v_i in info.items() if k_i not in ["real_next_obs", "real_next_state"]}
                 transition = Transition(
-                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, 0.0, is_start, info
+                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, 0.0, is_start, clean_info
                 )
                 return (train_state, env_state, obsv, true_terminal, rng), transition
 
             env_step_state = (train_state, env_state, last_obs, last_true_terminal, rng)
-            (_, env_state, last_obs, last_true_terminal, rng), traj_batch = jax.lax.scan(_env_step, env_step_state, None, config["NUM_STEPS"])
+            (_, env_state, last_obs, last_true_terminal, rng), traj_batch = jax.lax.scan(
+                _env_step, env_step_state, None, config["NUM_STEPS"]
+            )
 
             # --- MC RETURN / TARGET CALCULATION ---
-            # Using GAE with RETURN_LAMBDA (1.0) gives MC returns G_t
-            return_lambda = config["RETURN_LAMBDA"]
+            return_lambda = config.get("RETURN_LAMBDA", config.get("VALUE_LAMBDA", 1.0))
             advantages, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
             
-            is_timeout = traj_batch.info["is_timeout"]
+            if "is_timeout" in traj_batch.info:
+                is_timeout = traj_batch.info["is_timeout"]
+            else:
+                is_timeout = jnp.zeros_like(traj_batch.done, dtype=bool)
             true_terminal = traj_batch.done & ~is_timeout
 
             # Align next targets G_{t+1}
             next_targets = jnp.roll(targets, shift=-1, axis=0)
             next_targets = next_targets.at[-1].set(traj_batch.next_value[-1])
-            # On timeout, the rollout reset so targets[t+1] is from a new episode; the true continuation target is next_value
             next_targets = jnp.where(is_timeout, traj_batch.next_value, next_targets)
-            # On true terminal, next absorbing state target is 0.0
             next_targets = jnp.where(true_terminal, 0.0, next_targets)
             traj_batch = traj_batch._replace(next_target=next_targets)
-
-            # Running average of nu with Adam-style bias correction
-            nu_batch = jnp.mean(true_terminal.astype(jnp.float32))
-            beta_nu = config.get("NU_BETA", 0.95)
-            nu_ema = beta_nu * nu_ema + (1.0 - beta_nu) * nu_batch
-            bias_correction = 1.0 - (beta_nu ** idx)
-            nu_hat = nu_ema / jnp.maximum(bias_correction, 1e-8)
 
             # LOSS FUNCTION
             def E_loss_fn(params, traj_batch, targets):
                 gamma = config["GAMMA"]
-                # 1. Current State Predictions & Errors (e_i)
-                v_i = network.apply(params, traj_batch.obs)
-                
-                # 2. Next State Predictions & Errors (e_j)
-                v_j = network.apply(params, traj_batch.next_obs)
-                true_term = traj_batch.done & ~traj_batch.info["is_timeout"]
-                
-                variant = config.get("E_VARIANT", "sep14")
+                if "is_timeout" in traj_batch.info:
+                    is_timeout_mb = traj_batch.info["is_timeout"]
+                else:
+                    is_timeout_mb = jnp.zeros_like(traj_batch.done, dtype=bool)
+                true_term = traj_batch.done & ~is_timeout_mb
+
+                if uses_aux:
+                    v_i, v_aux_i = network.apply(params, traj_batch.obs, method=network.both)
+                    v_j, v_aux_j = network.apply(params, traj_batch.next_obs, method=network.both)
+                else:
+                    v_i = network.apply(params, traj_batch.obs, method=network.value)
+                    v_j = network.apply(params, traj_batch.next_obs, method=network.value)
+                    v_aux_i, v_aux_j = None, None
+
                 value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
                     v_i, targets, v_j, traj_batch.next_target, true_term, gamma,
-                    variant=variant, is_start=traj_batch.is_start, nu=nu_hat
+                    variant=loss_variant, is_start=traj_batch.is_start, is_timeout=is_timeout_mb,
+                    v_aux_i=v_aux_i, v_aux_j=v_aux_j, aux_coef=config.get("AUX_VF_COEF", 1.0)
                 )
                 
-                total_loss = config["VF_COEF"] * value_loss
+                total_loss = config.get("VF_COEF", 1.0) * value_loss
                 return total_loss, {
                     "total_loss": total_loss,
                     "magnitude_loss": magnitude_loss,
@@ -174,12 +194,12 @@ def make_train(base_config):
 
             # --------- Metrics ---------
             metric = {
-                k: v.mean() 
-                for k, v in traj_batch.info.items() 
-                if k not in ["real_next_obs", "real_next_state"]
+                k_i: v_i.mean() 
+                for k_i, v_i in traj_batch.info.items() 
+                if k_i not in ["real_next_obs", "real_next_state"]
             }
             # Shared Metrics
-            metric.update({k: v.mean() for k, v in losses.items()})
+            metric.update({k_l: v_l.mean() for k_l, v_l in losses.items()})
             metric.update({"mean_rew": traj_batch.reward.mean()})
             value_metrics = bellman_error.value_metrics(
                 evaluator, network, train_state.params, random_policy=True, light=config["LIGHT_METRICS"]
@@ -190,13 +210,13 @@ def make_train(base_config):
                     evaluator, network, train_state.params, random_policy=True,
                 ))
             if hasattr(evaluator, "obs_stack") and hasattr(evaluator, "start_idx"):
-                v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx]).squeeze()
+                v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx], method=network.value).squeeze()
                 metric["v_pred_start"] = v_pred_start
-            runner_state = (train_state, env_state, last_obs, last_true_terminal, rng, idx + 1, nu_ema)
+            runner_state = (train_state, env_state, last_obs, last_true_terminal, rng, idx + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, env_state, obsv, last_true_terminal, _rng, 1, nu_ema)
+        runner_state = (train_state, env_state, obsv, last_true_terminal, _rng, 1)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}
 

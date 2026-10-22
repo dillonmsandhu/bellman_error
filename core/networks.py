@@ -259,19 +259,27 @@ class PQN_DualCritic(nn.Module):
     action_dim: int
     final_hidden_dim: int
     norm_type: str = "none"
+    shared_torso: bool = True
 
     def setup(self):
         self.critic_cnn = PQN_CNN(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        if not self.shared_torso:
+            self.aux_cnn = PQN_CNN(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
         self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
         self.aux_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
 
     def __call__(self, x: jnp.ndarray):
-        """Returns main V(s) by default for evaluator compatibility, ensuring both heads are traced."""
+        """Returns main V(s) by default for evaluator compatibility, ensuring both heads/torsos are traced."""
         v, _ = self.both(x)
         return v
 
     def value_features(self, x: jnp.ndarray):
         return self.critic_cnn(x)
+
+    def aux_features(self, x: jnp.ndarray):
+        if self.shared_torso:
+            return self.critic_cnn(x)
+        return self.aux_cnn(x)
 
     def value_from_features(self, phi: jnp.ndarray):
         return self.critic_head(phi).squeeze(-1)
@@ -285,12 +293,17 @@ class PQN_DualCritic(nn.Module):
 
     def v_aux(self, x: jnp.ndarray):
         """Returns auxiliary V_aux(s)."""
-        return self.aux_from_features(self.value_features(x))
+        return self.aux_from_features(self.aux_features(x))
 
     def both(self, x: jnp.ndarray):
-        """Returns (V(s), V_aux(s)) with a single forward pass through the torso."""
-        phi = self.value_features(x)
-        return self.value_from_features(phi), self.aux_from_features(phi)
+        """Returns (V(s), V_aux(s)). Single forward pass if shared_torso=True."""
+        if self.shared_torso:
+            phi = self.value_features(x)
+            return self.value_from_features(phi), self.aux_from_features(phi)
+        else:
+            phi_c = self.value_features(x)
+            phi_a = self.aux_features(x)
+            return self.value_from_features(phi_c), self.aux_from_features(phi_a)
 
 
 class MLP_DualCritic(nn.Module):
@@ -298,19 +311,27 @@ class MLP_DualCritic(nn.Module):
     action_dim: int
     final_hidden_dim: int
     norm_type: str = "none"
+    shared_torso: bool = True
 
     def setup(self):
         self.critic_mlp = MLP(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        if not self.shared_torso:
+            self.aux_mlp = MLP(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
         self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
         self.aux_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
 
     def __call__(self, x: jnp.ndarray):
-        """Returns main V(s) by default for evaluator compatibility, ensuring both heads are traced."""
+        """Returns main V(s) by default for evaluator compatibility, ensuring both heads/torsos are traced."""
         v, _ = self.both(x)
         return v
 
     def value_features(self, x: jnp.ndarray):
         return self.critic_mlp(x)
+
+    def aux_features(self, x: jnp.ndarray):
+        if self.shared_torso:
+            return self.critic_mlp(x)
+        return self.aux_mlp(x)
 
     def value_from_features(self, phi: jnp.ndarray):
         return self.critic_head(phi).squeeze(-1)
@@ -324,12 +345,143 @@ class MLP_DualCritic(nn.Module):
 
     def v_aux(self, x: jnp.ndarray):
         """Returns auxiliary V_aux(s)."""
-        return self.aux_from_features(self.value_features(x))
+        return self.aux_from_features(self.aux_features(x))
 
     def both(self, x: jnp.ndarray):
-        """Returns (V(s), V_aux(s)) with a single forward pass through the torso."""
-        phi = self.value_features(x)
-        return self.value_from_features(phi), self.aux_from_features(phi)
+        """Returns (V(s), V_aux(s)). Single forward pass if shared_torso=True."""
+        if self.shared_torso:
+            phi = self.value_features(x)
+            return self.value_from_features(phi), self.aux_from_features(phi)
+        else:
+            phi_c = self.value_features(x)
+            phi_a = self.aux_features(x)
+            return self.value_from_features(phi_c), self.aux_from_features(phi_a)
+
+
+class PQN_AC_DualCritic(nn.Module):
+    """Actor critic with separate small CNNs for actor and critic, with dual heads (v and v_aux) on critic."""
+    action_dim: int
+    final_hidden_dim: int
+    norm_type: str = "none"
+    is_continuous: bool = False
+    shared_torso: bool = True
+
+    def setup(self):
+        self.actor_cnn = PQN_CNN(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        self.critic_cnn = PQN_CNN(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        if not self.shared_torso:
+            self.aux_cnn = PQN_CNN(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        self.actor_head = PolicyHead(self.action_dim, self.is_continuous)
+        self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+        self.aux_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+
+    def __call__(self, x: jnp.ndarray):
+        """Returns (pi(s), V(s)) by default for standard AC interface, ensuring both critic heads are traced."""
+        v, _ = self.both(x)
+        pi = self.policy(x)
+        return pi, v
+
+    def policy(self, x: jnp.ndarray):
+        actor_features = self.actor_cnn(x)
+        return self.actor_head(actor_features)
+
+    def value_features(self, x: jnp.ndarray):
+        return self.critic_cnn(x)
+
+    def aux_features(self, x: jnp.ndarray):
+        if self.shared_torso:
+            return self.critic_cnn(x)
+        return self.aux_cnn(x)
+
+    def value_from_features(self, phi):
+        return self.critic_head(phi).squeeze(-1)
+
+    def aux_from_features(self, phi):
+        return self.aux_head(phi).squeeze(-1)
+
+    def value(self, x: jnp.ndarray):
+        return self.value_from_features(self.value_features(x))
+
+    def v_aux(self, x: jnp.ndarray):
+        return self.aux_from_features(self.aux_features(x))
+
+    def both(self, x: jnp.ndarray):
+        if self.shared_torso:
+            phi = self.value_features(x)
+            return self.value_from_features(phi), self.aux_from_features(phi)
+        else:
+            phi_c = self.value_features(x)
+            phi_a = self.aux_features(x)
+            return self.value_from_features(phi_c), self.aux_from_features(phi_a)
+
+    def act(self, x: jnp.ndarray, key: jax.random.PRNGKey):
+        policy = self.policy(x)
+        action = policy.sample(seed=key)
+        return action.squeeze()
+
+
+class MLP_AC_DualCritic(nn.Module):
+    """Actor critic with separate small MLPs for actor and critic, with dual heads (v and v_aux) on critic."""
+    action_dim: int
+    final_hidden_dim: int
+    norm_type: str = "none"
+    is_continuous: bool = False
+    shared_torso: bool = True
+
+    def setup(self):
+        self.actor_mlp = MLP(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        self.critic_mlp = MLP(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        if not self.shared_torso:
+            self.aux_mlp = MLP(norm_type=self.norm_type, final_hidden_dim=self.final_hidden_dim)
+        self.actor_head = PolicyHead(self.action_dim, self.is_continuous)
+        self.critic_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+        self.aux_head = nn.Dense(1, kernel_init=nn.initializers.zeros, bias_init=constant(0.0))
+
+    def __call__(self, x: jnp.ndarray):
+        """Returns (pi(s), V(s)) by default for standard AC interface, ensuring both critic heads are traced."""
+        v, _ = self.both(x)
+        pi = self.policy(x)
+        return pi, v
+
+    def policy(self, x: jnp.ndarray):
+        actor_features = self.actor_mlp(x)
+        return self.actor_head(actor_features)
+
+    def value_features(self, x: jnp.ndarray):
+        return self.critic_mlp(x)
+
+    def aux_features(self, x: jnp.ndarray):
+        if self.shared_torso:
+            return self.critic_mlp(x)
+        return self.aux_mlp(x)
+
+    def value_from_features(self, phi):
+        return self.critic_head(phi).squeeze(-1)
+
+    def aux_from_features(self, phi):
+        return self.aux_head(phi).squeeze(-1)
+
+    def value(self, x: jnp.ndarray):
+        return self.value_from_features(self.value_features(x))
+
+    def v_aux(self, x: jnp.ndarray):
+        return self.aux_from_features(self.aux_features(x))
+
+    def both(self, x: jnp.ndarray):
+        if self.shared_torso:
+            phi = self.value_features(x)
+            return self.value_from_features(phi), self.aux_from_features(phi)
+        else:
+            phi_c = self.value_features(x)
+            phi_a = self.aux_features(x)
+            return self.value_from_features(phi_c), self.aux_from_features(phi_a)
+
+    def act(self, x: jnp.ndarray, key: jax.random.PRNGKey):
+        policy = self.policy(x)
+        action = policy.sample(seed=key)
+        return action.squeeze()
+
+
 
 def make_warmup_linear_schedule(init_lr, end_lr, total_steps, warmup_ratio=0.1):
     """Linear warmup from 0.0 to init_lr over warmup_steps, followed by linear decay to end_lr."""
@@ -540,7 +692,7 @@ def initialize_network(rng, obs_shape, env, env_params, k, n_heads: int, layer_n
     print('number of features is ', model.final_hidden_dim)
     return model, params
 
-def initialize_dual_critic_network(rng, obs_shape, env, env_params, k, layer_norm: bool):
+def initialize_dual_critic_network(rng, obs_shape, env, env_params, k, layer_norm: bool, shared_torso: bool = True):
     try:
         action_dim = env.action_space(env_params).n
     except:
@@ -549,13 +701,37 @@ def initialize_dual_critic_network(rng, obs_shape, env, env_params, k, layer_nor
     norm_type = 'layer_norm' if layer_norm else 'None'
     use_mlp = len(obs_shape) < 3
     
-    print('- obs shape for dual critic initialization is ', obs_shape)
+    print(f'- obs shape for dual critic initialization is {obs_shape} (shared_torso={shared_torso})')
     if use_mlp:
-        model = MLP_DualCritic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
+        model = MLP_DualCritic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type, shared_torso=shared_torso)
     else:
-        model = PQN_DualCritic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type)
+        model = PQN_DualCritic(action_dim=action_dim, final_hidden_dim=k, norm_type=norm_type, shared_torso=shared_torso)
 
     rng, init_rng = jax.random.split(rng)
     params = model.init(init_rng, jnp.zeros(obs_shape))
     print('number of features is ', model.final_hidden_dim)
     return model, params
+
+def initialize_ac_dual_critic_network(rng, obs_shape, env, env_params, k, layer_norm: bool, shared_torso: bool = True):
+    try:
+        action_dim = env.action_space(env_params).n
+        is_continuous = False
+    except:
+        action_dim = env.action_space(env_params).shape[0]
+        is_continuous = True
+
+    norm_type = 'layer_norm' if layer_norm else 'None'
+    use_mlp = len(obs_shape) < 3
+
+    print(f'- obs shape for AC dual critic initialization is {obs_shape} (shared_torso={shared_torso})')
+    if use_mlp:
+        model = MLP_AC_DualCritic(action_dim=action_dim, is_continuous=is_continuous, final_hidden_dim=k, norm_type=norm_type, shared_torso=shared_torso)
+    else:
+        model = PQN_AC_DualCritic(action_dim=action_dim, is_continuous=is_continuous, final_hidden_dim=k, norm_type=norm_type, shared_torso=shared_torso)
+
+    rng, init_rng = jax.random.split(rng)
+    params = model.init(init_rng, jnp.zeros(obs_shape))
+    print('number of features is ', model.final_hidden_dim)
+    return model, params
+
+
