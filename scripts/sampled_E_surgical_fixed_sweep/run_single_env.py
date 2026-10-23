@@ -47,6 +47,7 @@ import core.helpers as helpers
 
 # Algorithms
 from fixed_policy.mc import make_train as make_mc_train
+from fixed_policy.td import make_train as make_td_train
 from fixed_policy.sampled_E import make_train as make_sampled_e_train
 from scripts.exact_fixed_policy_sweep.generate_fixed_policies import generate_policy_for_env, is_checkpoint_valid
 
@@ -71,23 +72,29 @@ ALGORITHMS = {
         "hparams": {"GAE_LAMBDA": 1.0, "VALUE_LAMBDA": 1.0},
         "color": "#1f77b4",  # Steel Blue
     },
-    "surgical_2heads": {
-        "display_name": "Surgical (2 Heads)",
-        "train_builder": make_sampled_e_train,
-        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": True, "RETURN_LAMBDA": 1.0, "AUX_VF_COEF": 1.0},
-        "color": "#2ca02c",  # Forest Green
-    },
-    "surgical_2nets": {
-        "display_name": "Surgical (2 Nets)",
-        "train_builder": make_sampled_e_train,
-        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": False, "RETURN_LAMBDA": 1.0, "AUX_VF_COEF": 1.0},
-        "color": "#9467bd",  # Purple
+    "td_lambda": {
+        "display_name": "TD(λ=0.9)",
+        "train_builder": make_td_train,
+        "hparams": {"GAE_LAMBDA": 0.9, "VALUE_LAMBDA": 0.9},
+        "color": "#ff7f0e",  # Safety Orange
     },
     "oct8_biased": {
         "display_name": "OG Oct 8 (Biased)",
         "train_builder": make_sampled_e_train,
         "hparams": {"LOSS_VARIANT": "oct8", "RETURN_LAMBDA": 1.0},
         "color": "#d62728",  # Crimson / Red
+    },
+    "forward_e": {
+        "display_name": "Forward-Only E",
+        "train_builder": make_sampled_e_train,
+        "hparams": {"LOSS_VARIANT": "forward_e", "RETURN_LAMBDA": 1.0},
+        "color": "#00bcd4",  # Cyan / Teal
+    },
+    "surgical_v_aux": {
+        "display_name": "Surgical V_aux",
+        "train_builder": make_sampled_e_train,
+        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": False, "RETURN_LAMBDA": 1.0, "AUX_LAMBDA": 0.9, "AUX_VF_COEF": 1.0},
+        "color": "#2ca02c",  # Forest Green
     },
 }
 
@@ -101,7 +108,7 @@ def parse_args():
     parser.add_argument("--num_updates", type=int, default=100, help="Number of rollout updates (default: 100)")
     parser.add_argument("--n_seeds", type=int, default=10, help="Number of random seeds (default: 10)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
-    parser.add_argument("--k_values", type=int, nargs="+", default=[8, 64], help="Feature dimensions to evaluate (default: 8 64)")
+    parser.add_argument("--k_values", type=int, nargs="+", default=[32], help="Feature dimensions to evaluate (default: 32)")
     parser.add_argument("--critic_lrs", type=float, nargs="+", default=[0.0005, 0.001, 0.003], help="Critic learning rates to sweep")
     parser.add_argument("--num_envs", type=int, default=16, help="Parallel environments (default: 16)")
     parser.add_argument("--num_steps", type=int, default=64, help="Steps per rollout (default: 64)")

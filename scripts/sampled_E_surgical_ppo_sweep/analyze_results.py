@@ -57,13 +57,14 @@ ENV_DISPLAY_NAMES = {
     "mountaincar-dense": "Mountain Car (Dense)",
 }
 
-ALGO_ORDER = ["mc", "oct8_biased", "surgical_2heads", "surgical_2nets"]
+ALGO_ORDER = ["mc", "td_lambda", "oct8_biased", "forward_e", "surgical_v_aux"]
 
 ALGO_DISPLAY_NAMES = {
     "mc": "MC (Sampled)",
+    "td_lambda": "TD(λ=0.9)",
     "oct8_biased": "OG Oct 8 (Biased)",
-    "surgical_2heads": "Surgical (2 Heads)",
-    "surgical_2nets": "Surgical (2 Nets)",
+    "forward_e": "Forward-Only E",
+    "surgical_v_aux": "Surgical V_aux",
 }
 
 

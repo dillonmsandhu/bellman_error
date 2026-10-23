@@ -114,6 +114,12 @@ def make_train(base_config):
             return_lambda = config.get("RETURN_LAMBDA", config.get("VALUE_LAMBDA", 1.0))
             _, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
 
+            if uses_aux:
+                aux_lambda = config.get("AUX_LAMBDA", 0.9)
+                _, aux_targets = helpers.calculate_gae(traj_batch, config["GAMMA"], aux_lambda)
+            else:
+                aux_targets = targets
+
             if "is_timeout" in traj_batch.info:
                 is_timeout = traj_batch.info["is_timeout"]
             else:
@@ -127,7 +133,7 @@ def make_train(base_config):
             next_targets = jnp.where(true_terminal, 0.0, next_targets)
 
             # 3. JOINT ACTOR-CRITIC LOSS (Matches ppo/ppo.py: single shared loss updating together)
-            def _loss_fn(params, traj_batch_mb, advantages_mb, targets_mb, next_targets_mb):
+            def _loss_fn(params, traj_batch_mb, advantages_mb, targets_mb, next_targets_mb, aux_targets_mb):
                 # Actor Loss (PPO clipped surrogate)
                 pi = network.apply(params, traj_batch_mb.obs, method=network.policy)
                 log_prob = pi.log_prob(traj_batch_mb.action)
@@ -157,7 +163,8 @@ def make_train(base_config):
                 value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
                     v_i, targets_mb, v_j, next_targets_mb, true_term_mb, config["GAMMA"],
                     variant=loss_variant, is_start=traj_batch_mb.is_start, is_timeout=is_timeout_mb,
-                    v_aux_i=v_aux_i, v_aux_j=v_aux_j, aux_coef=config.get("AUX_VF_COEF", 1.0)
+                    v_aux_i=v_aux_i, v_aux_j=v_aux_j, aux_coef=config.get("AUX_VF_COEF", 1.0),
+                    aux_targets_i=aux_targets_mb if uses_aux else None,
                 )
 
                 total_loss = (
@@ -170,25 +177,25 @@ def make_train(base_config):
             # 4. UPDATE EPOCHS & MINIBATCHES
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
-                    traj_batch_mb, advantages_mb, targets_mb, next_targets_mb = batch_info
+                    traj_batch_mb, advantages_mb, targets_mb, next_targets_mb, aux_targets_mb = batch_info
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
                     (total_loss, loss_tuple), grads = grad_fn(
-                        train_state.params, traj_batch_mb, advantages_mb, targets_mb, next_targets_mb
+                        train_state.params, traj_batch_mb, advantages_mb, targets_mb, next_targets_mb, aux_targets_mb
                     )
                     train_state = train_state.apply_gradients(grads=grads)
                     return train_state, loss_tuple
 
-                train_state, traj_batch, advantages, targets, next_targets, rng = update_state
+                train_state, traj_batch, advantages, targets, next_targets, aux_targets, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                batch = (traj_batch, advantages, targets, next_targets)
+                batch = (traj_batch, advantages, targets, next_targets, aux_targets)
                 minibatches = helpers.shuffle_and_batch(_rng, batch, config["NUM_MINIBATCHES"])
                 
                 train_state, loss_info = jax.lax.scan(_update_minbatch, train_state, minibatches)
-                return (train_state, traj_batch, advantages, targets, next_targets, rng), loss_info
+                return (train_state, traj_batch, advantages, targets, next_targets, aux_targets, rng), loss_info
 
-            initial_update_state = (train_state, traj_batch, advantages, targets, next_targets, rng)
+            initial_update_state = (train_state, traj_batch, advantages, targets, next_targets, aux_targets, rng)
             update_state, loss_info = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
-            train_state, _, _, _, _, rng = update_state
+            train_state, _, _, _, _, _, rng = update_state
 
             # 5. METRICS
             metric = {

@@ -47,16 +47,18 @@ ALL_ENVS = [
 
 ALGO_COLORS = {
     "mc": "#1f77b4",             # Steel Blue
-    "surgical_2heads": "#2ca02c", # Forest Green
-    "surgical_2nets": "#9467bd",  # Purple
+    "td_lambda": "#ff7f0e",      # Safety Orange
     "oct8_biased": "#d62728",     # Crimson / Red
+    "forward_e": "#00bcd4",      # Cyan / Teal
+    "surgical_v_aux": "#2ca02c",  # Forest Green
 }
 
 ALGO_LABELS = {
     "mc": "MC (Sampled)",
-    "surgical_2heads": "Surgical (2 Heads)",
-    "surgical_2nets": "Surgical (2 Nets)",
+    "td_lambda": "TD(λ=0.9)",
     "oct8_biased": "OG Oct 8 (Biased)",
+    "forward_e": "Forward-Only E",
+    "surgical_v_aux": "Surgical V_aux",
 }
 
 ENV_TITLES = {

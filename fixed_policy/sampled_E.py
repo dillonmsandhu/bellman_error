@@ -113,6 +113,12 @@ def make_train(base_config):
             return_lambda = config.get("RETURN_LAMBDA", config.get("VALUE_LAMBDA", 1.0))
             advantages, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
             
+            if uses_aux:
+                aux_lambda = config.get("AUX_LAMBDA", 0.9)
+                _, aux_targets = helpers.calculate_gae(traj_batch, config["GAMMA"], aux_lambda)
+            else:
+                aux_targets = targets
+
             if "is_timeout" in traj_batch.info:
                 is_timeout = traj_batch.info["is_timeout"]
             else:
@@ -127,7 +133,7 @@ def make_train(base_config):
             traj_batch = traj_batch._replace(next_target=next_targets)
 
             # LOSS FUNCTION
-            def E_loss_fn(params, traj_batch, targets):
+            def E_loss_fn(params, traj_batch, targets, aux_targets):
                 gamma = config["GAMMA"]
                 if "is_timeout" in traj_batch.info:
                     is_timeout_mb = traj_batch.info["is_timeout"]
@@ -146,7 +152,8 @@ def make_train(base_config):
                 value_loss, magnitude_loss, laplacian_loss = helpers.e_critic_loss(
                     v_i, targets, v_j, traj_batch.next_target, true_term, gamma,
                     variant=loss_variant, is_start=traj_batch.is_start, is_timeout=is_timeout_mb,
-                    v_aux_i=v_aux_i, v_aux_j=v_aux_j, aux_coef=config.get("AUX_VF_COEF", 1.0)
+                    v_aux_i=v_aux_i, v_aux_j=v_aux_j, aux_coef=config.get("AUX_VF_COEF", 1.0),
+                    aux_targets_i=aux_targets if uses_aux else None,
                 )
                 
                 total_loss = config.get("VF_COEF", 1.0) * value_loss
@@ -160,26 +167,26 @@ def make_train(base_config):
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):
                 def _update_minbatch(train_state, batch_info):
-                    traj_batch, advantages, targets = batch_info
+                    traj_batch, advantages, targets, aux_targets = batch_info
                     grad_fn = jax.value_and_grad(E_loss_fn, has_aux=True)
                     
                     (total_loss, losses), grads = grad_fn(
-                        train_state.params, traj_batch, targets
+                        train_state.params, traj_batch, targets, aux_targets
                     )
                     train_state = train_state.apply_gradients(grads=grads)
                     return train_state, losses
 
-                train_state, traj_batch, advantages, targets, rng = update_state
+                train_state, traj_batch, advantages, targets, aux_targets, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                batch = (traj_batch, advantages, targets)
+                batch = (traj_batch, advantages, targets, aux_targets)
                 minibatches = helpers.shuffle_and_batch(_rng, batch, config["NUM_MINIBATCHES"])
                 
                 train_state, losses = jax.lax.scan(_update_minbatch, train_state, minibatches)
-                return (train_state, traj_batch, advantages, targets, rng), losses
+                return (train_state, traj_batch, advantages, targets, aux_targets, rng), losses
 
-            initial_update_state = (train_state, traj_batch, advantages, targets, rng)
+            initial_update_state = (train_state, traj_batch, advantages, targets, aux_targets, rng)
             update_state, losses = jax.lax.scan(_update_epoch, initial_update_state, None, config["NUM_EPOCHS"])
-            train_state, _, _, _, rng = update_state
+            train_state, _, _, _, _, rng = update_state
 
             # --------- Metrics ---------
             metric = {

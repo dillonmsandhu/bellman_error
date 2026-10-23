@@ -49,16 +49,18 @@ ALL_ENVS = [
 
 ALGO_COLORS = {
     "mc": "#1f77b4",             # Steel Blue
-    "surgical_2heads": "#2ca02c", # Forest Green
-    "surgical_2nets": "#9467bd",  # Purple
+    "td_lambda": "#ff7f0e",      # Safety Orange
     "oct8_biased": "#d62728",     # Crimson / Red
+    "forward_e": "#00bcd4",      # Cyan / Teal
+    "surgical_v_aux": "#2ca02c",  # Forest Green
 }
 
 ALGO_LABELS = {
     "mc": "MC (Sampled)",
-    "surgical_2heads": "Surgical (2 Heads)",
-    "surgical_2nets": "Surgical (2 Nets)",
+    "td_lambda": "TD(λ=0.9)",
     "oct8_biased": "OG Oct 8 (Biased)",
+    "forward_e": "Forward-Only E",
+    "surgical_v_aux": "Surgical V_aux",
 }
 
 ENV_TITLES = {
@@ -234,7 +236,7 @@ def plot_clustered_bars(df: pd.DataFrame, k_val: int, metric_col: str, sem_col: 
     ax.set_xticks(indices)
     ax.set_xticklabels([ENV_TITLES.get(e, e) for e in present_envs], rotation=25, ha="right", fontsize=10)
     ax.set_ylabel(y_label, fontsize=11, fontweight="semibold")
-    ax.set_title(f"{title} (k={k_val})", fontsize=14, fontweight="bold", pad=12)
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
     ax.grid(True, linestyle="--", alpha=0.3, axis="y")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -261,24 +263,25 @@ def main():
         print("[Warning] No experimental results found to plot.")
         return
 
-    k_values = sorted(df["k"].unique()) if not df.empty else [8, 64]
+    k_values = sorted(df["k"].unique()) if not df.empty else [32]
 
     for k in k_values:
+        suffix = f"_k{k}" if len(k_values) > 1 else ""
         # 1. Learning Curves
         plot_metric_learning_curves(
             env_data, k, "v_pred_start", "$V_{\\mathrm{start}}$ Prediction",
-            f"$V_{{\\mathrm{{start}}}}$ Learning Curves (k={k})",
-            os.path.join(out_dir, f"vstart_curves_all_algos_k{k}"),
+            "$V_{\\mathrm{start}}$ Learning Curves",
+            os.path.join(out_dir, f"vstart_curves_all_algos{suffix}"),
         )
         plot_metric_learning_curves(
             env_data, k, "nn_weighted_VE", "Value Error (VE)",
-            f"Value Error Curves (k={k})",
-            os.path.join(out_dir, f"ve_curves_all_algos_k{k}"),
+            "Value Error Curves",
+            os.path.join(out_dir, f"ve_curves_all_algos{suffix}"),
         )
         plot_metric_learning_curves(
             env_data, k, "nn_advantage_cossim", "Advantage Cosine Similarity",
-            f"Advantage Cosine Similarity (k={k})",
-            os.path.join(out_dir, f"advantage_cossim_curves_all_algos_k{k}"),
+            "Advantage Cosine Similarity",
+            os.path.join(out_dir, f"advantage_cossim_curves_all_algos{suffix}"),
         )
 
         # 2. Clustered Bar Charts
@@ -286,17 +289,17 @@ def main():
             plot_clustered_bars(
                 df, k, "auc_vstart_mean", "auc_vstart_sem",
                 "AUC of $V_{\\mathrm{start}}$", "Start State Value Tracking AUC",
-                os.path.join(out_dir, f"auc_vstart_bars_all_algos_k{k}"),
+                os.path.join(out_dir, f"auc_vstart_bars_all_algos{suffix}"),
             )
             plot_clustered_bars(
                 df, k, "auc_weighted_ve_mean", "auc_weighted_ve_sem",
                 "AUC of Value Error", "Value Error AUC",
-                os.path.join(out_dir, f"auc_ve_bars_all_algos_k{k}"),
+                os.path.join(out_dir, f"auc_ve_bars_all_algos{suffix}"),
             )
             plot_clustered_bars(
                 df, k, "auc_cossim_mean", "auc_cossim_sem",
                 "Advantage Cosine Sim AUC", "Advantage Direction Alignment AUC",
-                os.path.join(out_dir, f"auc_cossim_bars_all_algos_k{k}"),
+                os.path.join(out_dir, f"auc_cossim_bars_all_algos{suffix}"),
             )
 
     print(f"\nAll publication figures saved in: {out_dir}")

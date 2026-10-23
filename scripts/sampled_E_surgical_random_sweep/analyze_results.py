@@ -57,13 +57,14 @@ ENV_DISPLAY_NAMES = {
     "mountaincar-dense": "Mountain Car (Dense)",
 }
 
-ALGO_ORDER = ["mc", "oct8_biased", "surgical_2heads", "surgical_2nets"]
+ALGO_ORDER = ["mc", "td_lambda", "oct8_biased", "forward_e", "surgical_v_aux"]
 
 ALGO_DISPLAY_NAMES = {
     "mc": "MC (Sampled)",
+    "td_lambda": "TD(λ=0.9)",
     "oct8_biased": "OG Oct 8 (Biased)",
-    "surgical_2heads": "Surgical (2 Heads)",
-    "surgical_2nets": "Surgical (2 Nets)",
+    "forward_e": "Forward-Only E",
+    "surgical_v_aux": "Surgical V_aux",
 }
 
 
@@ -362,6 +363,9 @@ def main():
     k_values = sorted(df["k"].unique())
 
     for k in k_values:
+        suffix = f"_k{k}" if len(k_values) > 1 else ""
+        k_str = f" (k={k})" if len(k_values) > 1 else ""
+
         # 1. Start-State Value Benchmark Table (V_start AUC, higher is better)
         t_vstart = build_benchmark_table(
             df, k_val=k, mean_col="auc_vstart_mean", sem_col="auc_vstart_sem", higher_is_better=True
@@ -369,9 +373,9 @@ def main():
         if not t_vstart.empty:
             export_multi_format(
                 t_vstart,
-                os.path.join(out_dir, f"table_vstart_benchmark_k{k}"),
-                f"Sampled E-Surgical Random Policy Start-State Value Benchmark (k={k})",
-                f"tab:vstart_benchmark_k{k}",
+                os.path.join(out_dir, f"table_vstart_benchmark{suffix}"),
+                f"Sampled E-Surgical Random Policy Start-State Value Benchmark{k_str}",
+                f"tab:vstart_benchmark{suffix}",
             )
 
         # 2. Value Error Benchmark Table (lower is better)
@@ -381,9 +385,9 @@ def main():
         if not t_ve.empty:
             export_multi_format(
                 t_ve,
-                os.path.join(out_dir, f"table_ve_benchmark_k{k}"),
-                f"Sampled E-Surgical Random Policy Value Error Benchmark (k={k})",
-                f"tab:ve_benchmark_k{k}",
+                os.path.join(out_dir, f"table_ve_benchmark{suffix}"),
+                f"Sampled E-Surgical Random Policy Value Error Benchmark{k_str}",
+                f"tab:ve_benchmark{suffix}",
             )
 
         # 3. Advantage Cosine Similarity Benchmark Table (higher is better)
@@ -393,9 +397,9 @@ def main():
         if not t_cossim.empty:
             export_multi_format(
                 t_cossim,
-                os.path.join(out_dir, f"table_cossim_benchmark_k{k}"),
-                f"Sampled E-Surgical Random Policy Advantage Cosine Similarity Benchmark (k={k})",
-                f"tab:cossim_benchmark_k{k}",
+                os.path.join(out_dir, f"table_cossim_benchmark{suffix}"),
+                f"Sampled E-Surgical Random Policy Advantage Cosine Similarity Benchmark{k_str}",
+                f"tab:cossim_benchmark{suffix}",
             )
 
         # 4. Pairwise Win-Loss-Tie Matrices on V_start
@@ -405,9 +409,9 @@ def main():
         if not wlt_vstart.empty:
             export_multi_format(
                 wlt_vstart,
-                os.path.join(out_dir, f"table_pairwise_wlt_vstart_k{k}"),
-                f"Pairwise Head-to-Head Win-Loss-Tie Matrix on V_start (k={k})",
-                f"tab:pairwise_wlt_vstart_k{k}",
+                os.path.join(out_dir, f"table_pairwise_wlt_vstart{suffix}"),
+                f"Pairwise Head-to-Head Win-Loss-Tie Matrix on V_start{k_str}",
+                f"tab:pairwise_wlt_vstart{suffix}",
             )
 
     print(f"\nAll publication tables generated in: {out_dir}")

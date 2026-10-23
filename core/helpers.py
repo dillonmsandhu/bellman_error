@@ -1041,12 +1041,14 @@ def e_critic_loss(
     v_aux_j=None,
     rewards=None,
     aux_coef=1.0,
+    aux_targets_i=None,
 ):
     """
     Computes sampled E-loss across original and debiased v_aux formulations:
     - 'sep14' / 'uncorrected': pure positive semi-definite (magnitude + Dirichlet smoothness)
     - 'corrected' / 'oct5': adds difference of second moments 0.5 * gamma * (mean(e_i^2) - mean(e_j^2))
     - 'oct8' / 'start_anchored': adds positive start-state anchor 0.5 * gamma * E_{s0}[e(s0)^2]
+    - 'forward_e' / 'forward_only': semi-gradient form dropping grad v_j branch to eliminate double-sampling without aux net
     - 'bilinear_v_aux': direct unbiased bilinear form <e, delta>_D using v_aux for the adjoint error
     - 'surgical_v_aux': Split-branch Dirichlet form: real returns on v_i branch (1-step TD reward, zero return noise), v_aux on v_j branch (smooth Dirichlet Laplacian, zero return noise & zero double-sampling bias)
     - 'dirichlet_v_aux': Oct 8 Dirichlet form using v_aux in the entire Laplacian term and G_t in anchors
@@ -1057,9 +1059,10 @@ def e_critic_loss(
     e_i = targets_i - v_i
     e_j = jnp.where(true_terminal, 0.0, targets_j - v_j)
 
-    # Auxiliary MC head loss (trains v_aux_i to predict targets_i = G_t)
+    # Auxiliary head loss (trains v_aux_i to predict aux_targets_i, e.g. TD(lambda=0.9), or targets_i = G_t)
     if v_aux_i is not None:
-        aux_mc_loss = aux_coef * jnp.mean((sg(targets_i) - v_aux_i) ** 2)
+        targets_aux = aux_targets_i if aux_targets_i is not None else targets_i
+        aux_mc_loss = aux_coef * jnp.mean((sg(targets_aux) - v_aux_i) ** 2)
         e_tilde_i = sg(v_aux_i) - v_i
         e_tilde_j = jnp.where(true_terminal, 0.0, sg(v_aux_j) - v_j)
     else:
@@ -1093,6 +1096,10 @@ def e_critic_loss(
         # Terms 3 & 4 (-e_tilde_j grad v_j + e_tilde_i grad v_j): v_aux predictions eliminate all post-(t+1) return noise & double-sampling bias
         branch_v_j = jnp.where(true_terminal, 0.0, (sg(e_tilde_i) - e_tilde_j) ** 2)
         laplacian_loss = 0.5 * gamma * jnp.mean(branch_v_i + branch_v_j)
+    elif variant in ["forward_e", "forward_only", "semi_gradient_e"]:
+        # Terms 1 & 2 only (-e_i grad v_i + e_j grad v_i): drops grad v_j branch to eliminate double-sampling without auxiliary net
+        branch_v_i = (e_i - sg(e_j)) ** 2
+        laplacian_loss = 0.5 * gamma * jnp.mean(branch_v_i)
     elif variant in ["dirichlet_v_aux", "dirichlet"]:
         if v_aux_i is None:
             raise ValueError("variant='dirichlet_v_aux' requires v_aux_i and v_aux_j.")
@@ -1105,7 +1112,7 @@ def e_critic_loss(
     elif variant in ["corrected", "corr", "oct5"]:
         corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
         value_loss = magnitude_loss + laplacian_loss + corr_loss
-    elif variant in ["oct8", "start_anchored", "surgical_v_aux", "dirichlet_v_aux"]:
+    elif variant in ["oct8", "start_anchored", "surgical_v_aux", "dirichlet_v_aux", "forward_e", "forward_only", "semi_gradient_e"]:
         if is_start is None:
             raise ValueError(
                 f"e_critic_loss with variant='{variant}' requires boolean mask 'is_start' "

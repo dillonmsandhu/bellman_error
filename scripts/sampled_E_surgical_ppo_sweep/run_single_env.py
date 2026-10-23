@@ -42,6 +42,7 @@ import core.helpers as helpers
 
 # Algorithms
 from ppo.sampled_mc import make_train as make_mc_train
+from ppo.sampled_td_lambda import make_train as make_td_train
 from ppo.sampled_E import make_train as make_sampled_e_train
 
 trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
@@ -65,23 +66,29 @@ ALGORITHMS = {
         "hparams": {"VALUE_LAMBDA": 1.0},
         "color": "#1f77b4",  # Steel Blue
     },
-    "surgical_2heads": {
-        "display_name": "Surgical (2 Heads)",
-        "train_builder": make_sampled_e_train,
-        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": True, "RETURN_LAMBDA": 1.0, "AUX_VF_COEF": 1.0},
-        "color": "#2ca02c",  # Forest Green
-    },
-    "surgical_2nets": {
-        "display_name": "Surgical (2 Nets)",
-        "train_builder": make_sampled_e_train,
-        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": False, "RETURN_LAMBDA": 1.0, "AUX_VF_COEF": 1.0},
-        "color": "#9467bd",  # Purple
+    "td_lambda": {
+        "display_name": "TD(λ=0.9)",
+        "train_builder": make_td_train,
+        "hparams": {"VALUE_LAMBDA": 0.9},
+        "color": "#ff7f0e",  # Safety Orange
     },
     "oct8_biased": {
         "display_name": "OG Oct 8 (Biased)",
         "train_builder": make_sampled_e_train,
         "hparams": {"LOSS_VARIANT": "oct8", "RETURN_LAMBDA": 1.0},
         "color": "#d62728",  # Crimson / Red
+    },
+    "forward_e": {
+        "display_name": "Forward-Only E",
+        "train_builder": make_sampled_e_train,
+        "hparams": {"LOSS_VARIANT": "forward_e", "RETURN_LAMBDA": 1.0},
+        "color": "#00bcd4",  # Cyan / Teal
+    },
+    "surgical_v_aux": {
+        "display_name": "Surgical V_aux",
+        "train_builder": make_sampled_e_train,
+        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": False, "RETURN_LAMBDA": 1.0, "AUX_LAMBDA": 0.9, "AUX_VF_COEF": 1.0},
+        "color": "#2ca02c",  # Forest Green
     },
 }
 
