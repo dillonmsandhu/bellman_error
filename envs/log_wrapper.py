@@ -92,6 +92,7 @@ class LogWrapper(GymnaxWrapper):
         info["returned_episode_returns"] = state.returned_episode_returns
         info["returned_episode_lengths"] = state.returned_episode_lengths
         info["returned_discounted_episode_returns"] = state.returned_discounted_episode_returns
+        info["returned_episode_discounted_returns"] = state.returned_discounted_episode_returns
         info["returned_episode"] = done
         
         return obs, state, reward, done, info

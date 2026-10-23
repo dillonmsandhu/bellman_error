@@ -118,9 +118,35 @@ def load_all_env_data(results_dir: str):
     return env_data, master_df
 
 
-def plot_learning_curves(env_data, metric_name: str, y_label: str, out_path_base: str):
+def plot_learning_curves(
+    env_data,
+    metric_name: str,
+    y_label: str,
+    out_path_base: str,
+    add_baselines: bool = False,
+    y_limits: tuple[float, float] | None = None,
+    plot_title: str | None = None,
+):
     present_envs = [e for e in ALL_ENVS if e in env_data]
     if not present_envs:
+        return
+
+    # Check if ANY run has this exact metric
+    has_any_data = False
+    for env_name in present_envs:
+        runs = env_data[env_name]
+        for algo_key in ALGO_COLORS:
+            if algo_key in runs:
+                k_key = list(runs[algo_key].keys())[0]
+                run = runs[algo_key][k_key]
+                if metric_name in run.get("metrics", {}):
+                    has_any_data = True
+                    break
+        if has_any_data:
+            break
+
+    if not has_any_data:
+        print(f"[Skip] Metric '{metric_name}' not found in any runs. Skipping {out_path_base}")
         return
 
     n_rows, n_cols = 3, 3
@@ -145,7 +171,10 @@ def plot_learning_curves(env_data, metric_name: str, y_label: str, out_path_base
                 continue
             k_key = list(runs[algo_key].keys())[0]
             run = runs[algo_key][k_key]
+            
+            # Strict lookup: NO fallbacks
             stacked = run["metrics"].get(metric_name)
+
             if stacked is None:
                 continue
 
@@ -156,6 +185,13 @@ def plot_learning_curves(env_data, metric_name: str, y_label: str, out_path_base
             label = ALGO_LABELS.get(algo_key, algo_key)
             ax.plot(steps, mean_curve, color=color, label=label, linewidth=1.8)
             ax.fill_between(steps, mean_curve - sem_curve, mean_curve + sem_curve, color=color, alpha=0.15)
+
+        if add_baselines:
+            ax.axhline(1.0, color="#2ca02c", linestyle=":", linewidth=1.2, alpha=0.8, label="Optimal (1.0)")
+            ax.axhline(0.0, color="#7f7f7f", linestyle="--", linewidth=1.2, alpha=0.8, label="Random (0.0)")
+
+        if y_limits is not None:
+            ax.set_ylim(y_limits)
 
         if idx % n_cols == 0:
             ax.set_ylabel(y_label, fontsize=10, fontweight="semibold")
@@ -174,7 +210,10 @@ def plot_learning_curves(env_data, metric_name: str, y_label: str, out_path_base
             fontsize=12,
         )
 
-    plt.tight_layout(rect=[0, 0.02, 1, 0.95])
+    if plot_title:
+        fig.suptitle(plot_title, fontsize=15, fontweight="bold", y=0.995)
+
+    plt.tight_layout(rect=[0, 0.02, 1, 0.95 if plot_title else 0.97])
     os.makedirs(os.path.dirname(out_path_base), exist_ok=True)
     fig.savefig(f"{out_path_base}.pdf", bbox_inches="tight")
     fig.savefig(f"{out_path_base}.png", bbox_inches="tight", dpi=300)
@@ -183,7 +222,7 @@ def plot_learning_curves(env_data, metric_name: str, y_label: str, out_path_base
 
 
 def plot_clustered_bars(df: pd.DataFrame, metric_col: str, sem_col: str, y_label: str, title: str, out_path_base: str):
-    if df.empty:
+    if df.empty or metric_col not in df.columns:
         return
 
     present_envs = [e for e in ALL_ENVS if e in df["env_name"].unique()]
@@ -205,7 +244,7 @@ def plot_clustered_bars(df: pd.DataFrame, metric_col: str, sem_col: str, y_label
         algo_sems = []
         for env_name in present_envs:
             row = df[(df["env_name"] == env_name) & (df["algo"] == algo)]
-            if not row.empty:
+            if not row.empty and not np.isnan(row[metric_col].values[0]):
                 algo_data.append(row[metric_col].values[0])
                 algo_sems.append(row[sem_col].values[0] if sem_col in row and not np.isnan(row[sem_col].values[0]) else 0.0)
             else:
@@ -256,37 +295,80 @@ def main():
         print("[Warning] No experimental results found to plot.")
         return
 
-    # 1. Learning Curves
+    # 1. True Start-State Policy Performance (Standardized Return (V^pi(s_0) - V_rand)/(V* - V_rand))
     plot_learning_curves(
-        env_data, "std_perf", "Standardized Return (0=Random, 1=Optimal)",
-        os.path.join(out_dir, "std_perf_curves_all_algos"),
-    )
-    plot_learning_curves(
-        env_data, "mean_rew", "Mean Step Reward",
-        os.path.join(out_dir, "reward_curves_all_algos"),
-    )
-    plot_learning_curves(
-        env_data, "v_pred_start", "$V_{\\mathrm{start}}$ Prediction",
-        os.path.join(out_dir, "vstart_curves_all_algos"),
+        env_data=env_data,
+        metric_name="standardized_v_start",
+        y_label="Standardized Policy Return $(V^\\pi - V_{\\mathrm{rand}})/(V^* - V_{\\mathrm{rand}})$",
+        out_path_base=os.path.join(out_dir, "std_perf_curves_all_algos"),
+        add_baselines=True,
+        y_limits=(-0.1, 1.15),
+        plot_title="True Policy Performance: Standardized Start Value $V^\\pi(s_0)$",
     )
 
-    # 2. Clustered Bar Charts
+    # 1b. True Start-State Value (Raw analytical V^pi(s_0))
+    plot_learning_curves(
+        env_data=env_data,
+        metric_name="V_start",
+        y_label="True Start Value $V^\\pi(s_0)$",
+        out_path_base=os.path.join(out_dir, "v_start_curves_all_algos"),
+        add_baselines=False,
+        y_limits=None,
+        plot_title="Analytical True Start-State Value $V^\\pi(s_0)$ Across Updates",
+    )
+
+    # 2. Empirical Discounted Return (Empirical G_0 = sum gamma^t r_t from rollouts)
+    plot_learning_curves(
+        env_data=env_data,
+        metric_name="returned_episode_discounted_returns",
+        y_label="Empirical Discounted Return $G_0$",
+        out_path_base=os.path.join(out_dir, "returned_episode_discounted_returns_curves_all_algos"),
+        add_baselines=False,
+        y_limits=None,
+        plot_title="Empirical Discounted Return ($G_0 = \\sum_{t=0}^T \\gamma^t r_t$) Across Updates",
+    )
+
+    # 3. Critic Predicted Start-State Value (\hat{V}(s_0))
+    plot_learning_curves(
+        env_data=env_data,
+        metric_name="v_pred_start",
+        y_label="Critic $\\hat{V}(s_0)$ Prediction",
+        out_path_base=os.path.join(out_dir, "vpred_start_curves_all_algos"),
+        add_baselines=False,
+        y_limits=None,
+        plot_title="Critic Predicted Start-State Value $\\hat{V}(s_0)$",
+    )
+
+    # 4. Clustered Bar Charts
     if not df.empty:
-        plot_clustered_bars(
-            df, "std_perf_auc_mean", "std_perf_auc_sem",
-            "AUC of Standardized Return", "Standardized Return AUC (0=Random, 1=Optimal)",
-            os.path.join(out_dir, "auc_std_perf_bars_all_algos"),
-        )
-        plot_clustered_bars(
-            df, "std_perf_final_mean", "std_perf_final_sem",
-            "Final Standardized Return", "Final Standardized Return (0=Random, 1=Optimal)",
-            os.path.join(out_dir, "final_std_perf_bars_all_algos"),
-        )
-        if "vstart_auc_mean" in df.columns:
+        if "std_perf_auc_mean" in df.columns:
             plot_clustered_bars(
-                df, "vstart_auc_mean", "vstart_auc_sem",
-                "AUC of $V_{\\mathrm{start}}$", "$V_{\\mathrm{start}}$ Prediction AUC",
-                os.path.join(out_dir, "auc_vstart_bars_all_algos"),
+                df, "std_perf_auc_mean", "std_perf_auc_sem",
+                "AUC of Standardized Return", "True Performance AUC: Standardized Return $(V^\\pi - V_{\\mathrm{rand}})/(V^* - V_{\\mathrm{rand}})$",
+                os.path.join(out_dir, "auc_std_perf_bars_all_algos"),
+            )
+            plot_clustered_bars(
+                df, "std_perf_final_mean", "std_perf_final_sem",
+                "Final Standardized Return", "Final True Performance: Standardized Return $(V^\\pi - V_{\\mathrm{rand}})/(V^* - V_{\\mathrm{rand}})$",
+                os.path.join(out_dir, "final_std_perf_bars_all_algos"),
+            )
+        if "true_vstart_auc_mean" in df.columns:
+            plot_clustered_bars(
+                df, "true_vstart_auc_mean", "true_vstart_auc_sem",
+                "AUC of True $V^\\pi(s_0)$", "Analytical True Start Value $V^\\pi(s_0)$ AUC",
+                os.path.join(out_dir, "auc_true_vstart_bars_all_algos"),
+            )
+        if "disc_return_auc_mean" in df.columns:
+            plot_clustered_bars(
+                df, "disc_return_auc_mean", "disc_return_auc_sem",
+                "AUC of Empirical Return $G_0$", "Empirical Discounted Return $G_0$ AUC",
+                os.path.join(out_dir, "auc_disc_return_bars_all_algos"),
+            )
+        if "vpred_start_auc_mean" in df.columns:
+            plot_clustered_bars(
+                df, "vpred_start_auc_mean", "vpred_start_auc_sem",
+                "AUC of Critic $\\hat{V}(s_0)$", "Critic $\\hat{V}(s_0)$ Prediction AUC",
+                os.path.join(out_dir, "auc_vpred_start_bars_all_algos"),
             )
 
     print(f"\nAll publication figures saved in: {out_dir}")

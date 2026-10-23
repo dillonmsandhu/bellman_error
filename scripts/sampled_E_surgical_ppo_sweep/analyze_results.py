@@ -371,17 +371,30 @@ def main():
             "tab:std_perf_final_benchmark",
         )
 
-    # 3. Start-State Value Benchmark Table (V_start AUC, if present)
-    if "vstart_auc_mean" in df.columns:
+    # 3. Analytical True Start-State Value Benchmark Table (V_start AUC, if present)
+    if "true_vstart_auc_mean" in df.columns:
         t_vstart = build_benchmark_table(
-            df, mean_col="vstart_auc_mean", sem_col="vstart_auc_sem", higher_is_better=True
+            df, mean_col="true_vstart_auc_mean", sem_col="true_vstart_auc_sem", higher_is_better=True
         )
         if not t_vstart.empty:
             export_multi_format(
                 t_vstart,
-                os.path.join(out_dir, "table_vstart_auc_benchmark"),
-                "Sampled E-Surgical PPO Start-State Value Benchmark (AUC)",
-                "tab:vstart_auc_benchmark",
+                os.path.join(out_dir, "table_true_vstart_auc_benchmark"),
+                "Sampled E-Surgical PPO True Start-State Value Benchmark (AUC)",
+                "tab:true_vstart_auc_benchmark",
+            )
+
+    # 4. Empirical Discounted Return Benchmark Table (G_0 AUC, if present)
+    if "disc_return_auc_mean" in df.columns:
+        t_disc = build_benchmark_table(
+            df, mean_col="disc_return_auc_mean", sem_col="disc_return_auc_sem", higher_is_better=True
+        )
+        if not t_disc.empty:
+            export_multi_format(
+                t_disc,
+                os.path.join(out_dir, "table_disc_return_auc_benchmark"),
+                "Sampled E-Surgical PPO Empirical Discounted Return Benchmark (AUC)",
+                "tab:disc_return_auc_benchmark",
             )
 
     # 4. Pairwise Win-Loss-Tie Matrices on Performance AUC

@@ -221,18 +221,19 @@ def build_env_config(env_name: str, args, critic_lr: float, k: int) -> Dict[str,
 
 def load_env_baseline(env_name: str) -> tuple[float, float, float]:
     """Loads ground truth optimal value, random policy value, and delta."""
-    baseline_path = os.path.join(REPO_ROOT, "ground_truth", "optimal_values", f"{env_name}.json")
-    v_star, v_rand = 1.0, 0.0
-    if os.path.exists(baseline_path):
+    json_path = os.path.join(REPO_ROOT, "reference", "env_performance_baselines.json")
+    if os.path.exists(json_path):
         try:
-            with open(baseline_path, "r") as f:
+            with open(json_path, "r") as f:
                 data = json.load(f)
-                v_star = data.get("v_star", 1.0)
-                v_rand = data.get("v_rand", 0.0)
+            if env_name in data:
+                v_star = float(data[env_name]["v_star"])
+                v_rand = float(data[env_name]["v_rand"])
+                delta = float(data[env_name]["delta"])
+                return v_star, v_rand, delta
         except Exception:
             pass
-    delta = max(v_star - v_rand, 1e-6)
-    return v_star, v_rand, delta
+    return 1.0, 0.0, 1.0
 
 
 def run_experiment_for_lr(

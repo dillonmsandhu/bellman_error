@@ -138,18 +138,19 @@ def is_statistically_tied(mean_a: float, sem_a: float, mean_b: float, sem_b: flo
 
 
 def load_env_baseline(env_name: str) -> tuple[float, float, float]:
-    baseline_path = os.path.join(REPO_ROOT, "ground_truth", "optimal_values", f"{env_name}.json")
-    v_star, v_rand = 1.0, 0.0
-    if os.path.exists(baseline_path):
+    json_path = os.path.join(REPO_ROOT, "reference", "env_performance_baselines.json")
+    if os.path.exists(json_path):
         try:
-            with open(baseline_path, "r") as f:
+            with open(json_path, "r") as f:
                 data = json.load(f)
-                v_star = data.get("v_star", 1.0)
-                v_rand = data.get("v_rand", 0.0)
+            if env_name in data:
+                v_star = float(data[env_name]["v_star"])
+                v_rand = float(data[env_name]["v_rand"])
+                delta = float(data[env_name]["delta"])
+                return v_star, v_rand, delta
         except Exception:
             pass
-    delta = max(v_star - v_rand, 1e-6)
-    return v_star, v_rand, delta
+    return 1.0, 0.0, 1.0
 
 
 def build_env_config(env_name: str, args, critic_lr: float) -> Dict[str, Any]:
@@ -169,6 +170,7 @@ def build_env_config(env_name: str, args, critic_lr: float) -> Dict[str, Any]:
     cfg["GAE_LAMBDA"] = args.gae_lambda
     cfg["CLIP_EPS"] = args.clip_eps
     cfg["GAMMA"] = args.gamma
+    cfg["CALC_TRUE_VALUES"] = True
     cfg["LIGHT_METRICS"] = True
     cfg["LOG_FEATURE_METRICS"] = False
     return cfg
@@ -203,10 +205,18 @@ def run_experiment_for_lr(
                 arr = arr.squeeze()
             np_metrics[m_name] = arr.astype(np.float32)
 
-        # Standardized performance metric: (return - v_rand) / delta
-        # If eval_return or mean_rew exists
-        perf_raw = np_metrics.get("eval_return", np_metrics.get("mean_rew", np.zeros(args.num_updates)))
-        np_metrics["std_perf"] = (perf_raw - v_rand) / delta
+        # Empirical discounted returns: G_0 = sum gamma^t r_t from rollouts
+        disc_ret = np_metrics.get("returned_episode_discounted_returns", np_metrics.get("returned_discounted_episode_returns"))
+        if disc_ret is not None:
+            np_metrics["returned_episode_discounted_returns"] = disc_ret
+            np_metrics["returned_discounted_episode_returns"] = disc_ret
+            np_metrics["std_discounted_return"] = (disc_ret - v_rand) / (delta + 1e-12)
+
+        # Standardized policy performance: ONLY computed from true analytical V_start if present
+        if "V_start" in np_metrics:
+            np_metrics["std_perf"] = (np_metrics["V_start"] - v_rand) / (delta + 1e-12)
+            np_metrics["standardized_v_start"] = np_metrics["std_perf"]
+
         seed_metrics.append(np_metrics)
 
     elapsed = time.time() - t0
@@ -247,25 +257,25 @@ def run_experiment_for_lr(
 
 
 def select_best_ppo_run(lr_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Selects best condition by std_perf AUC, breaking ties with final performance."""
+    """Selects best condition by std_perf AUC (if true V_start present) or returned_episode_discounted_returns AUC."""
     if len(lr_results) == 1:
         return lr_results[0]
 
-    # Primary: std_perf AUC descending
-    sorted_by_auc = sorted(lr_results, key=lambda r: r["auc_scores"]["std_perf"]["mean"], reverse=True)
-    top_auc = sorted_by_auc[0]["auc_scores"]["std_perf"]["mean"]
-    top_sem = sorted_by_auc[0]["auc_scores"]["std_perf"]["sem"]
+    criterion = "std_perf" if "std_perf" in lr_results[0]["auc_scores"] else "returned_episode_discounted_returns"
+    sorted_by_auc = sorted(lr_results, key=lambda r: r["auc_scores"].get(criterion, {}).get("mean", 0.0), reverse=True)
+    top_auc = sorted_by_auc[0]["auc_scores"].get(criterion, {}).get("mean", 0.0)
+    top_sem = sorted_by_auc[0]["auc_scores"].get(criterion, {}).get("sem", 0.0)
 
     tied = [
         r for r in sorted_by_auc
-        if is_statistically_tied(top_auc, top_sem, r["auc_scores"]["std_perf"]["mean"], r["auc_scores"]["std_perf"]["sem"])
+        if is_statistically_tied(top_auc, top_sem, r["auc_scores"].get(criterion, {}).get("mean", 0.0), r["auc_scores"].get(criterion, {}).get("sem", 0.0))
     ]
 
     if len(tied) == 1:
         return tied[0]
 
-    # Tie breaker: final performance
-    return max(tied, key=lambda r: r["final_scores"]["std_perf"]["mean"])
+    # Tie breaker: final score on same criterion
+    return max(tied, key=lambda r: r["final_scores"].get(criterion, {}).get("mean", 0.0))
 
 
 def main():
@@ -358,10 +368,12 @@ def main():
 
         perf_auc = best_run["auc_scores"].get("std_perf", {})
         perf_final = best_run["final_scores"].get("std_perf", {})
-        vstart_auc = best_run["auc_scores"].get("v_pred_start", {})
-        vstart_final = best_run["final_scores"].get("v_pred_start", {})
-        rew_auc = best_run["auc_scores"].get("mean_rew", {})
-        rew_final = best_run["final_scores"].get("mean_rew", {})
+        true_vstart_auc = best_run["auc_scores"].get("V_start", {})
+        true_vstart_final = best_run["final_scores"].get("V_start", {})
+        vpred_auc = best_run["auc_scores"].get("v_pred_start", {})
+        vpred_final = best_run["final_scores"].get("v_pred_start", {})
+        disc_ret_auc = best_run["auc_scores"].get("returned_episode_discounted_returns", {})
+        disc_ret_final = best_run["final_scores"].get("returned_episode_discounted_returns", {})
 
         summary_rows.append({
             "env_name": env_name,
@@ -373,12 +385,18 @@ def main():
             "std_perf_auc_sem": perf_auc.get("sem", np.nan),
             "std_perf_final_mean": perf_final.get("mean", np.nan),
             "std_perf_final_sem": perf_final.get("sem", np.nan),
-            "raw_reward_auc_mean": rew_auc.get("mean", np.nan),
-            "raw_reward_final_mean": rew_final.get("mean", np.nan),
-            "vstart_auc_mean": vstart_auc.get("mean", np.nan),
-            "vstart_auc_sem": vstart_auc.get("sem", np.nan),
-            "vstart_final_mean": vstart_final.get("mean", np.nan),
-            "vstart_final_sem": vstart_final.get("sem", np.nan),
+            "true_vstart_auc_mean": true_vstart_auc.get("mean", np.nan),
+            "true_vstart_auc_sem": true_vstart_auc.get("sem", np.nan),
+            "true_vstart_final_mean": true_vstart_final.get("mean", np.nan),
+            "true_vstart_final_sem": true_vstart_final.get("sem", np.nan),
+            "disc_return_auc_mean": disc_ret_auc.get("mean", np.nan),
+            "disc_return_auc_sem": disc_ret_auc.get("sem", np.nan),
+            "disc_return_final_mean": disc_ret_final.get("mean", np.nan),
+            "disc_return_final_sem": disc_ret_final.get("sem", np.nan),
+            "vpred_start_auc_mean": vpred_auc.get("mean", np.nan),
+            "vpred_start_auc_sem": vpred_auc.get("sem", np.nan),
+            "vpred_start_final_mean": vpred_final.get("mean", np.nan),
+            "vpred_start_final_sem": vpred_final.get("sem", np.nan),
         })
 
     total_time = time.time() - total_start_time
