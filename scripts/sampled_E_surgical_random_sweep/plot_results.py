@@ -49,7 +49,7 @@ ALL_ENVS = [
 
 ALGO_COLORS = {
     "mc": "#1f77b4",             # Steel Blue
-    "td_lambda": "#ff7f0e",      # Safety Orange
+    "td0": "#ff7f0e",            # Safety Orange
     "oct8_biased": "#d62728",     # Crimson / Red
     "forward_e": "#00bcd4",      # Cyan / Teal
     "surgical_v_aux": "#2ca02c",  # Forest Green
@@ -57,7 +57,7 @@ ALGO_COLORS = {
 
 ALGO_LABELS = {
     "mc": "MC (Sampled)",
-    "td_lambda": "TD(λ=0.9)",
+    "td0": "TD(0) [Sampled]",
     "oct8_biased": "OG Oct 8 (Biased)",
     "forward_e": "Forward-Only E",
     "surgical_v_aux": "Surgical V_aux",

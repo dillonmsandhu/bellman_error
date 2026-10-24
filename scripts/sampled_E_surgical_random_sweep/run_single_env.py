@@ -68,10 +68,10 @@ ALGORITHMS = {
         "hparams": {"GAE_LAMBDA": 1.0, "VALUE_LAMBDA": 1.0},
         "color": "#1f77b4",  # Steel Blue
     },
-    "td_lambda": {
-        "display_name": "TD(λ=0.9)",
+    "td0": {
+        "display_name": "TD(0) [Sampled]",
         "train_builder": make_td_train,
-        "hparams": {"GAE_LAMBDA": 0.9, "VALUE_LAMBDA": 0.9},
+        "hparams": {"GAE_LAMBDA": 0.0, "VALUE_LAMBDA": 0.0},
         "color": "#ff7f0e",  # Safety Orange
     },
     "oct8_biased": {
@@ -89,7 +89,7 @@ ALGORITHMS = {
     "surgical_v_aux": {
         "display_name": "Surgical V_aux",
         "train_builder": make_sampled_e_train,
-        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": False, "RETURN_LAMBDA": 1.0, "AUX_LAMBDA": 0.9, "AUX_VF_COEF": 1.0},
+        "hparams": {"LOSS_VARIANT": "surgical_v_aux", "SHARED_TORSO": False, "RETURN_LAMBDA": 1.0, "AUX_LAMBDA": 1.0, "AUX_VF_COEF": 1.0},
         "color": "#2ca02c",  # Forest Green
     },
 }
@@ -104,8 +104,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
     parser.add_argument("--k_values", type=int, nargs="+", default=[32], help="Feature dimensions to evaluate (default: 32)")
     parser.add_argument("--critic_lrs", type=float, nargs="+", default=[0.0005, 0.001, 0.003], help="Critic learning rates to sweep")
-    parser.add_argument("--num_envs", type=int, default=16, help="Parallel environments (default: 16)")
-    parser.add_argument("--num_steps", type=int, default=64, help="Steps per rollout (default: 64)")
+    parser.add_argument("--num_envs", type=int, default=32, help="Parallel environments (default: 32)")
+    parser.add_argument("--num_steps", type=int, default=128, help="Steps per rollout (default: 128)")
     parser.add_argument("--minibatch_size", type=int, default=256, help="Minibatch size (default: 256)")
     parser.add_argument("--num_epochs", type=int, default=4, help="Epochs per update (default: 4)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma (default: 0.99)")
