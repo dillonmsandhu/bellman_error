@@ -1,18 +1,18 @@
 """
 scripts/sampling_E_test/plot_comparison.py
 
-Consolidates and plots Sampling E Test results across all benchmark environments.
-Generates comprehensive publication figures comparing the 3 formulations:
-1. Sept 14 (Uncorrected):    L = (1-gamma) E[e^2] + (gamma/2) E[(e - e')^2]
-2. Oct 5 (Corrected):        L = (1-gamma) E[e^2] + (gamma/2) E[(e - e')^2] + (gamma/2)(E[e^2] - E[e'^2])
-3. Oct 8 (Start-Anchored):   L = (1-gamma) E[e^2] + (gamma/2) E[(e - e')^2] + (gamma/2) nu E_{s0}[e(s0)^2]
+Consolidates and plots Sampling E Test results across benchmark environments.
+Compares the 3 formulations against Exact Matrix E:
+1. Oct 8 (Standard / Full-Branch Start-Anchored)
+2. Forward Only
+3. V_aux
 
 Figures generated:
-1. bias_variance_decomposition_across_envs: Grouped bar chart comparing Variance, Bias^2, and total MSE
+1. aggregate_gradient_metrics_across_envs: Grouped bar chart comparing Cosine Alignment, MSE, and Variance
 2. gradient_mse_across_envs: Time series of Gradient MSE to Exact E across updates
 3. gradient_cosine_across_envs: Time series of Cosine Similarity to Exact E across updates
-4. loss_E_variants_across_envs: Exact E vs Sept 14 vs Oct 5 vs Oct 8 values
-5. returns_across_envs: Episode returns across all benchmark environments
+4. loss_E_variants_across_envs: Exact E vs Oct 8 vs Forward Only vs V_aux values
+5. returns_across_envs: Start-state value V^pi(s0) across updates
 6. summary_metrics.csv: Full statistical summary table across environments
 """
 
@@ -45,16 +45,16 @@ ALL_ENVS = [
 ]
 
 VAR_COLORS = {
-    "sep14": "#1f77b4",     # Blue
-    "corr": "#d62728",      # Red
     "oct8": "#2ca02c",      # Green
+    "fwd": "#00bcd4",       # Cyan/Teal
+    "v_aux": "#9467bd",     # Purple
     "exact": "#000000",     # Black
 }
 
 VAR_LABELS = {
-    "sep14": "Sept 14 (Uncorrected)",
-    "corr": "Oct 5 (Corrected / High Var)",
-    "oct8": "Oct 8 (Start-Anchored / Exact)",
+    "oct8": "Oct 8",
+    "fwd": "Forward Only",
+    "v_aux": "V_aux",
 }
 
 
@@ -144,10 +144,10 @@ def make_multi_env_grid(
 
 def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
     """
-    Consolidated Multi-Environment Summary of Gradient Metrics (Average during Learning):
+    Consolidated Multi-Environment Summary of Gradient Metrics:
     Panel 1: Cosine Similarity Alignment to Exact E
     Panel 2: Gradient MSE to Exact E (Log Scale)
-    Panel 3: Trajectory Gradient Variance (Spread across rollout trajectories, Log Scale)
+    Panel 3: Trajectory Gradient Variance (Log Scale)
     """
     valid_envs = [e for e in ALL_ENVS if e in env_data]
     if not valid_envs:
@@ -157,18 +157,16 @@ def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
     fig, (ax_cos, ax_mse, ax_bv) = plt.subplots(3, 1, figsize=(max(12, n_envs * 2.2), 14), dpi=200)
 
     x = np.arange(n_envs)
-    width = 0.26
+    width = 0.24
 
-    # Extract metrics averaged across learning for each variant
     variants = [
-        ("uncorr", -width, VAR_COLORS["sep14"], "Sept 14 (Biased)"),
-        ("corr", 0.0, VAR_COLORS["corr"], "Oct 5 (De-Biased)"),
-        ("oct8", width, VAR_COLORS["oct8"], "Oct 8 (Start-Anchored De-Biased)"),
+        ("oct8", -width, VAR_COLORS["oct8"], "Oct 8"),
+        ("fwd", 0.0, VAR_COLORS["fwd"], "Forward Only"),
+        ("v_aux", width, VAR_COLORS["v_aux"], "V_aux"),
     ]
 
     for v_key, offset, color, label in variants:
         variances = []
-        biases = []
         mses = []
         cosines = []
 
@@ -188,7 +186,7 @@ def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
             mses.append(max(1e-12, val_mse))
             cosines.append(val_cos)
 
-        # Panel 1: Cosine Alignment of Total Average Gradient
+        # Panel 1: Cosine Alignment
         ax_cos.bar(
             x + offset, cosines, width,
             label=label,
@@ -202,7 +200,7 @@ def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
             color=color, alpha=0.85, edgecolor="black", lw=0.6,
         )
 
-        # Panel 3: Trajectory Gradient Variance (Spread across trajectories)
+        # Panel 3: Trajectory Gradient Variance
         ax_bv.bar(
             x + offset, variances, width,
             label=label,
@@ -216,36 +214,33 @@ def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
     ax_cos.axhline(1.0, color="black", linestyle=":", lw=1.2, alpha=0.7)
     ax_cos.axhline(0.0, color="gray", linestyle="-", lw=0.8, alpha=0.5)
     ax_cos.set_ylabel("Cosine Similarity (rho)", fontsize=11, fontweight="bold")
-    ax_cos.set_title("Full-Batch Average Gradient Cosine Similarity to Exact E (Average during Learning)", fontsize=12, fontweight="bold")
+    ax_cos.set_title("Sample Gradient Cosine Alignment to Exact E", fontsize=12, fontweight="bold")
     ax_cos.grid(True, linestyle="--", alpha=0.3, axis="y")
-    ax_cos.legend(loc="lower right", ncol=3, fontsize=8.5, frameon=True)
+    ax_cos.legend(loc="lower right", ncol=3, fontsize=9.0, frameon=True)
 
     # Gradient MSE Subplot
     ax_mse.set_xticks(x)
     ax_mse.set_xticklabels(valid_envs, fontsize=10, fontweight="bold", rotation=20, ha="right")
     ax_mse.set_yscale("log")
     ax_mse.set_ylabel("Gradient MSE (Log Scale)\nMSE to exact E gradient", fontsize=11, fontweight="bold")
-    ax_mse.set_title("Gradient MSE to Exact E Across Environments (Average during Learning)", fontsize=12, fontweight="bold")
+    ax_mse.set_title("Gradient MSE to Exact E Across Environments", fontsize=12, fontweight="bold")
     ax_mse.grid(True, linestyle="--", alpha=0.3, axis="y")
-    ax_mse.legend(loc="upper right", ncol=3, fontsize=8.5, frameon=True)
+    ax_mse.legend(loc="upper right", ncol=3, fontsize=9.0, frameon=True)
 
     # Variance Subplot
     ax_bv.set_xticks(x)
     ax_bv.set_xticklabels(valid_envs, fontsize=10, fontweight="bold", rotation=20, ha="right")
     ax_bv.set_yscale("log")
     ax_bv.set_ylabel("Trajectory Gradient Variance (Log Scale)\nSpread across rollout trajectories", fontsize=11, fontweight="bold")
-    ax_bv.set_title("Trajectory Gradient Variance Across Environments (Average during Learning)", fontsize=12, fontweight="bold")
+    ax_bv.set_title("Trajectory Gradient Variance Across Environments", fontsize=12, fontweight="bold")
     ax_bv.grid(True, linestyle="--", alpha=0.3, axis="y")
-    ax_bv.legend(loc="upper right", ncol=3, fontsize=8.5, frameon=True)
+    ax_bv.legend(loc="upper right", ncol=3, fontsize=9.0, frameon=True)
 
     plt.tight_layout()
     pdf_path = os.path.join(save_dir, "aggregate_gradient_metrics_across_envs.pdf")
     plt.savefig(pdf_path, bbox_inches="tight")
     plt.close()
     print(f"Saved aggregate gradient metrics: {pdf_path}")
-
-
-plot_bias_variance_decomposition = plot_aggregate_gradient_metrics
 
 
 def main():
@@ -275,33 +270,33 @@ def main():
         return
 
     # -------------------------------------------------------------------------
-    # Central Figure: Bias-Variance Decomposition Across Environments
+    # Central Figure: Aggregate Gradient Metrics Across Environments
     # -------------------------------------------------------------------------
-    plot_bias_variance_decomposition(env_data, save_dir)
+    plot_aggregate_gradient_metrics(env_data, save_dir)
 
     # -------------------------------------------------------------------------
     # Plot: Gradient MSE Time Series Across Environments
     # -------------------------------------------------------------------------
     def plot_grad_mse(ax, metrics, env_name):
-        m_s14, s_s14 = extract_metric(metrics, "mse_samp_uncorr")
-        m_corr, s_corr = extract_metric(metrics, "mse_samp_corr")
         m_o8, s_o8 = extract_metric(metrics, "mse_samp_oct8")
+        m_fwd, s_fwd = extract_metric(metrics, "mse_samp_fwd")
+        m_v, s_v = extract_metric(metrics, "mse_samp_v_aux")
 
-        if m_s14 is not None:
-            x = np.arange(len(m_s14))
-            ax.plot(x, m_s14, color=VAR_COLORS["sep14"], lw=1.8, label="Sept 14 (Uncorr)")
-            if s_s14 is not None and np.any(s_s14 > 0):
-                ax.fill_between(x, np.maximum(m_s14 - s_s14, 1e-12), m_s14 + s_s14, color=VAR_COLORS["sep14"], alpha=0.15)
-        if m_corr is not None:
-            x = np.arange(len(m_corr))
-            ax.plot(x, m_corr, color=VAR_COLORS["corr"], lw=1.8, label="Oct 5 (Corr)")
-            if s_corr is not None and np.any(s_corr > 0):
-                ax.fill_between(x, np.maximum(m_corr - s_corr, 1e-12), m_corr + s_corr, color=VAR_COLORS["corr"], alpha=0.15)
         if m_o8 is not None:
             x = np.arange(len(m_o8))
-            ax.plot(x, m_o8, color=VAR_COLORS["oct8"], lw=2.2, label="Oct 8 (Start-Anc)")
+            ax.plot(x, m_o8, color=VAR_COLORS["oct8"], lw=2.0, label="Oct 8")
             if s_o8 is not None and np.any(s_o8 > 0):
                 ax.fill_between(x, np.maximum(m_o8 - s_o8, 1e-12), m_o8 + s_o8, color=VAR_COLORS["oct8"], alpha=0.18)
+        if m_fwd is not None:
+            x = np.arange(len(m_fwd))
+            ax.plot(x, m_fwd, color=VAR_COLORS["fwd"], lw=2.0, label="Forward Only")
+            if s_fwd is not None and np.any(s_fwd > 0):
+                ax.fill_between(x, np.maximum(m_fwd - s_fwd, 1e-12), m_fwd + s_fwd, color=VAR_COLORS["fwd"], alpha=0.18)
+        if m_v is not None:
+            x = np.arange(len(m_v))
+            ax.plot(x, m_v, color=VAR_COLORS["v_aux"], lw=2.0, label="V_aux")
+            if s_v is not None and np.any(s_v > 0):
+                ax.fill_between(x, np.maximum(m_v - s_v, 1e-12), m_v + s_v, color=VAR_COLORS["v_aux"], alpha=0.18)
 
         ax.set_yscale("log")
         ax.set_title(env_name, fontsize=11, fontweight="bold")
@@ -319,19 +314,19 @@ def main():
     # Plot: Gradient Cosine Similarity Time Series Across Environments
     # -------------------------------------------------------------------------
     def plot_grad_cosine(ax, metrics, env_name):
-        m_s14, s_s14 = extract_metric(metrics, "rho_samp_uncorr_exact")
-        m_corr, s_corr = extract_metric(metrics, "rho_samp_corr_exact")
         m_o8, s_o8 = extract_metric(metrics, "rho_samp_oct8_exact")
+        m_fwd, s_fwd = extract_metric(metrics, "rho_samp_fwd_exact")
+        m_v, s_v = extract_metric(metrics, "rho_samp_v_aux_exact")
 
-        if m_s14 is not None:
-            x = np.arange(len(m_s14))
-            ax.plot(x, m_s14, color=VAR_COLORS["sep14"], lw=1.8, label="Sept 14 (Uncorr)")
-        if m_corr is not None:
-            x = np.arange(len(m_corr))
-            ax.plot(x, m_corr, color=VAR_COLORS["corr"], lw=1.8, label="Oct 5 (Corr)")
         if m_o8 is not None:
             x = np.arange(len(m_o8))
-            ax.plot(x, m_o8, color=VAR_COLORS["oct8"], lw=2.2, label="Oct 8 (Start-Anc)")
+            ax.plot(x, m_o8, color=VAR_COLORS["oct8"], lw=2.0, label="Oct 8")
+        if m_fwd is not None:
+            x = np.arange(len(m_fwd))
+            ax.plot(x, m_fwd, color=VAR_COLORS["fwd"], lw=2.0, label="Forward Only")
+        if m_v is not None:
+            x = np.arange(len(m_v))
+            ax.plot(x, m_v, color=VAR_COLORS["v_aux"], lw=2.0, label="V_aux")
 
         ax.set_ylim(-0.3, 1.05)
         ax.axhline(1.0, color="black", linestyle=":", lw=1.0, alpha=0.6)
@@ -351,19 +346,19 @@ def main():
     # -------------------------------------------------------------------------
     def plot_loss_e(ax, metrics, env_name):
         m_exact, _ = extract_metric(metrics, "E_exact")
-        m_s14, _ = extract_metric(metrics, "E_samp_uncorr")
-        m_corr, _ = extract_metric(metrics, "E_samp_corr")
         m_o8, _ = extract_metric(metrics, "E_samp_oct8")
+        m_fwd, _ = extract_metric(metrics, "E_samp_fwd")
+        m_v, _ = extract_metric(metrics, "E_samp_v_aux")
 
         if m_exact is not None:
             x = np.arange(len(m_exact))
             ax.plot(x, m_exact, color="black", lw=2.2, label="Exact E")
-            if m_s14 is not None:
-                ax.plot(x, m_s14, color=VAR_COLORS["sep14"], ls="--", lw=1.8, label="Sampled Sept 14")
-            if m_corr is not None:
-                ax.plot(x, m_corr, color=VAR_COLORS["corr"], ls=":", lw=1.8, label="Sampled Oct 5")
             if m_o8 is not None:
-                ax.plot(x, m_o8, color=VAR_COLORS["oct8"], ls="-.", lw=1.8, label="Sampled Oct 8")
+                ax.plot(x, m_o8, color=VAR_COLORS["oct8"], ls="-.", lw=1.8, label="Oct 8")
+            if m_fwd is not None:
+                ax.plot(x, m_fwd, color=VAR_COLORS["fwd"], ls="--", lw=1.8, label="Forward Only")
+            if m_v is not None:
+                ax.plot(x, m_v, color=VAR_COLORS["v_aux"], ls=":", lw=1.8, label="V_aux")
             ax.set_yscale("log")
         ax.set_title(env_name, fontsize=11, fontweight="bold")
         ax.set_xlabel("Update Step", fontsize=9)
@@ -402,12 +397,11 @@ def main():
     # -------------------------------------------------------------------------
     summary_rows = []
     metric_keys = [
-        "E_exact", "E_deficit",
-        "E_samp_uncorr", "E_samp_corr", "E_samp_oct8",
-        "var_samp_uncorr", "var_samp_corr", "var_samp_oct8",
-        "bias_sq_samp_uncorr", "bias_sq_samp_corr", "bias_sq_samp_oct8",
-        "mse_samp_uncorr", "mse_samp_corr", "mse_samp_oct8",
-        "rho_samp_uncorr_exact", "rho_samp_corr_exact", "rho_samp_oct8_exact",
+        "E_exact",
+        "E_samp_oct8", "E_samp_fwd", "E_samp_v_aux",
+        "var_samp_oct8", "var_samp_fwd", "var_samp_v_aux",
+        "mse_samp_oct8", "mse_samp_fwd", "mse_samp_v_aux",
+        "rho_samp_oct8_exact", "rho_samp_fwd_exact", "rho_samp_v_aux_exact",
     ]
 
     for env_name in ALL_ENVS:

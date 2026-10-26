@@ -48,15 +48,22 @@ def make_train(base_config):
         γ = config['GAMMA']
         k = config.get('k', 32)
 
-        # Initialize Network
+        # Initialize Networks
+        rng_net, rng_aux = jax.random.split(rng)
         network, network_params = networks.initialize_network(
-            rng, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
+            rng_net, obs_shape, env, env_params, k, n_heads=2, layer_norm=config['LAYER_NORM']
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
-        runner_state = (train_state, 1)
+
+        aux_network, aux_params = networks.initialize_network(
+            rng_aux, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
+        )
+        aux_train_state = networks.initialize_flax_train_state(config, aux_network, aux_params)
+
+        runner_state = (train_state, aux_train_state, 1)
 
         def _update_step(runner_state, unused):
-            train_state, idx = runner_state
+            train_state, aux_train_state, idx = runner_state
 
             # 1. Compute Exact Dynamics
             old_pi_dist, old_v = network.apply(train_state.params, S_states)
@@ -142,7 +149,7 @@ def make_train(base_config):
             if config.get("LOG_SAMPLING_E_METRICS", False):
                 from core.sampling_e_metrics import compute_sampling_e_metrics
                 sampling_rng = jax.random.fold_in(rng, idx)
-                metric.update(compute_sampling_e_metrics(
+                sampling_metrics, aux_train_state = compute_sampling_e_metrics(
                     evaluator=evaluator,
                     network=network,
                     params=train_state.params,
@@ -154,7 +161,10 @@ def make_train(base_config):
                     rng=sampling_rng,
                     num_trajectories=config.get("SAMPLING_E_NUM_TRAJECTORIES", 128),
                     num_steps=config.get("SAMPLING_E_NUM_STEPS", 128),
-                ))
+                    aux_network=aux_network,
+                    aux_train_state=aux_train_state,
+                )
+                metric.update(sampling_metrics)
             # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)
             if is_continuous:
                 new_pi_dist = network.apply(train_state.params, S_states)[0]
@@ -173,7 +183,7 @@ def make_train(base_config):
                 "Mean_A": A.mean(),
             })
             
-            runner_state = (train_state, idx + 1)
+            runner_state = (train_state, aux_train_state, idx + 1)
             return runner_state, metric
 
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
