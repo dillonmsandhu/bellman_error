@@ -56,6 +56,8 @@ def analyze_gradient_variance(
     num_trajectories: int = 64,
     num_steps: int = 128,
     seed: int = 42,
+    aux_steps: int = 32,
+    aux_target_mode: str = "true_value",
 ) -> Dict[str, Any]:
     """
     Computes exact gradient and evaluates sample gradient distribution across
@@ -229,16 +231,24 @@ def analyze_gradient_variance(
         traj_s, traj_next_s, traj_r, traj_done, final_s = sample_rollout(k)
         returns, next_returns = compute_returns(traj_r, traj_done, final_s)
 
-        # Update v_aux network state on returns
-        def aux_step(ts, _):
-            def loss(p_a):
-                v_pred = aux_network.apply(p_a, S_states).squeeze()
-                v_full = jnp.append(v_pred, 0.0)
-                return jnp.mean((returns - v_full[traj_s]) ** 2)
-            grads = jax.grad(loss)(ts.params)
-            return ts.apply_gradients(grads=grads), None
-
-        curr_aux_state, _ = jax.lax.scan(aux_step, curr_aux_state, None, length=4)
+        # Update v_aux network state
+        if aux_target_mode == "true_value":
+            def aux_step(ts, _):
+                def loss(p_a):
+                    v_pred = aux_network.apply(p_a, S_states).squeeze()
+                    return jnp.mean((V_true[:N] - v_pred) ** 2)
+                grads = jax.grad(loss)(ts.params)
+                return ts.apply_gradients(grads=grads), None
+            curr_aux_state, _ = jax.lax.scan(aux_step, curr_aux_state, None, length=aux_steps)
+        else:
+            def aux_step(ts, _):
+                def loss(p_a):
+                    v_pred = aux_network.apply(p_a, S_states).squeeze()
+                    v_full = jnp.append(v_pred, 0.0)
+                    return jnp.mean((returns - v_full[traj_s]) ** 2)
+                grads = jax.grad(loss)(ts.params)
+                return ts.apply_gradients(grads=grads), None
+            curr_aux_state, _ = jax.lax.scan(aux_step, curr_aux_state, None, length=aux_steps)
         v_aux = jnp.append(aux_network.apply(curr_aux_state.params, S_states).squeeze(), 0.0)
 
         l_oct8, l_fwd, l_v_aux = make_batch_loss(traj_s, traj_next_s, traj_done, returns, next_returns, v_aux)

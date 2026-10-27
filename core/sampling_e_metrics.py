@@ -30,6 +30,8 @@ def compute_sampling_e_metrics(
     num_steps: int = 128,
     aux_network: Optional[Any] = None,
     aux_train_state: Optional[Any] = None,
+    aux_steps: int = 32,
+    aux_target_mode: str = "true_value",
 ) -> Tuple[Dict[str, jnp.ndarray], Optional[Any]]:
     """
     Computes exact, expected, and sampled E metrics and gradients for logging across
@@ -95,13 +97,26 @@ def compute_sampling_e_metrics(
     # 1c. Update auxiliary network state for v_aux if provided
     new_aux_train_state = aux_train_state
     if aux_train_state is not None and aux_network is not None:
-        def aux_loss_fn(p_aux):
-            v_aux_pred = aux_network.apply(p_aux, S_states).squeeze()
-            v_aux_full = jnp.append(v_aux_pred, 0.0)
-            return jnp.mean((returns_sg - v_aux_full[traj_s]) ** 2)
+        if aux_target_mode == "true_value":
+            def aux_step_fn(ts, _):
+                def loss_fn(p_aux):
+                    v_aux_pred = aux_network.apply(p_aux, S_states).squeeze()
+                    return jnp.mean((V_true[:N] - v_aux_pred) ** 2)
+                grads = jax.grad(loss_fn)(ts.params)
+                return ts.apply_gradients(grads=grads), None
 
-        aux_grads = jax.grad(aux_loss_fn)(aux_train_state.params)
-        new_aux_train_state = aux_train_state.apply_gradients(grads=aux_grads)
+            new_aux_train_state, _ = jax.lax.scan(aux_step_fn, aux_train_state, None, length=aux_steps)
+        else:
+            def aux_step_fn(ts, _):
+                def loss_fn(p_aux):
+                    v_aux_pred = aux_network.apply(p_aux, S_states).squeeze()
+                    v_aux_full = jnp.append(v_aux_pred, 0.0)
+                    return jnp.mean((returns_sg - v_aux_full[traj_s]) ** 2)
+                grads = jax.grad(loss_fn)(ts.params)
+                return ts.apply_gradients(grads=grads), None
+
+            new_aux_train_state, _ = jax.lax.scan(aux_step_fn, aux_train_state, None, length=aux_steps)
+
         v_aux = jnp.append(aux_network.apply(new_aux_train_state.params, S_states).squeeze(), 0.0)
     else:
         v_aux = V_true
@@ -290,6 +305,8 @@ def compute_sampling_e_metrics(
         "norm_g_samp_oct8": norm_o,
         "norm_g_samp_fwd": norm_f,
         "norm_g_samp_v_aux": norm_v,
+        # Auxiliary value network accuracy to V_true
+        "mse_v_aux_target": jnp.mean((V_true - v_aux) ** 2),
     }
 
     if aux_train_state is not None:

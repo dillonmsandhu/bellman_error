@@ -163,6 +163,8 @@ def make_train(base_config):
                     num_steps=config.get("SAMPLING_E_NUM_STEPS", 128),
                     aux_network=aux_network,
                     aux_train_state=aux_train_state,
+                    aux_steps=config.get("SAMPLING_E_AUX_STEPS", 32),
+                    aux_target_mode=config.get("SAMPLING_E_AUX_TARGET_MODE", "true_value"),
                 )
                 metric.update(sampling_metrics)
             # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)

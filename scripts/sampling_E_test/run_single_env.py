@@ -59,6 +59,8 @@ def parse_args():
     parser.add_argument("--save_checkpoint", action="store_true", help="Save complete train state checkpoints")
     parser.add_argument("--save_metrics", action="store_true", default=True, help="Save metrics dictionary")
     parser.add_argument("--save_video", action="store_true", help="Save policy GIF video")
+    parser.add_argument("--aux_steps", type=int, default=32, help="Gradient steps to train aux network per update")
+    parser.add_argument("--aux_target_mode", type=str, default="true_value", choices=["true_value", "empirical"], help="Auxiliary network training target mode")
     return parser.parse_args()
 
 
@@ -90,6 +92,8 @@ def build_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
         "LOG_SAMPLING_E_METRICS": True,
         "SAMPLING_E_NUM_TRAJECTORIES": args.num_trajectories,
         "SAMPLING_E_NUM_STEPS": args.num_steps,
+        "SAMPLING_E_AUX_STEPS": args.aux_steps,
+        "SAMPLING_E_AUX_TARGET_MODE": args.aux_target_mode,
     })
     return cfg
 
