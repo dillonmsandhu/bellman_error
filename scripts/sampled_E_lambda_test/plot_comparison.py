@@ -82,13 +82,23 @@ def aggregate_seeds(metrics_list: List[Dict[str, np.ndarray]]) -> Dict[str, Tupl
     agg = {}
     for k in keys:
         try:
-            arrays = [np.asarray(m[k], dtype=np.float64) for m in metrics_list if k in m]
-            if arrays:
-                min_len = min(len(a) for a in arrays)
-                stacked = np.stack([a[:min_len] for a in arrays], axis=0)
-                mean = np.nanmean(stacked, axis=0)
-                std = np.nanstd(stacked, axis=0)
-                agg[k] = (mean, std)
+            raw_arrays = [np.asarray(m[k], dtype=np.float64) for m in metrics_list if k in m]
+            if not raw_arrays:
+                continue
+
+            expanded = []
+            for a in raw_arrays:
+                if a.ndim == 1:
+                    expanded.append(a[None, :])
+                elif a.ndim >= 2:
+                    expanded.append(a.reshape(-1, a.shape[-1]))
+
+            min_len = min(a.shape[1] for a in expanded)
+            all_seeds = np.concatenate([a[:, :min_len] for a in expanded], axis=0)
+
+            mean = np.nanmean(all_seeds, axis=0)
+            sem = np.nanstd(all_seeds, axis=0) / np.sqrt(max(1, all_seeds.shape[0]))
+            agg[k] = (mean, sem)
         except Exception:
             pass
     return agg
@@ -194,6 +204,9 @@ def plot_metric_time_series(
         ax.set_title(env, fontsize=11, fontweight="bold")
         ax.set_ylabel(ylabel, fontsize=9)
         ax.grid(True, alpha=0.3)
+        if "rho" in metric_prefix or "cos" in metric_prefix:
+            ax.axhline(1.0, color="black", linestyle=":", lw=1.0, alpha=0.6)
+            ax.set_ylim(-0.3, 1.05)
         if log_scale:
             ax.set_yscale("log")
         if i == 0 and len(ax.get_legend_handles_labels()[0]) > 0:
@@ -231,7 +244,7 @@ def export_summary_table(all_data: Dict[str, Dict[str, Tuple[np.ndarray, np.ndar
                 m, _ = all_data[env][k]
                 m_arr = np.asarray(m)
                 row[f"{k}_mean"] = float(np.nanmean(m_arr))
-                row[f"{k}_final"] = float(np.nanmean(m_arr[-1])) if len(m_arr) > 0 else np.nan
+                row[f"{k}_final"] = float(m_arr[-1]) if len(m_arr) > 0 else np.nan
         # Cosine AUC
         for var in ["naive", "aux", "fwd"]:
             k = f"rho_samp_{var}_exact"
