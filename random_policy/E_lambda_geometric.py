@@ -43,13 +43,20 @@ def make_train(base_config):
             rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
         )
         train_state = networks.initialize_flax_train_state(config, network, network_params)
-        
+
+        rng, _rng = jax.random.split(rng)
+        aux_network, aux_params = networks.initialize_network(
+            _rng, obs_shape, env, env_params, k, n_heads=1, layer_norm=config['LAYER_NORM']
+        )
+        aux_train_state = networks.initialize_flax_train_state(config, aux_network, aux_params)
+
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
+        steps_since_start = jnp.full((config["NUM_ENVS"],), 10_000, dtype=jnp.int32)
 
         def _update_step(runner_state, unused):
-            train_state, env_state, last_obs, rng, idx = runner_state
+            train_state, aux_train_state, env_state, last_obs, steps_since_start, rng, idx = runner_state
 
             # 1. COLLECT TRAJECTORIES
             def _env_step(env_scan_state, unused):
@@ -90,59 +97,58 @@ def make_train(base_config):
             return_lambda = config["RETURN_LAMBDA"]
             _, returns = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
 
-            # 3. UPDATE NETWORK OVER EPOCHS AND TRAJECTORY MINIBATCHES
+            # 3. PREPARE JUMP PAIRS ONCE PER ROLLOUT
+            rng, _rng = jax.random.split(rng)
+            jump_batch, final_steps_since_start = helpers.prepare_e_lambda_jump_pairs(
+                traj_batch=traj_batch,
+                returns=returns,
+                gamma=config["GAMMA"],
+                lmbda=config["VALUE_LAMBDA"],
+                rng=_rng,
+                steps_since_start=steps_since_start,
+                runway_length=config.get("RUNWAY_LENGTH", 16),
+            )
+
+            # 4. UPDATE NETWORK OVER EPOCHS AND FLAT MINIBATCHES
             def _update_epoch(update_state, unused):
-                def _update_minbatch(state, batch_info):
-                    train_state, rng = state
-                    rng, _rng = jax.random.split(rng)
-                    traj_batch_mb, returns_mb = batch_info
+                def _update_minbatch(state, mb):
+                    train_state, aux_train_state = state
 
-                    def _loss_fn(params):
-                        values = network.apply(params, traj_batch_mb.obs)
-                        next_value_T = network.apply(params, traj_batch_mb.next_obs[-1])
-                        next_target_T = traj_batch_mb.next_value[-1]
-
-                        is_timeout = traj_batch_mb.info.get("is_timeout", jnp.zeros_like(traj_batch_mb.done, dtype=bool))
-                        true_terminal = traj_batch_mb.done & ~is_timeout
-                        gamma = config["GAMMA"]
-                        e_lambda = config["VALUE_LAMBDA"]
-
-                        value_loss, mag_loss, dir_loss = helpers.e_lambda_geometric_critic_loss(
-                            values=values,
-                            targets=returns_mb,
-                            dones=traj_batch_mb.done,
-                            gamma=gamma,
-                            lmbda=e_lambda,
-                            rng=_rng,
-                            true_terminals=true_terminal,
-                            next_value_T=next_value_T,
-                            next_target_T=next_target_T,
-                        )
-                        total_loss = config["VF_COEF"] * value_loss
-                        return total_loss, {
-                            "total_loss": total_loss,
-                            "value_loss": value_loss,
-                            "magnitude_loss": mag_loss,
-                            "dirichlet_loss": dir_loss,
-                        }
-
-                    grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
-                    (total_loss, losses), grads = grad_fn(train_state.params)
+                    grad_fn = jax.value_and_grad(helpers.e_lambda_fixed_critic_minibatch_loss, has_aux=True)
+                    (total_loss, losses), grads = grad_fn(
+                        train_state.params,
+                        network,
+                        mb,
+                        config,
+                        aux_params=aux_train_state.params,
+                        aux_network=aux_network,
+                    )
                     train_state = train_state.apply_gradients(grads=grads)
-                    return (train_state, rng), losses
 
-                train_state, traj_batch, returns, rng = update_state
+                    # Update auxiliary critic on empirical returns
+                    def _aux_loss_fn(aux_p):
+                        aux_vals = aux_network.apply(aux_p, mb.obs)
+                        return 0.5 * jnp.mean((jax.lax.stop_gradient(mb.target) - aux_vals) ** 2)
+
+                    aux_loss, aux_grads = jax.value_and_grad(_aux_loss_fn)(aux_train_state.params)
+                    aux_train_state = aux_train_state.apply_gradients(grads=aux_grads)
+                    losses["aux_loss"] = aux_loss
+
+                    return (train_state, aux_train_state), losses
+
+                train_state, aux_train_state, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                batch = (traj_batch, returns)
-                minibatches = helpers.shuffle_and_batch_envs(_rng, batch, config["NUM_MINIBATCHES"])
-                (train_state, rng), loss_info = jax.lax.scan(_update_minbatch, (train_state, rng), minibatches)
-                return (train_state, traj_batch, returns, rng), loss_info
+                minibatches = helpers.shuffle_and_batch(_rng, jump_batch, config["NUM_MINIBATCHES"])
+                (train_state, aux_train_state), loss_info = jax.lax.scan(
+                    _update_minbatch, (train_state, aux_train_state), minibatches
+                )
+                return (train_state, aux_train_state, rng), loss_info
 
-            initial_update_state = (train_state, traj_batch, returns, rng)
+            initial_update_state = (train_state, aux_train_state, rng)
             update_state, loss_info = jax.lax.scan(
                 _update_epoch, initial_update_state, None, config["NUM_EPOCHS"]
             )
-            train_state, _, _, rng = update_state
+            train_state, aux_train_state, rng = update_state
 
             # 4. METRICS
             metric = {
@@ -169,11 +175,11 @@ def make_train(base_config):
                     v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx]).squeeze()
                     metric["v_pred_start"] = v_pred_start
 
-            runner_state = (train_state, env_state, last_obs, rng, idx + 1)
+            runner_state = (train_state, aux_train_state, env_state, last_obs, final_steps_since_start, rng, idx + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, env_state, obsv, _rng, 1)
+        runner_state = (train_state, aux_train_state, env_state, obsv, steps_since_start, _rng, 1)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, config["NUM_UPDATES"])
         return {"runner_state": runner_state, "metrics": metrics}
 

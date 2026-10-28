@@ -1494,82 +1494,136 @@ def e_lambda_differentiable_loss_fn(
 
 
 def e_lambda_geometric_critic_loss(
-    values,
-    targets,
-    dones,
+    values: jax.Array,
+    targets: jax.Array,
+    dones: jax.Array,
     gamma: float,
     lmbda: float,
     rng: jax.Array,
-    true_terminals=None,
-    next_value_T=None,
-    next_target_T=None,
+    aux_values: jax.Array = None,
+    true_terminals: jax.Array = None,
+    next_value_T: jax.Array = None,
+    next_aux_value_T: jax.Array = None,
+    next_target_T: jax.Array = None,
+    num_start_states: int = None,
+    init_steps_since_start: jax.Array = None,
+    aux_loss_coef: float = 1.0,
+    return_details: bool = False,
 ):
     """
     Computes sampled E(lambda) critic loss by sampling lookahead horizon skips
-    K ~ Geometric(1 - gamma * lambda) directly from the compound transition matrix
-    P_lambda = (1 - gamma * lambda) * sum_{k=0}^infty (gamma * lambda)^k P^{k+1} (Method 3).
+    K ~ Geometric(1 - gamma * lambda) with auxiliary critic v_aux,
+    decaying start-state reset grounding, and absorbing boundary conditions.
     """
     if true_terminals is None:
         true_terminals = dones
+    # Note: aux_values=values sets e_aux=0, dropping Term 1 (Forward-Only ablation)
+    if aux_values is None: 
+        aux_values = values
     if next_value_T is None:
         next_value_T = jnp.zeros_like(values[0])
+    if next_aux_value_T is None:
+        next_aux_value_T = jnp.zeros_like(aux_values[0])
     if next_target_T is None:
         next_target_T = jnp.zeros_like(targets[0])
 
     T, B = targets.shape[:2]
-    errors = targets - values
+    T_start = min(T, max(1, T - 16)) if num_start_states is None else min(num_start_states, T)
+
     gl = gamma * lmbda
+    sg = jax.lax.stop_gradient
 
-    # Continuation error at rollout buffer boundary step T
-    e_T = jnp.where(true_terminals[-1], 0.0, next_target_T - next_value_T)
-    errors_ext = jnp.concatenate([errors, e_T[None]], axis=0)
+    # 1. Error vectors & boundary extensions
+    errors = sg(targets) - values
+    e_aux = sg(aux_values) - values
 
-    # 1. Sample jump lengths K ~ Geometric(1 - gl) with K >= 0
-    # For gl < 1e-6 (e.g. lambda = 0), K = 0 deterministically
-    u = jax.random.uniform(rng, shape=(T, B))
+    e_T = jnp.where(true_terminals[-1], 0.0, sg(next_target_T) - next_value_T)
+    e_aux_T = jnp.where(true_terminals[-1], 0.0, sg(next_aux_value_T) - next_value_T)
+
+    errors_ext = jnp.concatenate([errors, e_T[None]], axis=0)       # (T + 1, B)
+    e_aux_ext = jnp.concatenate([e_aux, e_aux_T[None]], axis=0)     # (T + 1, B)
+
+    # 2. Geometric jump sampling: m = K + 1 where K ~ Geom(1 - gl)
+    u = jax.random.uniform(rng, shape=(T_start, B))
     safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
     jumps = jnp.where(
         gl < 1e-6,
-        jnp.zeros((T, B), dtype=jnp.int32),
+        jnp.zeros((T_start, B), dtype=jnp.int32),
         jnp.floor(jnp.log(jnp.clip(1.0 - u, 1e-8, 1.0)) / jnp.log(safe_gl)).astype(jnp.int32),
     )
-    jumps = jnp.maximum(jumps, 0)
+    m = jnp.maximum(jumps, 0) + 1
+    t_arr = jnp.arange(T_start)[:, None]
+    j = jnp.minimum(t_arr + m, T)
 
-    # 2. Target lookahead index and episode boundary masking
-    t_arr = jnp.arange(T)[:, None]
-    target_idx = t_arr + jumps + 1
-    within_chunk = target_idx <= T
-    t_clamped = jnp.minimum(target_idx, T)
-
-    t_prev = jnp.minimum(t_arr + jumps, T - 1)
-    done_cumsum = jnp.cumsum(dones.astype(jnp.int32), axis=0)
-    has_reset_between = (
-        jnp.take_along_axis(done_cumsum, t_prev, axis=0) - done_cumsum
-    ) > 0
-
-    valid_jump = within_chunk & (~has_reset_between)
-    e_jump = jnp.take_along_axis(errors_ext, t_clamped, axis=0)
-
+    # 3. Check transitions in [t, j - 1] for terminal absorption or timeouts
     is_timeout = dones & (~true_terminals)
+    term_cumsum_excl = jnp.concatenate(
+        [jnp.zeros((1, B), dtype=jnp.int32), jnp.cumsum(true_terminals.astype(jnp.int32), axis=0)],
+        axis=0,
+    )
+    timeout_cumsum_excl = jnp.concatenate(
+        [jnp.zeros((1, B), dtype=jnp.int32), jnp.cumsum(is_timeout.astype(jnp.int32), axis=0)],
+        axis=0,
+    )
+
+    hit_true_terminal = (jnp.take_along_axis(term_cumsum_excl, j, axis=0) - term_cumsum_excl[:T_start]) > 0
+    hit_timeout = (jnp.take_along_axis(timeout_cumsum_excl, j, axis=0) - timeout_cumsum_excl[:T_start]) > 0
+
+    e_start = errors[:T_start]
+    e_aux_start = e_aux[:T_start]
+    e_jump = jnp.take_along_axis(errors_ext, j, axis=0)
+    e_aux_jump = jnp.take_along_axis(e_aux_ext, j, axis=0)
+
     diff_sq = jnp.where(
-        true_terminals,
-        errors ** 2,
+        hit_true_terminal,
+        e_start ** 2,  # Absorbs at e_term = 0; backward branch at s_term vanishes
         jnp.where(
-            is_timeout,
-            jnp.where(jumps == 0, (errors - e_jump) ** 2, 0.0),
-            jnp.where(valid_jump, (errors - e_jump) ** 2, 0.0),
+            hit_timeout,
+            0.0,
+            (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2,
         ),
     )
 
-    # 4. Weighting
+    # 4. Geometrically decaying start-state reset grounding (scanning over true_terminals & timeouts)
+    def scan_steps(k, step_flags):
+        term, timeout = step_flags
+        k_next = jnp.where(term, 0, jnp.where(timeout, 10_000, k + 1))
+        return k_next, k
+
+    init_k = jnp.full((B,), 10_000, dtype=jnp.int32) if init_steps_since_start is None else init_steps_since_start
+    final_k, steps_since_start = jax.lax.scan(scan_steps, init_k, (true_terminals, is_timeout))
+
+    start_trace = jnp.where(
+        gl < 1e-6,
+        jnp.where(steps_since_start[:T_start] == 0, 1.0, 0.0),
+        safe_gl ** steps_since_start[:T_start],
+    )
+
+    # 5. Exact theoretical prefactors
     tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
-    magnitude_weight = (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
+    magnitude_weight = 0.5 * (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
     dirichlet_weight = 0.5 * tilde_gamma
+    start_weight = 0.25 * tilde_gamma  # Double 1/2 factor: outer 1/2 * inner 1/2
 
-    magnitude_loss = magnitude_weight * jnp.mean(errors ** 2)
+    magnitude_loss = magnitude_weight * jnp.mean(e_start ** 2)
     dirichlet_loss = dirichlet_weight * jnp.mean(diff_sq)
-    value_loss = magnitude_loss + dirichlet_loss
+    start_loss = start_weight * jnp.mean(start_trace * (e_start ** 2))
+    value_loss = magnitude_loss + dirichlet_loss + start_loss
 
+    aux_loss = 0.5 * jnp.mean((sg(targets) - aux_values) ** 2)
+    total_loss = value_loss + aux_loss_coef * aux_loss
+
+    losses = {
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "dirichlet_loss": dirichlet_loss,
+        "start_loss": start_loss,
+        "aux_loss": aux_loss,
+        "total_loss": total_loss,
+    }
+
+    if return_details:
+        return total_loss, losses, final_k
     return value_loss, magnitude_loss, dirichlet_loss
 
 
@@ -1581,6 +1635,9 @@ def e_lambda_geometric_loss_fn(
     returns,
     config,
     rng,
+    aux_params=None,
+    aux_network=None,
+    init_steps_since_start=None,
 ):
     """
     Combined PPO loss with Method 3 sampled geometric E(lambda) critic loss.
@@ -1595,20 +1652,266 @@ def e_lambda_geometric_loss_fn(
     next_value_T = network.apply(params, traj_batch.next_obs[-1], method=network.value)
     next_target_T = traj_batch.next_value[-1]
 
+    # Auxiliary critic evaluations if auxiliary network is provided
+    if aux_network is not None and aux_params is not None:
+        aux_values = aux_network.apply(aux_params, traj_batch.obs)
+        next_aux_value_T = aux_network.apply(aux_params, traj_batch.next_obs[-1])
+    else:
+        aux_values = None
+        next_aux_value_T = None
+
     # Terminals vs Timeouts
     is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
     true_terminal = traj_batch.done & ~is_timeout
 
-    value_loss, magnitude_loss, dirichlet_loss = e_lambda_geometric_critic_loss(
+    _, loss_details, final_k = e_lambda_geometric_critic_loss(
         values=values,
         targets=returns,
         dones=traj_batch.done,
         gamma=gamma,
         lmbda=e_lambda,
         rng=rng,
+        aux_values=aux_values,
         true_terminals=true_terminal,
         next_value_T=next_value_T,
+        next_aux_value_T=next_aux_value_T,
         next_target_T=next_target_T,
+        init_steps_since_start=init_steps_since_start,
+        return_details=True,
+    )
+
+    value_loss = loss_details["value_loss"]
+    total_loss = (
+        config["POLICY_COEFF"] * loss_actor
+        + config["VF_COEF"] * value_loss
+        - config["ENT_COEF"] * entropy
+    )
+
+    losses = {
+        "total_loss": total_loss,
+        "value_loss": value_loss,
+        "magnitude_loss": loss_details["magnitude_loss"],
+        "dirichlet_loss": loss_details["dirichlet_loss"],
+        "start_loss": loss_details["start_loss"],
+        "aux_loss": loss_details.get("aux_loss", 0.0),
+        "actor_loss": loss_actor,
+        "entropy": entropy,
+        "final_k": final_k,
+    }
+    return total_loss, losses
+
+
+class ELambdaJumpTransition(NamedTuple):
+    """
+    Transition container pairing source states with geometric jump destination states.
+    Shape before shuffle_and_batch: (T_start, B, ...)
+    Shape inside minibatch: (minibatch_size, ...)
+    """
+    obs: jnp.ndarray
+    dest_obs: jnp.ndarray
+    target: jnp.ndarray
+    dest_target: jnp.ndarray
+    hit_true_terminal: jnp.ndarray
+    hit_timeout: jnp.ndarray
+    start_weight: jnp.ndarray
+    action: Optional[jnp.ndarray] = None
+    log_prob: Optional[jnp.ndarray] = None
+    advantage: Optional[jnp.ndarray] = None
+
+
+def prepare_e_lambda_jump_pairs(
+    traj_batch,
+    returns: jax.Array,
+    gamma: float,
+    lmbda: float,
+    rng: jax.Array,
+    steps_since_start: jax.Array,
+    advantages: Optional[jax.Array] = None,
+    runway_length: int = 16,
+):
+    """
+    Pairs each source state s_t with its geometric jump destination s_j = s_{min(t+m, T)},
+    evaluates boundary conditions in O(1), and packages an ELambdaJumpTransition of shape (T_start, B, ...).
+    Runs ONCE per rollout batch outside the gradient descent loop.
+    Returns (jump_batch, final_steps_since_start).
+    """
+    T, B = returns.shape[:2]
+    T_start = min(T, max(1, T - runway_length))
+    gl = gamma * lmbda
+    safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
+
+    # 1. Sample geometric jump lengths: m = K + 1 where K ~ Geom(1 - gl)
+    u = jax.random.uniform(rng, shape=(T_start, B))
+    jumps = jnp.where(
+        gl < 1e-6,
+        jnp.zeros((T_start, B), dtype=jnp.int32),
+        jnp.floor(jnp.log(jnp.clip(1.0 - u, 1e-8, 1.0)) / jnp.log(safe_gl)).astype(jnp.int32),
+    )
+    m = jnp.maximum(jumps, 0) + 1
+    t_arr = jnp.arange(T_start)[:, None]
+    j = jnp.minimum(t_arr + m, T)
+
+    # 2. Episode boundary queries in [t, j - 1]
+    is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
+    true_terminals = traj_batch.done & ~is_timeout
+
+    term_cumsum = jnp.concatenate(
+        [jnp.zeros((1, B), dtype=jnp.int32), jnp.cumsum(true_terminals.astype(jnp.int32), axis=0)],
+        axis=0,
+    )
+    timeout_cumsum = jnp.concatenate(
+        [jnp.zeros((1, B), dtype=jnp.int32), jnp.cumsum(is_timeout.astype(jnp.int32), axis=0)],
+        axis=0,
+    )
+
+    hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T_start]) > 0
+    hit_timeout = (jnp.take_along_axis(timeout_cumsum, j, axis=0) - timeout_cumsum[:T_start]) > 0
+
+    # 3. Track steps since start (clearing to 10,000 on timeout)
+    def scan_steps(k, step_flags):
+        term, timeout = step_flags
+        k_next = jnp.where(term, 0, jnp.where(timeout, 10_000, k + 1))
+        return k_next, k
+
+    init_k = jnp.full((B,), 10_000, dtype=jnp.int32) if steps_since_start is None else steps_since_start
+    final_steps_since_start, all_steps = jax.lax.scan(scan_steps, init_k, (true_terminals, is_timeout))
+
+    tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
+    start_trace = jnp.where(
+        gl < 1e-6,
+        jnp.where(all_steps[:T_start] == 0, 1.0, 0.0),
+        safe_gl ** all_steps[:T_start],
+    )
+    start_weight = 0.25 * tilde_gamma * start_trace
+
+    # 4. Form extended arrays (length T + 1) for destination lookups at step T
+    obs_ext = jnp.concatenate([traj_batch.obs, traj_batch.next_obs[-1][None]], axis=0)
+    target_ext = jnp.concatenate([returns, traj_batch.next_value[-1][None]], axis=0)
+
+    # Gather destination states and targets along time axis (axis 0)
+    j_expanded = j.reshape(j.shape + (1,) * (obs_ext.ndim - 2))
+    j_expanded = jnp.broadcast_to(j_expanded, (T_start, B) + obs_ext.shape[2:])
+    dest_obs = jnp.take_along_axis(obs_ext, j_expanded, axis=0)
+    dest_target = jnp.take_along_axis(target_ext, j, axis=0)
+
+    action = traj_batch.action[:T_start] if hasattr(traj_batch, "action") else None
+    log_prob = traj_batch.log_prob[:T_start] if hasattr(traj_batch, "log_prob") else None
+    adv = advantages[:T_start] if advantages is not None else None
+
+    jump_batch = ELambdaJumpTransition(
+        obs=traj_batch.obs[:T_start],
+        dest_obs=dest_obs,
+        target=returns[:T_start],
+        dest_target=dest_target,
+        hit_true_terminal=hit_true_terminal,
+        hit_timeout=hit_timeout,
+        start_weight=start_weight,
+        action=action,
+        log_prob=log_prob,
+        advantage=adv,
+    )
+    return jump_batch, final_steps_since_start
+
+
+def e_lambda_pointwise_critic_loss(
+    v_start: jax.Array,
+    v_jump: jax.Array,
+    v_aux_start: jax.Array,
+    v_aux_jump: jax.Array,
+    mb: ELambdaJumpTransition,
+    gamma: float,
+    lmbda: float,
+    variant: str = "aux",
+):
+    """
+    Evaluates the exact Dirichlet, magnitude, and start losses on a 1D minibatch of jump pairs.
+    Supported variants:
+    - 'aux' / 'v_aux': Debiased surrogate using auxiliary critic v_aux for the backward branch
+    - 'naive' / 'oct8': Naive jump sampling (Oct 8 analog) differentiating both source and destination
+    - 'fwd' / 'forward': Forward-only sampling dropping the backward gradient branch
+    """
+    sg = jax.lax.stop_gradient
+    gl = gamma * lmbda
+
+    e_start = sg(mb.target) - v_start
+    e_jump = jnp.where(mb.hit_true_terminal, 0.0, sg(mb.dest_target) - v_jump)
+
+    e_aux_start = sg(v_aux_start) - v_start
+    e_aux_jump = jnp.where(mb.hit_true_terminal, 0.0, sg(v_aux_jump) - v_jump)
+
+    if variant in ["naive", "oct8"]:
+        inner_diff_sq = (e_start - e_jump) ** 2
+    elif variant in ["fwd", "forward", "forward_e"]:
+        inner_diff_sq = (e_start - sg(e_jump)) ** 2
+    else:
+        inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
+
+    diff_sq = jnp.where(
+        mb.hit_true_terminal,
+        e_start ** 2,
+        jnp.where(mb.hit_timeout, 0.0, inner_diff_sq),
+    )
+
+    tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
+    magnitude_weight = 0.5 * (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
+    dirichlet_weight = 0.5 * tilde_gamma
+
+    magnitude_loss = magnitude_weight * jnp.mean(e_start ** 2)
+    dirichlet_loss = dirichlet_weight * jnp.mean(diff_sq)
+    start_loss = jnp.mean(mb.start_weight * (e_start ** 2))
+    value_loss = magnitude_loss + dirichlet_loss + start_loss
+
+    losses = {
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "dirichlet_loss": dirichlet_loss,
+        "start_loss": start_loss,
+    }
+    return value_loss, losses
+
+
+def e_lambda_ppo_minibatch_loss(
+    params,
+    network,
+    mb: ELambdaJumpTransition,
+    config,
+    aux_params=None,
+    aux_network=None,
+):
+    """
+    Combined PPO loss on a flat minibatch of jump pairs.
+    """
+    # 1. Actor policy loss & entropy
+    pi = network.apply(params, mb.obs, method=network.policy)
+    log_prob = pi.log_prob(mb.action)
+    ratio = jnp.exp(log_prob - mb.log_prob)
+    adv = post_process_advantage(mb.advantage, config)
+    loss_actor1 = ratio * adv
+    loss_actor2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * adv
+    loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
+    entropy = pi.entropy().mean()
+
+    # 2. Critic value predictions on (obs, dest_obs)
+    v_start = network.apply(params, mb.obs, method=network.value)
+    v_jump = network.apply(params, mb.dest_obs, method=network.value)
+
+    if aux_network is not None and aux_params is not None:
+        v_aux_start = aux_network.apply(aux_params, mb.obs)
+        v_aux_jump = aux_network.apply(aux_params, mb.dest_obs)
+    else:
+        v_aux_start = v_start
+        v_aux_jump = v_jump
+
+    variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
+    value_loss, critic_losses = e_lambda_pointwise_critic_loss(
+        v_start=v_start,
+        v_jump=v_jump,
+        v_aux_start=v_aux_start,
+        v_aux_jump=v_aux_jump,
+        mb=mb,
+        gamma=config["GAMMA"],
+        lmbda=config["VALUE_LAMBDA"],
+        variant=variant,
     )
 
     total_loss = (
@@ -1620,12 +1923,51 @@ def e_lambda_geometric_loss_fn(
     losses = {
         "total_loss": total_loss,
         "value_loss": value_loss,
-        "magnitude_loss": magnitude_loss,
-        "dirichlet_loss": dirichlet_loss,
+        "magnitude_loss": critic_losses["magnitude_loss"],
+        "dirichlet_loss": critic_losses["dirichlet_loss"],
+        "start_loss": critic_losses["start_loss"],
         "actor_loss": loss_actor,
         "entropy": entropy,
     }
     return total_loss, losses
+
+
+def e_lambda_fixed_critic_minibatch_loss(
+    params,
+    network,
+    mb: ELambdaJumpTransition,
+    config,
+    aux_params=None,
+    aux_network=None,
+):
+    """
+    Critic-only loss on a flat minibatch of jump pairs for fixed policy evaluation.
+    """
+    v_start = network.apply(params, mb.obs)
+    v_jump = network.apply(params, mb.dest_obs)
+
+    if aux_network is not None and aux_params is not None:
+        v_aux_start = aux_network.apply(aux_params, mb.obs)
+        v_aux_jump = aux_network.apply(aux_params, mb.dest_obs)
+    else:
+        v_aux_start = v_start
+        v_aux_jump = v_jump
+
+    variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
+    value_loss, critic_losses = e_lambda_pointwise_critic_loss(
+        v_start=v_start,
+        v_jump=v_jump,
+        v_aux_start=v_aux_start,
+        v_aux_jump=v_aux_jump,
+        mb=mb,
+        gamma=config["GAMMA"],
+        lmbda=config["VALUE_LAMBDA"],
+        variant=variant,
+    )
+
+    total_loss = config.get("VF_COEF", 1.0) * value_loss
+    critic_losses["total_loss"] = total_loss
+    return total_loss, critic_losses
 
 
 # Re-export compute_runtime_metrics for convenience

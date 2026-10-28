@@ -32,6 +32,8 @@ matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 matplotlib.rcParams["font.sans-serif"] = "DejaVu Sans"
 
+trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
+
 ALL_ENVS = [
     "fourrooms-dense",
     "FourRooms-misc",
@@ -43,6 +45,19 @@ ALL_ENVS = [
     "SpaceInvadersExactValue",
     "mountaincar-dense",
 ]
+
+ENV_TITLES = {
+    "mountaincar": "Mountain Car (Sparse)",
+    "FourRooms-misc": "FourRooms (Sparse)",
+    "fourrooms-mines": "FourRooms + Mines",
+    "fourrooms-mines-dense": "FourRooms + Mines (Dense)",
+    "eightrooms-dense": "EightRooms (Dense)",
+    "eightrooms-misc": "EightRooms (Sparse)",
+    "whirlpool-misc": "Whirlpool (Irreversible)",
+    "SpaceInvadersExactValue": "Space Invaders",
+    "mountaincar-dense": "Mountain Car (Dense)",
+    "fourrooms-dense": "FourRooms (Dense)",
+}
 
 VAR_COLORS = {
     "oct8": "#2ca02c",      # Green
@@ -243,6 +258,146 @@ def plot_aggregate_gradient_metrics(env_data: dict, save_dir: str):
     print(f"Saved aggregate gradient metrics: {pdf_path}")
 
 
+def compute_metric_auc(metrics: dict, key: str) -> tuple[float, float]:
+    """
+    Computes normalized trapezoidal Area Under the Curve (AUC) across update steps.
+    Returns (mean_auc, sem_auc) across seeds.
+    """
+    if metrics is None or key not in metrics:
+        return 0.0, 0.0
+    arr = np.asarray(metrics[key])
+    if arr.ndim == 1:
+        steps = len(arr)
+        val = float(trapz_fn(arr) / max(1, steps - 1)) if steps > 1 else float(arr[0])
+        return val, 0.0
+    elif arr.ndim >= 2:
+        aucs = []
+        for s in range(arr.shape[0]):
+            series = arr[s]
+            steps = len(series)
+            auc = float(trapz_fn(series) / max(1, steps - 1)) if steps > 1 else float(series[0])
+            aucs.append(auc)
+        aucs = np.asarray(aucs, dtype=float)
+        mean_auc = float(np.nanmean(aucs))
+        sem_auc = float(np.nanstd(aucs, ddof=1) / np.sqrt(len(aucs))) if len(aucs) > 1 else 0.0
+        return mean_auc, sem_auc
+    return 0.0, 0.0
+
+
+def plot_cosine_auc_bars(env_data: dict, save_dir: str):
+    """
+    Bar plot of Cosine Similarity AUC per environment to exact matrix E gradient.
+    Sized and formatted for ICML columns / margins.
+    Generates both single-column (3.25 in) and double-column (6.75 in) versions.
+    """
+    valid_envs = [e for e in ALL_ENVS if e in env_data]
+    if not valid_envs:
+        return
+
+    n_envs = len(valid_envs)
+    variants = [
+        ("oct8", VAR_COLORS["oct8"], "Oct 8"),
+        ("fwd", VAR_COLORS["fwd"], "Forward Only"),
+        ("v_aux", VAR_COLORS["v_aux"], "V_aux"),
+    ]
+    n_vars = len(variants)
+
+    # Gather AUC and SEM data
+    auc_data = {v_key: [] for v_key, _, _ in variants}
+    sem_data = {v_key: [] for v_key, _, _ in variants}
+
+    for e in valid_envs:
+        m = env_data[e]
+        for v_key, _, _ in variants:
+            mean_auc, sem_auc = compute_metric_auc(m, f"rho_samp_{v_key}_exact")
+            auc_data[v_key].append(mean_auc)
+            sem_data[v_key].append(sem_auc)
+
+    env_labels = [ENV_TITLES.get(e, e) for e in valid_envs]
+
+    # Style configs for ICML:
+    # 1. Full-width / double-column: 6.75 in width (ideal for 2-column span or large margins)
+    # 2. Single-column / column-width: 3.25 in width (ICML column width is 3.25 in)
+    configs = [
+        {
+            "suffix": "",
+            "figsize": (6.75, 2.7),
+            "fontsize_title": 10.0,
+            "fontsize_label": 9.0,
+            "fontsize_tick": 8.0,
+            "fontsize_legend": 8.0,
+            "rotation": 22,
+            "capsize": 2.5,
+            "total_width": 0.76,
+            "legend_y": 1.22,
+            "y_max": 1.15,
+        },
+        {
+            "suffix": "_single_col",
+            "figsize": (3.25, 2.4),
+            "fontsize_title": 7.5,
+            "fontsize_label": 7.0,
+            "fontsize_tick": 6.0,
+            "fontsize_legend": 6.0,
+            "rotation": 35,
+            "capsize": 1.8,
+            "total_width": 0.80,
+            "legend_y": 1.25,
+            "y_max": 1.15,
+        },
+    ]
+
+    for cfg in configs:
+        fig, ax = plt.subplots(figsize=cfg["figsize"], dpi=300)
+        indices = np.arange(n_envs)
+        bar_w = cfg["total_width"] / n_vars
+
+        for i, (v_key, color, label) in enumerate(variants):
+            offset = (i - (n_vars - 1) / 2) * bar_w
+            ax.bar(
+                indices + offset,
+                auc_data[v_key],
+                bar_w,
+                yerr=sem_data[v_key],
+                label=label,
+                color=color,
+                alpha=0.90,
+                edgecolor="#222222",
+                linewidth=0.5,
+                capsize=cfg["capsize"],
+                error_kw={"elinewidth": 0.7, "capthick": 0.7, "ecolor": "#222222"},
+            )
+
+        ax.axhline(0.0, color="#555555", linestyle="-", lw=0.6, alpha=0.7)
+        ax.axhline(1.0, color="#888888", linestyle=":", lw=0.8, alpha=0.8)
+        ax.set_xticks(indices)
+        ax.set_xticklabels(env_labels, rotation=cfg["rotation"], ha="right", fontsize=cfg["fontsize_tick"])
+        ax.set_ylabel(r"Cosine Alignment AUC ($\rho$)", fontsize=cfg["fontsize_label"])
+        ax.set_ylim(-0.35, cfg["y_max"])
+        ax.set_title("Sample Gradient Cosine Alignment to Exact E (AUC)", fontsize=cfg["fontsize_title"], fontweight="bold", pad=20)
+        ax.grid(True, linestyle="--", alpha=0.3, axis="y")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, cfg["legend_y"]),
+            ncol=3,
+            fontsize=cfg["fontsize_legend"],
+            frameon=False,
+            handlelength=1.2,
+            handletextpad=0.3,
+            columnspacing=1.0,
+        )
+
+        plt.tight_layout(pad=0.2)
+        pdf_out = os.path.join(save_dir, f"cosine_auc_per_env{cfg['suffix']}.pdf")
+        png_out = os.path.join(save_dir, f"cosine_auc_per_env{cfg['suffix']}.png")
+        plt.savefig(pdf_out, bbox_inches="tight")
+        plt.savefig(png_out, bbox_inches="tight", dpi=300)
+        plt.close(fig)
+        print(f"Saved: {pdf_out} and {png_out}")
+
+
 def main():
     args = parse_args()
     results_dir = os.path.abspath(args.results_dir)
@@ -273,6 +428,11 @@ def main():
     # Central Figure: Aggregate Gradient Metrics Across Environments
     # -------------------------------------------------------------------------
     plot_aggregate_gradient_metrics(env_data, save_dir)
+
+    # -------------------------------------------------------------------------
+    # Bar Chart: Cosine Similarity AUC per Environment (ICML Margins)
+    # -------------------------------------------------------------------------
+    plot_cosine_auc_bars(env_data, save_dir)
 
     # -------------------------------------------------------------------------
     # Plot: Gradient MSE Time Series Across Environments
@@ -414,6 +574,11 @@ def main():
             if m is not None:
                 row[f"{k}_mean"] = float(np.nanmean(m))
                 row[f"{k}_final"] = float(m[-1])
+        # Also record AUC for cosine similarities
+        for v_key in ["oct8", "fwd", "v_aux"]:
+            auc_m, auc_s = compute_metric_auc(metrics, f"rho_samp_{v_key}_exact")
+            row[f"rho_samp_{v_key}_exact_auc"] = auc_m
+            row[f"rho_samp_{v_key}_exact_auc_sem"] = auc_s
         summary_rows.append(row)
 
     if summary_rows:

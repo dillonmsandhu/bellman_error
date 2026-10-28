@@ -84,7 +84,12 @@ def make_train(base_config):
             D = jnp.diag(mu)
             
             P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
-            A_mat = D @ (I - γ * P_pi)
+            val_lmbda = config.get("VALUE_LAMBDA", 0.0)
+            if val_lmbda > 0.0:
+                L_lmbda = jnp.linalg.inv(I - γ * val_lmbda * P_pi)
+                A_mat = D @ (I - γ * P_pi) @ L_lmbda
+            else:
+                A_mat = D @ (I - γ * P_pi)
             S_mat = 0.5 * (A_mat + A_mat.T)
 
             # True value function for the current policy (for E-loss target)
@@ -147,25 +152,48 @@ def make_train(base_config):
                     evaluator, network, train_state.params, random_policy=False,)
                 )
             if config.get("LOG_SAMPLING_E_METRICS", False):
-                from core.sampling_e_metrics import compute_sampling_e_metrics
                 sampling_rng = jax.random.fold_in(rng, idx)
-                sampling_metrics, aux_train_state = compute_sampling_e_metrics(
-                    evaluator=evaluator,
-                    network=network,
-                    params=train_state.params,
-                    mu=mu,
-                    V_true=V_true,
-                    P_pi=P_pi,
-                    S_mat=S_mat,
-                    gamma=γ,
-                    rng=sampling_rng,
-                    num_trajectories=config.get("SAMPLING_E_NUM_TRAJECTORIES", 128),
-                    num_steps=config.get("SAMPLING_E_NUM_STEPS", 128),
-                    aux_network=aux_network,
-                    aux_train_state=aux_train_state,
-                    aux_steps=config.get("SAMPLING_E_AUX_STEPS", 32),
-                    aux_target_mode=config.get("SAMPLING_E_AUX_TARGET_MODE", "true_value"),
-                )
+                val_lmbda = config.get("VALUE_LAMBDA", 0.0)
+                if val_lmbda > 0.0:
+                    from core.sampling_e_lambda_metrics import compute_sampling_e_lambda_metrics
+                    sampling_metrics, aux_train_state = compute_sampling_e_lambda_metrics(
+                        evaluator=evaluator,
+                        network=network,
+                        params=train_state.params,
+                        mu=mu,
+                        V_true=V_true,
+                        P_pi=P_pi,
+                        S_mat=S_mat,
+                        gamma=γ,
+                        lmbda=val_lmbda,
+                        rng=sampling_rng,
+                        num_trajectories=config.get("SAMPLING_E_NUM_TRAJECTORIES", 128),
+                        num_steps=config.get("SAMPLING_E_NUM_STEPS", 128),
+                        aux_network=aux_network,
+                        aux_train_state=aux_train_state,
+                        aux_steps=config.get("SAMPLING_E_AUX_STEPS", 32),
+                        aux_target_mode=config.get("SAMPLING_E_AUX_TARGET_MODE", "true_value"),
+                        runway_length=config.get("RUNWAY_LENGTH", 16),
+                    )
+                else:
+                    from core.sampling_e_metrics import compute_sampling_e_metrics
+                    sampling_metrics, aux_train_state = compute_sampling_e_metrics(
+                        evaluator=evaluator,
+                        network=network,
+                        params=train_state.params,
+                        mu=mu,
+                        V_true=V_true,
+                        P_pi=P_pi,
+                        S_mat=S_mat,
+                        gamma=γ,
+                        rng=sampling_rng,
+                        num_trajectories=config.get("SAMPLING_E_NUM_TRAJECTORIES", 128),
+                        num_steps=config.get("SAMPLING_E_NUM_STEPS", 128),
+                        aux_network=aux_network,
+                        aux_train_state=aux_train_state,
+                        aux_steps=config.get("SAMPLING_E_AUX_STEPS", 32),
+                        aux_target_mode=config.get("SAMPLING_E_AUX_TARGET_MODE", "true_value"),
+                    )
                 metric.update(sampling_metrics)
             # Policy tracking metrics (TV distance between policies and stationary distributions, state coverage)
             if is_continuous:
