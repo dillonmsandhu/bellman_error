@@ -42,9 +42,10 @@ SEED=42
 K_VAL=32
 ACTOR_LR=0.0003
 CRITIC_LRS="0.0005 0.001 0.003"
-LAMBDAS="0.5 0.9 0.95"
+LAMBDAS="0.4 0.8 0.95 0.99"
+ALGOS="td_lambda e_lambda e_lambda_fwd"
 NUM_ENVS=32
-NUM_STEPS=128
+NUM_STEPS=256
 MINIBATCH_SIZE=256
 NUM_EPOCHS=4
 GAE_LAMBDA=0.8
@@ -117,6 +118,7 @@ for env_name in "${RUN_LIST[@]}"; do
         --actor_lr "$ACTOR_LR" \
         --critic_lrs $CRITIC_LRS \
         --lambdas $LAMBDAS \
+        --algos $ALGOS \
         --num_envs "$NUM_ENVS" \
         --num_steps "$NUM_STEPS" \
         --minibatch_size "$MINIBATCH_SIZE" \

@@ -62,25 +62,43 @@ ALL_ENVS = [
 ALGORITHMS = {
     "td_lambda": {
         "display_name": "TD(λ)",
+        "cond_prefix": "td",
         "train_builder": make_td_lambda_train,
         "base_hparams": {},
         "color_base": "#ff7f0e",  # Orange base
     },
     "e_lambda": {
         "display_name": "E(λ) [v_aux]",
+        "cond_prefix": "e",
         "train_builder": make_e_lambda_train,
         "base_hparams": {"E_LAMBDA_VARIANT": "aux", "RETURN_LAMBDA": 1.0},
         "color_base": "#2ca02c",  # Green base
     },
+    "e_lambda_fwd": {
+        "display_name": "E(λ) [Forward-Only]",
+        "cond_prefix": "e_fwd",
+        "train_builder": make_e_lambda_train,
+        "base_hparams": {"E_LAMBDA_VARIANT": "forward", "RETURN_LAMBDA": 1.0},
+        "color_base": "#1f77b4",  # Blue base
+    },
 }
 
 LAMBDA_COLORS = {
-    "td_0.50": "#fdae6b",
-    "td_0.90": "#f16913",
-    "td_0.95": "#8c2d04",
-    "e_0.50": "#a1d99b",
-    "e_0.90": "#41ab5d",
-    "e_0.95": "#005a32",
+    # TD(lambda) - Orange / Red shades
+    "td_0.40": "#fdd0a2",
+    "td_0.80": "#fdae6b",
+    "td_0.95": "#e6550d",
+    "td_0.99": "#8c2d04",
+    # E(lambda) [v_aux] - Green shades
+    "e_0.40": "#c7e9c0",
+    "e_0.80": "#74c476",
+    "e_0.95": "#238b45",
+    "e_0.99": "#00441b",
+    # E(lambda) [Forward-Only] - Blue shades
+    "e_fwd_0.40": "#c6dbef",
+    "e_fwd_0.80": "#6baed6",
+    "e_fwd_0.95": "#2171b5",
+    "e_fwd_0.99": "#08306b",
 }
 
 
@@ -88,7 +106,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Sampled PPO Lambda Sweep on a Single Env")
     parser.add_argument("--env_name", type=str, default="FourRooms-misc", help="Name of the environment")
     parser.add_argument("--env_idx", type=int, default=None, help="Index into ALL_ENVS (0-8)")
-    parser.add_argument("--lambdas", type=float, nargs="+", default=[0.5, 0.9, 0.95], help="Lambda values to evaluate (default: 0.5 0.9 0.95)")
+    parser.add_argument("--lambdas", type=float, nargs="+", default=[0.4, 0.8, 0.95, 0.99], help="Lambda values to evaluate (default: 0.4 0.8 0.95 0.99)")
     parser.add_argument("--num_updates", type=int, default=100, help="Number of rollout updates (default: 100)")
     parser.add_argument("--n_seeds", type=int, default=10, help="Number of random seeds (default: 10)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
@@ -96,7 +114,7 @@ def parse_args():
     parser.add_argument("--actor_lr", type=float, default=0.0003, help="Actor learning rate (default: 0.0003)")
     parser.add_argument("--critic_lrs", type=float, nargs="+", default=[0.0005, 0.001, 0.003], help="Critic learning rates to sweep (default: 0.0005 0.001 0.003)")
     parser.add_argument("--num_envs", type=int, default=32, help="Parallel environments (default: 32)")
-    parser.add_argument("--num_steps", type=int, default=128, help="Steps per rollout (default: 128)")
+    parser.add_argument("--num_steps", type=int, default=256, help="Steps per rollout (default: 256)")
     parser.add_argument("--minibatch_size", type=int, default=256, help="Minibatch size (default: 256)")
     parser.add_argument("--num_epochs", type=int, default=4, help="Epochs per update (default: 4)")
     parser.add_argument("--gae_lambda", type=float, default=0.8, help="Actor GAE lambda (default: 0.8)")
@@ -105,7 +123,8 @@ def parse_args():
     parser.add_argument("--runway_length", type=int, default=16, help="Runway window length for geometric jumps (default: 16)")
     parser.add_argument("--select_by", type=str, default="std_perf_auc", choices=["std_perf_auc", "std_perf_final", "ve_auc"], help="Metric to select best critic condition")
     parser.add_argument("--out_dir", type=str, default="results/sampled_lambda_sweep", help="Root output directory")
-    parser.add_argument("--algos", type=str, nargs="+", default=["td_lambda", "e_lambda"], choices=["td_lambda", "e_lambda"], help="Algorithms to evaluate")
+    parser.add_argument("--algos", type=str, nargs="+", default=["td_lambda", "e_lambda", "e_lambda_fwd"], choices=["td_lambda", "e_lambda", "e_lambda_fwd"], help="Algorithms to evaluate")
+    parser.add_argument("--eval_grad_fidelity", action="store_true", default=True, help="Compute exact gradient MSE, variance, and cossim (default: True)")
     return parser.parse_args()
 
 
@@ -168,6 +187,213 @@ def compute_normalized_auc(trajectory_1d: np.ndarray) -> float:
         return float(trajectory_1d[0])
     x = np.arange(len(trajectory_1d))
     return float(trapz_fn(trajectory_1d, x) / (len(trajectory_1d) - 1))
+
+
+def compute_gradient_fidelity(
+    env_name: str,
+    algo_key: str,
+    lam: float,
+    gamma: float = 0.99,
+    k: int = 32,
+    num_eval_batches: int = 20,
+    num_trajectories: int = 32,
+    num_steps: int = 128,
+    seed: int = 42,
+) -> Dict[str, float]:
+    """
+    Evaluates empirical sample gradient MSE, empirical trace variance,
+    and cosine similarity against the exact matrix gradient.
+    NOTE:
+      - For E(lambda) [v_aux] AND E(lambda) [Forward-Only], g_exact is the exact E(lambda) gradient (- J^T S_lambda e).
+      - For TD(lambda), g_exact is the exact TD(lambda) update (- J^T A_lambda e).
+    """
+    try:
+        from core.networks import initialize_network, initialize_flax_train_state
+        from core.gradient_tracking import extract_critic_flat_grads, cos_similarity
+        from core.helpers import e_lambda_geometric_critic_loss
+
+        cfg = base_cfg.copy()
+        cfg["ENV_NAME"] = env_name
+        cfg["k"] = k
+        env, env_params = helpers.make_env(cfg)
+        evaluator = helpers.create_evaluator(cfg, env, env_params)
+
+        S_states = evaluator.obs_stack
+        N = evaluator.num_states
+        start_idx = evaluator.start_idx
+        P = evaluator.P
+
+        old_pi = jnp.ones((N, 4)) / 4.0
+        terminal_policy = jnp.ones([1, 4]) / 4.0
+        old_pi_full = jnp.vstack([old_pi, terminal_policy])
+
+        mu = evaluator.compute_stationary_distribution_raw(old_pi)[0]
+        mu = jnp.append(mu, 0.0)
+        D = jnp.diag(mu)
+        P_pi = jnp.einsum("sa,sam->sm", old_pi_full, P)
+        I = jnp.eye(N + 1)
+        V_true = evaluator.compute_true_values_raw(old_pi_full)
+
+        mu_trans = mu[:N] / jnp.maximum(jnp.sum(mu[:N]), 1e-12)
+
+        rng = jax.random.PRNGKey(seed)
+        rng, rng_net, rng_aux = jax.random.split(rng, 3)
+        obs_shape = evaluator.obs_stack.shape[1:]
+
+        network, params = initialize_network(rng_net, obs_shape, env, env_params, k, n_heads=1, layer_norm=False)
+        aux_network, aux_params = initialize_network(rng_aux, obs_shape, env, env_params, k, n_heads=1, layer_norm=False)
+        aux_cfg = cfg.copy()
+        aux_cfg["NUM_UPDATES"] = 100
+        aux_cfg["NUM_MINIBATCHES"] = 1
+        aux_cfg["NUM_EPOCHS"] = 1
+        aux_train_state = initialize_flax_train_state(aux_cfg, aux_network, aux_params)
+
+        v_cur = network.apply(params, S_states, method=network.value).squeeze()
+        v_full_cur = jnp.append(v_cur, 0.0)
+
+        # 1. Exact Compound Matrix
+        L_lam = jnp.linalg.inv(I - gamma * lam * P_pi)
+        A_lam = D @ (I - gamma * P_pi) @ L_lam
+        S_lam = 0.5 * (A_lam + A_lam.T)
+
+        def get_e(p):
+            v = network.apply(p, S_states, method=network.value).squeeze()
+            return V_true - jnp.append(v, 0.0)
+
+        if algo_key == "td_lambda":
+            # TD update direction: grad_p (v^T A_lam e_sg) = J^T A_lam e
+            e_val = get_e(params)
+            def td_exact_loss(p):
+                v_p = network.apply(p, S_states, method=network.value).squeeze()
+                v_full = jnp.append(v_p, 0.0)
+                return jnp.dot(v_full, A_lam @ jax.lax.stop_gradient(e_val))
+            g_exact = extract_critic_flat_grads(jax.grad(td_exact_loss)(params))
+        else:
+            # E(lambda) exact gradient: grad_p (0.5 * e^T S_lam e)
+            # Both v_aux and Forward-Only estimators are evaluated against this exact objective!
+            def e_exact_loss(p):
+                e = get_e(p)
+                return 0.5 * (e.T @ S_lam @ e)
+            g_exact = extract_critic_flat_grads(jax.grad(e_exact_loss)(params))
+
+        # 2. Rollout sampling
+        @jax.jit
+        def sample_rollout(roll_rng):
+            r_init, r_steps = jax.random.split(roll_rng)
+            s0 = jax.random.choice(r_init, N, shape=(num_trajectories,), p=mu_trans)
+
+            def step_fn(carry_s, step_rng):
+                rng_a, rng_s = jax.random.split(step_rng)
+                step_rngs_a = jax.random.split(rng_a, num_trajectories)
+                step_rngs_s = jax.random.split(rng_s, num_trajectories)
+                logits_pi = jnp.log(jnp.maximum(old_pi_full[carry_s], 1e-12))
+                actions = jax.vmap(jax.random.categorical)(step_rngs_a, logits_pi)
+                P_sa = P[carry_s, actions]
+                logits_p = jnp.log(jnp.maximum(P_sa, 1e-12))
+                next_s_raw = jax.vmap(jax.random.categorical)(step_rngs_s, logits_p)
+                rewards = evaluator.R[carry_s, actions, next_s_raw]
+                dones = (next_s_raw == N)
+                next_s_carry = jnp.where(dones, start_idx, next_s_raw)
+                return next_s_carry, (carry_s, next_s_raw, rewards, dones)
+
+            step_rngs = jax.random.split(r_steps, num_steps)
+            final_s, (traj_s, traj_next_s, traj_r, traj_done) = jax.lax.scan(step_fn, s0, step_rngs)
+            return traj_s, traj_next_s, traj_r, traj_done, final_s
+
+        @jax.jit
+        def compute_mc_returns(traj_r, traj_done, final_s):
+            v_final = v_full_cur[final_s]
+            def rev_scan_fn(g_next, step_data):
+                r_t, d_t = step_data
+                g_cur = r_t + gamma * jnp.where(d_t, 0.0, g_next)
+                return g_cur, g_cur
+            _, returns = jax.lax.scan(rev_scan_fn, v_final, (traj_r, traj_done), reverse=True)
+            return returns
+
+        if algo_key == "e_lambda":
+            pretrain_keys = jax.random.split(rng, 10)
+            for pk in pretrain_keys:
+                traj_s, _, traj_r, traj_done, final_s = sample_rollout(pk)
+                returns = compute_mc_returns(traj_r, traj_done, final_s)
+                def aux_step(ts, _):
+                    def loss(p_a):
+                        v_pred = aux_network.apply(p_a, S_states).squeeze()
+                        v_full = jnp.append(v_pred, 0.0)
+                        return jnp.mean((returns - v_full[traj_s]) ** 2)
+                    grads = jax.grad(loss)(ts.params)
+                    return ts.apply_gradients(grads=grads), None
+                aux_train_state, _ = jax.lax.scan(aux_step, aux_train_state, None, length=3)
+
+        batch_keys = jax.random.split(rng, num_eval_batches)
+        sample_grads = []
+
+        for bk in batch_keys:
+            r_roll, r_jump = jax.random.split(bk)
+            traj_s, _, traj_r, traj_done, final_s = sample_rollout(r_roll)
+            returns = compute_mc_returns(traj_r, traj_done, final_s)
+
+            if algo_key == "td_lambda":
+                v_s = network.apply(params, S_states, method=network.value).squeeze()
+                v_full = jnp.append(v_s, 0.0)
+                v_traj = v_full[traj_s]
+                v_final = v_full[final_s]
+
+                def gae_scan(gae_next, step_data):
+                    r_t, d_t, v_t, v_nxt = step_data
+                    mask = 1.0 - d_t.astype(jnp.float32)
+                    delta = r_t + gamma * v_nxt * mask - v_t
+                    gae_cur = delta + gamma * lam * mask * gae_next
+                    return gae_cur, gae_cur + v_t
+
+                v_nxt_all = jnp.concatenate([v_traj[1:], v_final[None]], axis=0)
+                _, targets = jax.lax.scan(gae_scan, jnp.zeros_like(v_traj[0]), (traj_r, traj_done, v_traj, v_nxt_all), reverse=True)
+
+                def td_loss(p_c):
+                    v_curr = network.apply(p_c, S_states, method=network.value).squeeze()
+                    v_all = jnp.append(v_curr, 0.0)[traj_s]
+                    return 0.5 * jnp.mean((v_all - jax.lax.stop_gradient(targets)) ** 2)
+
+                g_samp = extract_critic_flat_grads(jax.grad(td_loss)(params))
+            else:
+                if algo_key == "e_lambda":
+                    v_aux_all = aux_network.apply(aux_train_state.params, S_states, method=aux_network.value).squeeze()
+                    v_aux_full = jnp.append(v_aux_all, 0.0)
+                    aux_vals = v_aux_full[traj_s]
+                else:
+                    aux_vals = None  # Forward-Only
+
+                def e_loss(p_c):
+                    v_a = network.apply(p_c, S_states, method=network.value).squeeze()
+                    vals = jnp.append(v_a, 0.0)[traj_s]
+                    val_loss, _, _ = e_lambda_geometric_critic_loss(
+                        values=vals,
+                        targets=returns,
+                        dones=traj_done,
+                        gamma=gamma,
+                        lmbda=lam,
+                        rng=r_jump,
+                        aux_values=aux_vals,
+                        true_terminals=traj_done,
+                        return_details=False,
+                    )
+                    return val_loss
+
+                g_samp = extract_critic_flat_grads(jax.grad(e_loss)(params))
+
+            sample_grads.append(np.array(g_samp))
+
+        sample_grads = np.array(sample_grads)
+        g_exact_np = np.array(g_exact)
+
+        grad_mse = float(np.mean(np.linalg.norm(sample_grads - g_exact_np, axis=1) ** 2))
+        grad_var = float(np.sum(np.var(sample_grads, axis=0)))
+        grad_cossim = float(np.mean([cos_similarity(g, g_exact_np) for g in sample_grads]))
+
+        return {"grad_mse": grad_mse, "grad_var": grad_var, "grad_cossim": grad_cossim}
+
+    except Exception as e:
+        print(f"    [Warning: could not evaluate gradient fidelity: {e}]")
+        return {"grad_mse": float("nan"), "grad_var": float("nan"), "grad_cossim": float("nan")}
 
 
 def run_algo_condition(
@@ -251,14 +477,30 @@ def main():
 
     for algo_key in args.algos:
         algo_info = ALGORITHMS[algo_key]
+        cond_prefix = algo_info.get("cond_prefix", "td" if algo_key == "td_lambda" else "e")
         for lam in args.lambdas:
             lam_str = f"{lam:.2f}"
-            cond_key = f"{'td' if algo_key == 'td_lambda' else 'e'}_{lam_str}"
-            display_name = f"{'TD' if algo_key == 'td_lambda' else 'E'}({lam_str})"
+            cond_key = f"{cond_prefix}_{lam_str}"
+            display_name = f"{algo_info['display_name']}({lam_str})"
 
             print(f"\n========================================================")
             print(f"Evaluating Condition: {cond_key} ({display_name})")
             print(f"========================================================")
+
+            # Evaluate exact gradient fidelity metrics
+            if args.eval_grad_fidelity:
+                print(f"  --> Measuring Critic Gradient Fidelity (MSE & Var) ...", end="", flush=True)
+                grad_fid = compute_gradient_fidelity(
+                    env_name=args.env_name,
+                    algo_key=algo_key,
+                    lam=float(lam),
+                    gamma=args.gamma,
+                    k=args.k,
+                    seed=args.seed,
+                )
+                print(f" MSE={grad_fid['grad_mse']:.6e} | Var={grad_fid['grad_var']:.6e} | CosSim={grad_fid['grad_cossim']:+.4f}")
+            else:
+                grad_fid = {"grad_mse": float("nan"), "grad_var": float("nan"), "grad_cossim": float("nan")}
 
             full_results["all_runs"][cond_key] = {}
             lr_candidates = []
@@ -340,6 +582,9 @@ def main():
                     "cossim_auc": auc_cossim,
                     "cossim_final": final_cossim,
                     "cossim_final_sem": final_cossim_sem,
+                    "grad_mse": grad_fid["grad_mse"],
+                    "grad_var": grad_fid["grad_var"],
+                    "grad_cossim": grad_fid["grad_cossim"],
                     "runtime_sec": dt,
                 }
                 lr_candidates.append((c_lr, cand_record, res))

@@ -51,9 +51,10 @@ NUM_UPDATES=${NUM_UPDATES:-100}
 K_VAL=${K_VAL:-32}
 ACTOR_LR=${ACTOR_LR:-0.0003}
 CRITIC_LRS=${CRITIC_LRS:-"0.0005 0.001 0.003"}
-LAMBDAS=${LAMBDAS:-"0.5 0.9 0.95"}
+LAMBDAS=${LAMBDAS:-"0.4 0.8 0.95 0.99"}
+ALGOS=${ALGOS:-"td_lambda e_lambda e_lambda_fwd"}
 NUM_ENVS=${NUM_ENVS:-32}
-NUM_STEPS=${NUM_STEPS:-128}
+NUM_STEPS=${NUM_STEPS:-256}
 MINIBATCH_SIZE=${MINIBATCH_SIZE:-256}
 NUM_EPOCHS=${NUM_EPOCHS:-4}
 GAE_LAMBDA=${GAE_LAMBDA:-0.8}
@@ -85,6 +86,7 @@ echo "Critic Feature k: $K_VAL"
 echo "Actor LR:         $ACTOR_LR (fixed)"
 echo "Critic LRs:       $CRITIC_LRS"
 echo "Lambdas:          $LAMBDAS"
+echo "Algorithms:       $ALGOS"
 echo "Actor GAE Lambda: $GAE_LAMBDA"
 echo "Clip Epsilon:     $CLIP_EPS"
 echo "Rollout Config:   ${NUM_ENVS} envs x ${NUM_STEPS} steps | MB: ${MINIBATCH_SIZE} | Epochs: ${NUM_EPOCHS}"
@@ -100,6 +102,7 @@ $PYTHON scripts/sampled_lambda_sweep/run_single_env.py \
     --actor_lr "$ACTOR_LR" \
     --critic_lrs $CRITIC_LRS \
     --lambdas $LAMBDAS \
+    --algos $ALGOS \
     --num_envs "$NUM_ENVS" \
     --num_steps "$NUM_STEPS" \
     --minibatch_size "$MINIBATCH_SIZE" \

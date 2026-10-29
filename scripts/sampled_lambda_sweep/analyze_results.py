@@ -55,18 +55,37 @@ ENV_DISPLAY_NAMES = {
     "mountaincar-dense": "Mountain Car (Dense)",
 }
 
-CONDITION_ORDER = ["td_0.50", "td_0.90", "td_0.95", "e_0.50", "e_0.90", "e_0.95"]
+CONDITION_ORDER = [
+    "td_0.40", "td_0.80", "td_0.95", "td_0.99",
+    "e_0.40", "e_0.80", "e_0.95", "e_0.99",
+    "e_fwd_0.40", "e_fwd_0.80", "e_fwd_0.95", "e_fwd_0.99",
+]
 
 CONDITION_DISPLAY_NAMES = {
+    # TD(lambda)
+    "td_0.40": "TD(0.40)",
+    "td_0.80": "TD(0.80)",
+    "td_0.95": "TD(0.95)",
+    "td_0.99": "TD(0.99)",
     "td_0.50": "TD(0.50)",
     "td_0.90": "TD(0.90)",
-    "td_0.95": "TD(0.95)",
+
+    # E(lambda) [v_aux]
+    "e_0.40":  "E(0.40) [v_aux]",
+    "e_0.80":  "E(0.80) [v_aux]",
+    "e_0.95":  "E(0.95) [v_aux]",
+    "e_0.99":  "E(0.99) [v_aux]",
     "e_0.50":  "E(0.50) [v_aux]",
     "e_0.90":  "E(0.90) [v_aux]",
-    "e_0.95":  "E(0.95) [v_aux]",
+
+    # E(lambda) [Forward-Only]
+    "e_fwd_0.40": "E(0.40) [Fwd]",
+    "e_fwd_0.80": "E(0.80) [Fwd]",
+    "e_fwd_0.95": "E(0.95) [Fwd]",
+    "e_fwd_0.99": "E(0.99) [Fwd]",
 }
 
-MATCHING_LAMBDAS = [0.5, 0.9, 0.95]
+MATCHING_LAMBDAS = [0.4, 0.8, 0.95, 0.99]
 
 
 def parse_args():
@@ -228,6 +247,77 @@ def analyze_matching_lambda_head_to_head(df: pd.DataFrame, out_dir: str):
         table_df,
         table_id="table1_matching_lambda_head_to_head",
         title="Table 1: Matching-Lambda Head-to-Head Comparison [E(λ) vs TD(λ)]",
+        out_dir=out_dir,
+    )
+
+
+def analyze_forward_only_ablation(df: pd.DataFrame, out_dir: str):
+    """Table 8: Forward-Only Ablation: E(λ) [v_aux] vs E(λ) [Forward-Only]."""
+    rows = []
+
+    for lam in MATCHING_LAMBDAS:
+        lam_str = f"{lam:.2f}"
+        aux_key = f"e_{lam_str}"
+        fwd_key = f"e_fwd_{lam_str}"
+
+        aux_wins = 0
+        fwd_wins = 0
+        ties = 0
+
+        aux_auc_list = []
+        fwd_auc_list = []
+        deltas = []
+
+        for env_name in ALL_ENVS:
+            sub = df[df["env_name"] == env_name]
+            aux_row = sub[sub["condition"] == aux_key]
+            fwd_row = sub[sub["condition"] == fwd_key]
+
+            if aux_row.empty or fwd_row.empty:
+                continue
+
+            aux_val = float(aux_row["std_perf_auc"].values[0])
+            aux_sem = float(aux_row.get("std_perf_final_sem", pd.Series([0.0])).values[0])
+
+            fwd_val = float(fwd_row["std_perf_auc"].values[0])
+            fwd_sem = float(fwd_row.get("std_perf_final_sem", pd.Series([0.0])).values[0])
+
+            aux_auc_list.append(aux_val)
+            fwd_auc_list.append(fwd_val)
+            deltas.append(aux_val - fwd_val)
+
+            diff = aux_val - fwd_val
+            err_margin = aux_sem + fwd_sem
+            if abs(diff) <= err_margin:
+                ties += 1
+            elif diff > 0:
+                aux_wins += 1
+            else:
+                fwd_wins += 1
+
+        n_envs = len(aux_auc_list)
+        if n_envs > 0:
+            mean_aux = np.mean(aux_auc_list)
+            mean_fwd = np.mean(fwd_auc_list)
+            mean_delta = np.mean(deltas)
+            win_rate = (aux_wins / n_envs) * 100.0
+
+            rows.append({
+                "Lambda (λ)": f"{lam:.2f}",
+                "E(λ) [v_aux] Mean AUC": f"{mean_aux:+.4f}",
+                "E(λ) [Fwd] Mean AUC": f"{mean_fwd:+.4f}",
+                "Mean Advantage (Aux - Fwd)": f"{mean_delta:+.4f}",
+                "v_aux Wins": aux_wins,
+                "Ties": ties,
+                "Fwd Wins": fwd_wins,
+                "v_aux Win Rate (%)": f"{win_rate:.1f}%",
+            })
+
+    table_df = pd.DataFrame(rows)
+    save_table_bundle(
+        table_df,
+        table_id="table8_forward_only_ablation",
+        title="Table 8: Forward-Only Ablation [E(λ) v_aux vs. E(λ) Forward-Only]",
         out_dir=out_dir,
     )
 
@@ -406,6 +496,31 @@ def main():
             table_id="table7_advantage_cossim_matrix",
             out_dir=out_dir,
             fmt="{:+.4f}",
+        )
+
+    # 8. Forward-Only Ablation Table
+    analyze_forward_only_ablation(df, out_dir)
+
+    # 9. Critic Gradient MSE Matrix
+    if "grad_mse" in df.columns and df["grad_mse"].notna().any():
+        build_matrix_table(
+            df,
+            metric_col="grad_mse",
+            title="Table 9: Critic Gradient Mean Squared Error (MSE) vs. Exact Matrix Gradient",
+            table_id="table9_critic_grad_mse_matrix",
+            out_dir=out_dir,
+            fmt="{:.2e}",
+        )
+
+    # 10. Critic Gradient Variance Matrix
+    if "grad_var" in df.columns and df["grad_var"].notna().any():
+        build_matrix_table(
+            df,
+            metric_col="grad_var",
+            title="Table 10: Critic Gradient Variance Across Rollout Draws",
+            table_id="table10_critic_grad_var_matrix",
+            out_dir=out_dir,
+            fmt="{:.2e}",
         )
 
     print("\nAll analysis tables generated successfully!")
