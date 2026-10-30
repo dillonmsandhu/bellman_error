@@ -1728,14 +1728,11 @@ def calculate_self_bootstrapped_aux_returns(
     return_lambda: float = 1.0,
 ) -> jax.Array:
     """
-    Computes empirical returns for the auxiliary critic v_aux bootstrapped strictly from v_aux itself,
-    completely decoupling v_aux from the primary critic's errors.
+    Computes empirical returns for the auxiliary critic v_aux bootstrapped strictly from v_aux itself at the horizon.
+    Only the final next-state value v_aux(s_T) is needed; intermediate values telescope out for return_lambda = 1.0.
     """
-    aux_vals = aux_network.apply(aux_params, traj_batch.obs)
     final_next_aux_val = aux_network.apply(aux_params, traj_batch.next_obs[-1])
-    next_aux_vals = jnp.concatenate([aux_vals[1:], final_next_aux_val[None]], axis=0)
-
-    traj_batch_aux = traj_batch._replace(value=aux_vals, next_value=next_aux_vals)
+    traj_batch_aux = traj_batch._replace(next_value=traj_batch.next_value.at[-1].set(final_next_aux_val))
     _, aux_returns = calculate_gae(traj_batch_aux, gamma, return_lambda)
     return aux_returns
 

@@ -153,18 +153,28 @@ def analyze_gradient_variance(
         _, returns = jax.lax.scan(rev_scan_fn, v_final, (traj_r, traj_done), reverse=True)
         return returns
 
-    # Pre-train auxiliary critic on Monte Carlo rollout returns
-    print("Pre-training auxiliary critic on Monte Carlo rollout returns...")
+    # Pre-train auxiliary critic on self-bootstrapped rollout returns
+    print("Pre-training auxiliary critic on self-bootstrapped rollout returns...")
     pretrain_keys = jax.random.split(rng, 20)
     for pk in pretrain_keys:
         traj_s, _, traj_r, traj_done, final_s = sample_rollout(pk)
-        returns = compute_returns(traj_r, traj_done, final_s)
+        v_aux_pred = aux_network.apply(aux_train_state.params, S_states).squeeze()
+        v_aux_full = jnp.append(v_aux_pred, 0.0)
+        v_aux_final = v_aux_full[final_s]
+
+        def rev_scan_aux(g_next, step_data):
+            r_t, d_t = step_data
+            g_cur = r_t + gamma * jnp.where(d_t, 0.0, g_next)
+            return g_cur, g_cur
+
+        _, aux_returns = jax.lax.scan(rev_scan_aux, v_aux_final, (traj_r, traj_done), reverse=True)
+        aux_returns_sg = jax.lax.stop_gradient(aux_returns)
 
         def aux_step(ts, _):
             def loss(p_a):
                 v_pred = aux_network.apply(p_a, S_states).squeeze()
                 v_full = jnp.append(v_pred, 0.0)
-                return jnp.mean((returns - v_full[traj_s]) ** 2)
+                return jnp.mean((aux_returns_sg - v_full[traj_s]) ** 2)
             grads = jax.grad(loss)(ts.params)
             return ts.apply_gradients(grads=grads), None
 

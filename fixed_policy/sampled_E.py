@@ -114,8 +114,10 @@ def make_train(base_config):
             advantages, targets = helpers.calculate_gae(traj_batch, config["GAMMA"], return_lambda)
             
             if uses_aux:
-                aux_lambda = config.get("AUX_LAMBDA", 0.9)
-                _, aux_targets = helpers.calculate_gae(traj_batch, config["GAMMA"], aux_lambda)
+                final_next_aux_val = network.apply(train_state.params, traj_batch.next_obs[-1], method=network.v_aux)
+                traj_batch_aux = traj_batch._replace(next_value=traj_batch.next_value.at[-1].set(final_next_aux_val))
+                aux_lambda = config.get("AUX_LAMBDA", 1.0)
+                _, aux_targets = helpers.calculate_gae(traj_batch_aux, config["GAMMA"], aux_lambda)
             else:
                 aux_targets = targets
 
@@ -197,17 +199,18 @@ def make_train(base_config):
             # Shared Metrics
             metric.update({k_l: v_l.mean() for k_l, v_l in losses.items()})
             metric.update({"mean_rew": traj_batch.reward.mean()})
-            value_metrics = bellman_error.value_metrics(
-                evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn, light=config["LIGHT_METRICS"]
-            )
-            metric.update(value_metrics)
-            if config["LOG_FEATURE_METRICS"]:
-                metric.update(feature_metrics(
-                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn
-                ))
-            if hasattr(evaluator, "obs_stack") and hasattr(evaluator, "start_idx"):
-                v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx], method=network.value).squeeze()
-                metric["v_pred_start"] = v_pred_start
+            if config.get("CALC_TRUE_VALUES", False) and evaluator is not None:
+                value_metrics = bellman_error.value_metrics(
+                    evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn, light=config.get("LIGHT_METRICS", True)
+                )
+                metric.update(value_metrics)
+                if config.get("LOG_FEATURE_METRICS", False):
+                    metric.update(feature_metrics(
+                        evaluator, network, train_state.params, random_policy=False, target_policy_fn=policy_fn
+                    ))
+                if hasattr(evaluator, "obs_stack") and hasattr(evaluator, "start_idx"):
+                    v_pred_start = network.apply(train_state.params, evaluator.obs_stack[evaluator.start_idx], method=network.value).squeeze()
+                    metric["v_pred_start"] = v_pred_start
             runner_state = (train_state, env_state, last_obs, last_true_terminal, rng, idx + 1)
             return runner_state, metric
 
