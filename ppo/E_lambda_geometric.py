@@ -83,7 +83,20 @@ def make_train(base_config):
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"])
             _, returns = helpers.calculate_gae(traj_batch, config["GAMMA"], config["RETURN_LAMBDA"])
 
-            # 3. PREPARE JUMP PAIRS ONCE PER ROLLOUT
+            # 3. SELF-BOOTSTRAPPED AUXILIARY RETURNS
+            variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
+            if variant in ["aux", "v_aux"]:
+                aux_returns = helpers.calculate_self_bootstrapped_aux_returns(
+                    aux_network=aux_network,
+                    aux_params=aux_train_state.params,
+                    traj_batch=traj_batch,
+                    gamma=config["GAMMA"],
+                    return_lambda=config["RETURN_LAMBDA"],
+                )
+            else:
+                aux_returns = returns
+
+            # 4. PREPARE JUMP PAIRS ONCE PER ROLLOUT
             rng, _rng = jax.random.split(rng)
             jump_batch, final_steps_since_start = helpers.prepare_e_lambda_jump_pairs(
                 traj_batch=traj_batch,
@@ -94,9 +107,10 @@ def make_train(base_config):
                 rng=_rng,
                 steps_since_start=steps_since_start,
                 runway_length=config.get("RUNWAY_LENGTH", 16),
+                aux_returns=aux_returns,
             )
 
-            # 4. UPDATE NETWORK OVER EPOCHS AND FLAT MINIBATCHES
+            # 5. UPDATE NETWORK OVER EPOCHS AND FLAT MINIBATCHES
             def _update_epoch(update_state, unused):
                 def _update_minbatch(state, mb):
                     train_state, aux_train_state = state
@@ -112,14 +126,17 @@ def make_train(base_config):
                     )
                     train_state = train_state.apply_gradients(grads=grads)
 
-                    # Update auxiliary critic on empirical returns
-                    def _aux_loss_fn(aux_p):
-                        aux_vals = aux_network.apply(aux_p, mb.obs)
-                        return 0.5 * jnp.mean((jax.lax.stop_gradient(mb.target) - aux_vals) ** 2)
+                    # Update auxiliary critic on self-bootstrapped empirical returns
+                    if variant in ["aux", "v_aux"]:
+                        def _aux_loss_fn(aux_p):
+                            aux_vals = aux_network.apply(aux_p, mb.obs)
+                            return 0.5 * jnp.mean((jax.lax.stop_gradient(mb.aux_target) - aux_vals) ** 2)
 
-                    aux_loss, aux_grads = jax.value_and_grad(_aux_loss_fn)(aux_train_state.params)
-                    aux_train_state = aux_train_state.apply_gradients(grads=aux_grads)
-                    losses["aux_loss"] = aux_loss
+                        aux_loss, aux_grads = jax.value_and_grad(_aux_loss_fn)(aux_train_state.params)
+                        aux_train_state = aux_train_state.apply_gradients(grads=aux_grads)
+                        losses["aux_loss"] = aux_loss
+                    else:
+                        losses["aux_loss"] = 0.0
 
                     return (train_state, aux_train_state), losses
 

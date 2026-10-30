@@ -107,11 +107,17 @@ def compute_sampling_e_metrics(
 
             new_aux_train_state, _ = jax.lax.scan(aux_step_fn, aux_train_state, None, length=aux_steps)
         else:
+            # Self-bootstrapped empirical returns for v_aux
+            v_aux_cur = jnp.append(aux_network.apply(aux_train_state.params, S_states).squeeze(), 0.0)
+            v_aux_final = v_aux_cur[final_s]
+            _, aux_returns = jax.lax.scan(rev_scan_fn, v_aux_final, (traj_r, traj_done), reverse=True)
+            aux_returns_sg = jax.lax.stop_gradient(aux_returns)
+
             def aux_step_fn(ts, _):
                 def loss_fn(p_aux):
                     v_aux_pred = aux_network.apply(p_aux, S_states).squeeze()
                     v_aux_full = jnp.append(v_aux_pred, 0.0)
-                    return jnp.mean((returns_sg - v_aux_full[traj_s]) ** 2)
+                    return jnp.mean((aux_returns_sg - v_aux_full[traj_s]) ** 2)
                 grads = jax.grad(loss_fn)(ts.params)
                 return ts.apply_gradients(grads=grads), None
 

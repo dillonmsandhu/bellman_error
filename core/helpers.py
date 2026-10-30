@@ -1714,9 +1714,30 @@ class ELambdaJumpTransition(NamedTuple):
     hit_true_terminal: jnp.ndarray
     hit_timeout: jnp.ndarray
     start_weight: jnp.ndarray
+    aux_target: Optional[jnp.ndarray] = None
     action: Optional[jnp.ndarray] = None
     log_prob: Optional[jnp.ndarray] = None
     advantage: Optional[jnp.ndarray] = None
+
+
+def calculate_self_bootstrapped_aux_returns(
+    aux_network,
+    aux_params,
+    traj_batch,
+    gamma: float,
+    return_lambda: float = 1.0,
+) -> jax.Array:
+    """
+    Computes empirical returns for the auxiliary critic v_aux bootstrapped strictly from v_aux itself,
+    completely decoupling v_aux from the primary critic's errors.
+    """
+    aux_vals = aux_network.apply(aux_params, traj_batch.obs)
+    final_next_aux_val = aux_network.apply(aux_params, traj_batch.next_obs[-1])
+    next_aux_vals = jnp.concatenate([aux_vals[1:], final_next_aux_val[None]], axis=0)
+
+    traj_batch_aux = traj_batch._replace(value=aux_vals, next_value=next_aux_vals)
+    _, aux_returns = calculate_gae(traj_batch_aux, gamma, return_lambda)
+    return aux_returns
 
 
 def prepare_e_lambda_jump_pairs(
@@ -1728,6 +1749,7 @@ def prepare_e_lambda_jump_pairs(
     steps_since_start: jax.Array,
     advantages: Optional[jax.Array] = None,
     runway_length: int = 16,
+    aux_returns: Optional[jax.Array] = None,
 ):
     """
     Pairs each source state s_t with its geometric jump destination s_j = s_{min(t+m, T)},
@@ -1797,6 +1819,7 @@ def prepare_e_lambda_jump_pairs(
     action = traj_batch.action[:T_start] if hasattr(traj_batch, "action") else None
     log_prob = traj_batch.log_prob[:T_start] if hasattr(traj_batch, "log_prob") else None
     adv = advantages[:T_start] if advantages is not None else None
+    aux_target = returns[:T_start] if aux_returns is None else aux_returns[:T_start]
 
     jump_batch = ELambdaJumpTransition(
         obs=traj_batch.obs[:T_start],
@@ -1806,6 +1829,7 @@ def prepare_e_lambda_jump_pairs(
         hit_true_terminal=hit_true_terminal,
         hit_timeout=hit_timeout,
         start_weight=start_weight,
+        aux_target=aux_target,
         action=action,
         log_prob=log_prob,
         advantage=adv,
@@ -1968,6 +1992,217 @@ def e_lambda_fixed_critic_minibatch_loss(
     total_loss = config.get("VF_COEF", 1.0) * value_loss
     critic_losses["total_loss"] = total_loss
     return total_loss, critic_losses
+
+
+def compute_bsmc_weights(gamma: float, lmbda: float) -> tuple[float, float, float]:
+    """
+    Computes exact weights (w_mc, w_dir, alpha) for the Bellman-Smoothed Monte Carlo objective:
+        L_BSMC(alpha) = w_mc * L_MC + w_dir * L_smooth^(1-step)
+    where:
+        w_mc  = 0.5 * (1 - gamma) / (1 - gamma * lambda)
+        w_dir = 0.5 * gamma * (1 - lambda) / (1 - gamma * lambda)
+        Total weight W = w_mc + w_dir = 0.5
+        Relative MC share: (1 - alpha) = w_mc / W = (1 - gamma) / (1 - gamma * lambda)
+        Relative Smoothing share: alpha = w_dir / W = gamma * (1 - lambda) / (1 - gamma * lambda)
+    """
+    gl = gamma * lmbda
+    denom = jnp.maximum(1.0 - gl, 1e-8)
+    w_mc = 0.5 * (1.0 - gamma) / denom
+    w_dir = 0.5 * (gamma * (1.0 - lmbda)) / denom
+    alpha = (gamma * (1.0 - lmbda)) / denom
+    return w_mc, w_dir, alpha
+
+
+def prepare_bsmc_pairs(
+    traj_batch,
+    returns: jax.Array,
+    gamma: float,
+    lmbda: float,
+    rng: jax.Array,
+    steps_since_start: jax.Array,
+    advantages: Optional[jax.Array] = None,
+    runway_length: int = 16,
+    aux_returns: Optional[jax.Array] = None,
+):
+    """
+    Pairs each source state s_t with its immediate next state s_{t+1} (jump m = 1),
+    with Monte Carlo weight calibrated via (1 - alpha) = (1 - gamma) / (1 - gamma * lambda).
+    Runs ONCE per rollout batch outside the gradient descent loop.
+    Returns (jump_batch, final_steps_since_start).
+    """
+    T, B = returns.shape[:2]
+    # Keep T_start matching E(lambda) convention for fair comparability
+    T_start = min(T, max(1, T - runway_length))
+    gl = gamma * lmbda
+    safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
+
+    # 1. 1-step destination: j = t + 1 deterministically
+    is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
+    true_terminals = traj_batch.done & ~is_timeout
+
+    hit_true_terminal = true_terminals[:T_start]
+    hit_timeout = is_timeout[:T_start]
+
+    # 2. Track steps since start for initial boundary trace
+    def scan_steps(k, step_flags):
+        term, timeout = step_flags
+        k_next = jnp.where(term, 0, jnp.where(timeout, 10_000, k + 1))
+        return k_next, k
+
+    init_k = jnp.full((B,), 10_000, dtype=jnp.int32) if steps_since_start is None else steps_since_start
+    final_steps_since_start, all_steps = jax.lax.scan(scan_steps, init_k, (true_terminals, is_timeout))
+
+    tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
+    start_trace = jnp.where(
+        gl < 1e-6,
+        jnp.where(all_steps[:T_start] == 0, 1.0, 0.0),
+        safe_gl ** all_steps[:T_start],
+    )
+    start_weight = 0.25 * tilde_gamma * start_trace
+
+    # 3. Destination lookups: immediate next obs and next return
+    obs_ext = jnp.concatenate([traj_batch.obs, traj_batch.next_obs[-1][None]], axis=0)
+    target_ext = jnp.concatenate([returns, traj_batch.next_value[-1][None]], axis=0)
+
+    dest_obs = obs_ext[1 : T_start + 1]
+    dest_target = target_ext[1 : T_start + 1]
+
+    action = traj_batch.action[:T_start] if hasattr(traj_batch, "action") else None
+    log_prob = traj_batch.log_prob[:T_start] if hasattr(traj_batch, "log_prob") else None
+    adv = advantages[:T_start] if advantages is not None else None
+    aux_target = returns[:T_start] if aux_returns is None else aux_returns[:T_start]
+
+    jump_batch = ELambdaJumpTransition(
+        obs=traj_batch.obs[:T_start],
+        dest_obs=dest_obs,
+        target=returns[:T_start],
+        dest_target=dest_target,
+        hit_true_terminal=hit_true_terminal,
+        hit_timeout=hit_timeout,
+        start_weight=start_weight,
+        aux_target=aux_target,
+        action=action,
+        log_prob=log_prob,
+        advantage=adv,
+    )
+    return jump_batch, final_steps_since_start
+
+
+def bsmc_pointwise_critic_loss(
+    v_start: jax.Array,
+    v_jump: jax.Array,
+    v_aux_start: jax.Array,
+    v_aux_jump: jax.Array,
+    mb: ELambdaJumpTransition,
+    gamma: float,
+    lmbda: float,
+    variant: str = "aux",
+):
+    """
+    Evaluates the 1-step Bellman-Smoothed Monte Carlo critic loss with exact matching MC weight:
+        L_BSMC = w_mc * L_MC + w_dir * L_smooth^(1-step) + start_loss
+    where w_mc and w_dir match the exact relative weights of E(lambda).
+    """
+    sg = jax.lax.stop_gradient
+    w_mc, w_dir, alpha = compute_bsmc_weights(gamma, lmbda)
+
+    e_start = sg(mb.target) - v_start
+    e_jump = jnp.where(mb.hit_true_terminal, 0.0, sg(mb.dest_target) - v_jump)
+
+    e_aux_start = sg(v_aux_start) - v_start
+    e_aux_jump = jnp.where(mb.hit_true_terminal, 0.0, sg(v_aux_jump) - v_jump)
+
+    if variant in ["fwd", "forward", "forward_e"]:
+        inner_diff_sq = (e_start - sg(e_jump)) ** 2
+    elif variant in ["naive", "oct8"]:
+        inner_diff_sq = (e_start - e_jump) ** 2
+    else:  # 'aux' / 'v_aux' debiased
+        inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
+
+    diff_sq = jnp.where(
+        mb.hit_true_terminal,
+        e_start ** 2,
+        jnp.where(mb.hit_timeout, 0.0, inner_diff_sq),
+    )
+
+    magnitude_loss = w_mc * jnp.mean(e_start ** 2)
+    dirichlet_loss = w_dir * jnp.mean(diff_sq)
+    start_loss = jnp.mean(mb.start_weight * (e_start ** 2))
+    value_loss = magnitude_loss + dirichlet_loss + start_loss
+
+    losses = {
+        "value_loss": value_loss,
+        "magnitude_loss": magnitude_loss,
+        "dirichlet_loss": dirichlet_loss,
+        "start_loss": start_loss,
+        "mc_share": 1.0 - alpha,
+        "smooth_share": alpha,
+    }
+    return value_loss, losses
+
+
+def bsmc_ppo_minibatch_loss(
+    params,
+    network,
+    mb: ELambdaJumpTransition,
+    config,
+    aux_params=None,
+    aux_network=None,
+):
+    """
+    Combined PPO loss on a flat minibatch of 1-step BSMC transitions.
+    """
+    # 1. Actor policy loss & entropy
+    pi = network.apply(params, mb.obs, method=network.policy)
+    log_prob = pi.log_prob(mb.action)
+    ratio = jnp.exp(log_prob - mb.log_prob)
+    adv = post_process_advantage(mb.advantage, config)
+    loss_actor1 = ratio * adv
+    loss_actor2 = jnp.clip(ratio, 1.0 - config["CLIP_EPS"], 1.0 + config["CLIP_EPS"]) * adv
+    loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
+    entropy = pi.entropy().mean()
+
+    # 2. Critic value predictions on (obs, dest_obs)
+    v_start = network.apply(params, mb.obs, method=network.value)
+    v_jump = network.apply(params, mb.dest_obs, method=network.value)
+
+    if aux_network is not None and aux_params is not None:
+        v_aux_start = aux_network.apply(aux_params, mb.obs)
+        v_aux_jump = aux_network.apply(aux_params, mb.dest_obs)
+    else:
+        v_aux_start = v_start
+        v_aux_jump = v_jump
+
+    variant = config.get("BSMC_VARIANT", config.get("E_LAMBDA_VARIANT", "aux"))
+    value_loss, critic_losses = bsmc_pointwise_critic_loss(
+        v_start=v_start,
+        v_jump=v_jump,
+        v_aux_start=v_aux_start,
+        v_aux_jump=v_aux_jump,
+        mb=mb,
+        gamma=config["GAMMA"],
+        lmbda=config["VALUE_LAMBDA"],
+        variant=variant,
+    )
+
+    total_loss = (
+        config["POLICY_COEFF"] * loss_actor
+        + config["VF_COEF"] * value_loss
+        - config["ENT_COEF"] * entropy
+    )
+
+    losses = {
+        "total_loss": total_loss,
+        "value_loss": value_loss,
+        "magnitude_loss": critic_losses["magnitude_loss"],
+        "dirichlet_loss": critic_losses["dirichlet_loss"],
+        "start_loss": critic_losses["start_loss"],
+        "actor_loss": loss_actor,
+        "entropy": entropy,
+        "mc_share": critic_losses["mc_share"],
+        "smooth_share": critic_losses["smooth_share"],
+    }
+    return total_loss, losses
 
 
 # Re-export compute_runtime_metrics for convenience

@@ -38,7 +38,7 @@ config = {
     "MAX_GRAD_NORM": 1.0,
     "NETWORK_TYPE": "cnn",
     "NORMALIZE_OBS": False,
-    "CALC_TRUE_VALUES": True,
+    "CALC_TRUE_VALUES": False,
     "BATCH_SIZE": 104,
     # For the fixed:
     # 'MODEL_LOAD_DIR': "cont",
