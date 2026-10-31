@@ -2,11 +2,11 @@
 #SBATCH --job-name=sampling_E_test
 #SBATCH --output=slurm/%A_%a.out
 #SBATCH --error=slurm/%A_%a.err
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --partition=compsci-gpu
 #SBATCH --gres=gpu:a5000:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
 #SBATCH --array=0-8
 
 set -e
@@ -42,7 +42,7 @@ ENVS=(
 )
 
 TARGET_ARG=${1:-$SLURM_ARRAY_TASK_ID}
-NUM_UPDATES=${NUM_UPDATES:-50}
+NUM_UPDATES=${NUM_UPDATES:-100}
 N_SEEDS=${N_SEEDS:-3}
 NUM_TRAJECTORIES=${NUM_TRAJECTORIES:-128}
 NUM_STEPS=${NUM_STEPS:-128}

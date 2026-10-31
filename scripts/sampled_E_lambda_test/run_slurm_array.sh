@@ -2,11 +2,11 @@
 #SBATCH --job-name=sampled_E_lambda_test
 #SBATCH --output=slurm/%A_%a.out
 #SBATCH --error=slurm/%A_%a.err
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --partition=compsci-gpu
 #SBATCH --gres=gpu:a5000:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
 #SBATCH --array=0-8
 
 set -e
