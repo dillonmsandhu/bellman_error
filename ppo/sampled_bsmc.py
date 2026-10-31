@@ -17,6 +17,7 @@ class Transition(NamedTuple):
     log_prob: jnp.ndarray
     obs: jnp.ndarray
     next_obs: jnp.ndarray
+    is_start: jnp.ndarray
     info: jnp.ndarray
 
 
@@ -51,14 +52,14 @@ def make_train(base_config):
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
         start_obs = obsv
-        steps_since_start = jnp.full((config["NUM_ENVS"],), 10_000, dtype=jnp.int32)
+        last_true_terminal = jnp.zeros(config["NUM_ENVS"], dtype=bool)
 
         def _update_step(runner_state, unused):
-            train_state, aux_train_state, env_state, last_obs, steps_since_start, rng, idx = runner_state
+            train_state, aux_train_state, env_state, last_obs, last_true_terminal, rng, idx = runner_state
 
             # 1. COLLECT TRAJECTORIES
             def _env_step(env_scan_state, unused):
-                train_state, env_state, last_obs, rng = env_scan_state
+                train_state, env_state, last_obs, last_true_terminal, rng = env_scan_state
 
                 rng, _rng = jax.random.split(rng)
                 pi, value = network.apply(train_state.params, last_obs)
@@ -74,13 +75,16 @@ def make_train(base_config):
                 next_val = network.apply(train_state.params, true_next_obs, method=network.value)
 
                 clean_info = {k: v for k, v in info.items() if k not in ["real_next_obs", "real_next_state"]}
+                is_timeout = info.get("is_timeout", jnp.zeros_like(done, dtype=bool))
+                true_terminal = done & ~is_timeout
+                is_start = last_true_terminal
                 transition = Transition(
-                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, clean_info
+                    done, action, value, next_val, reward, log_prob, last_obs, true_next_obs, is_start, clean_info
                 )
-                return (train_state, env_state, obsv, rng), transition
+                return (train_state, env_state, obsv, true_terminal, rng), transition
 
-            env_step_state = (train_state, env_state, last_obs, rng)
-            (_, env_state, last_obs, rng), traj_batch = jax.lax.scan(
+            env_step_state = (train_state, env_state, last_obs, last_true_terminal, rng)
+            (_, env_state, last_obs, last_true_terminal, rng), traj_batch = jax.lax.scan(
                 _env_step, env_step_state, None, config["NUM_STEPS"]
             )
 
@@ -100,28 +104,13 @@ def make_train(base_config):
             else:
                 aux_returns = returns
 
-            # 4. PREPARE 1-STEP BSMC TRANSITIONS (direct from full rollout, no pairs or runway cutoff)
-            next_target = jnp.concatenate([returns[1:], traj_batch.next_value[-1][None]], axis=0)
+            # 4. PREPARE 1-STEP BSMC TRANSITIONS (direct from rollout, exact 1-step targets)
+            next_target = jnp.roll(returns, shift=-1, axis=0)
+            next_target = next_target.at[-1].set(traj_batch.next_value[-1])
             is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
             true_terminal = traj_batch.done & ~is_timeout
-
-            def scan_steps(k, step_flags):
-                term, timeout = step_flags
-                k_next = jnp.where(term, 0, jnp.where(timeout, 10_000, k + 1))
-                return k_next, k
-
-            init_k = jnp.full((config["NUM_ENVS"],), 10_000, dtype=jnp.int32) if steps_since_start is None else steps_since_start
-            final_steps_since_start, all_steps = jax.lax.scan(scan_steps, init_k, (true_terminal, is_timeout))
-
-            gl = config["GAMMA"] * config["VALUE_LAMBDA"]
-            safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
-            tilde_gamma = (config["GAMMA"] * (1.0 - config["VALUE_LAMBDA"])) / jnp.maximum(1.0 - gl, 1e-8)
-            start_trace = jnp.where(
-                gl < 1e-6,
-                jnp.where(all_steps == 0, 1.0, 0.0),
-                safe_gl ** all_steps,
-            )
-            start_weight = 0.25 * tilde_gamma * start_trace
+            next_target = jnp.where(is_timeout, traj_batch.next_value, next_target)
+            next_target = jnp.where(true_terminal, 0.0, next_target)
 
             bsmc_batch = helpers.BSMCTransition(
                 obs=traj_batch.obs,
@@ -130,7 +119,7 @@ def make_train(base_config):
                 next_target=next_target,
                 true_terminal=true_terminal,
                 is_timeout=is_timeout,
-                start_weight=start_weight,
+                is_start=traj_batch.is_start,
                 aux_target=aux_returns,
                 action=traj_batch.action,
                 log_prob=traj_batch.log_prob,
@@ -148,8 +137,8 @@ def make_train(base_config):
                         network,
                         mb,
                         config,
-                        aux_params=aux_train_state.params,
-                        aux_network=aux_network,
+                        aux_params=aux_train_state.params if variant in ["aux", "v_aux"] else None,
+                        aux_network=aux_network if variant in ["aux", "v_aux"] else None,
                     )
                     train_state = train_state.apply_gradients(grads=grads)
 
@@ -182,7 +171,7 @@ def make_train(base_config):
             )
             train_state, aux_train_state, rng = update_state
 
-            # 5. RUNTIME METRICS
+            # 6. RUNTIME METRICS
             metric = runtime_metrics.compute_runtime_metrics(
                 train_state=train_state,
                 network=network,
@@ -193,11 +182,11 @@ def make_train(base_config):
                 evaluator=evaluator,
             )
 
-            runner_state = (train_state, aux_train_state, env_state, last_obs, final_steps_since_start, rng, idx + 1)
+            runner_state = (train_state, aux_train_state, env_state, last_obs, last_true_terminal, rng, idx + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, aux_train_state, env_state, obsv, steps_since_start, _rng, 1)
+        runner_state = (train_state, aux_train_state, env_state, obsv, last_true_terminal, _rng, 1)
         runner_state, metrics = jax.lax.scan(
             _update_step, runner_state, None, config["NUM_UPDATES"]
         )

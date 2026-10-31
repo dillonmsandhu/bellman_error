@@ -1042,6 +1042,9 @@ def e_critic_loss(
     rewards=None,
     aux_coef=1.0,
     aux_targets_i=None,
+    w_mc=None,
+    w_dir=None,
+    return_details=False,
 ):
     """
     Computes sampled E-loss across original and debiased v_aux formulations:
@@ -1052,6 +1055,10 @@ def e_critic_loss(
     - 'bilinear_v_aux': direct unbiased bilinear form <e, delta>_D using v_aux for the adjoint error
     - 'surgical_v_aux': Split-branch Dirichlet form: real returns on v_i branch (1-step TD reward, zero return noise), v_aux on v_j branch (smooth Dirichlet Laplacian, zero return noise & zero double-sampling bias)
     - 'dirichlet_v_aux': Oct 8 Dirichlet form using v_aux in the entire Laplacian term and G_t in anchors
+
+    Accepts relative term weights (w_mc, w_dir) as input:
+    - Default (w_mc=None, w_dir=None): w_mc = 1.0 - gamma, w_dir = 0.5 * gamma (standard E(0))
+    - BSMC: w_mc = 0.5 * (1 - gamma) / (1 - gamma * lambda), w_dir = 0.5 * gamma * (1 - lambda) / (1 - gamma * lambda)
     """
     sg = jax.lax.stop_gradient
 
@@ -1070,6 +1077,9 @@ def e_critic_loss(
         e_tilde_i = None
         e_tilde_j = None
 
+    weight_mc = (1.0 - gamma) if w_mc is None else w_mc
+    weight_dir = (0.5 * gamma) if w_dir is None else w_dir
+
     # --- VARIANT: Bilinear <e, delta>_D (Direct sample, zero boundary terms needed) ---
     if variant == "bilinear_v_aux":
         if v_aux_i is None:
@@ -1082,51 +1092,77 @@ def e_critic_loss(
         bilinear_surrogate = sg(delta_t) * (-v_i) + sg(e_tilde_i) * delta_t
         value_loss = jnp.mean(bilinear_surrogate) + aux_mc_loss
 
-        magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
-        laplacian_loss = 0.5 * gamma * jnp.mean((e_tilde_i - e_tilde_j) ** 2)
+        magnitude_loss = weight_mc * jnp.mean(e_i ** 2)
+        laplacian_loss = weight_dir * jnp.mean((e_tilde_i - e_tilde_j) ** 2)
+        if return_details:
+            return value_loss, {
+                "value_loss": value_loss,
+                "magnitude_loss": magnitude_loss,
+                "dirichlet_loss": laplacian_loss,
+                "start_loss": 0.0,
+                "timeout_loss": 0.0,
+                "aux_loss": aux_mc_loss,
+            }
         return value_loss, magnitude_loss, laplacian_loss
 
-    magnitude_loss = (1.0 - gamma) * jnp.mean(e_i ** 2)
+    magnitude_loss = weight_mc * jnp.mean(e_i ** 2)
 
-    if variant in ["surgical_v_aux", "surgical"]:
+    if variant in ["surgical_v_aux", "surgical", "aux", "v_aux"]:
         if v_aux_i is None:
-            raise ValueError("variant='surgical_v_aux' requires v_aux_i and v_aux_j.")
+            raise ValueError(f"variant='{variant}' requires v_aux_i and v_aux_j.")
         # Terms 1 & 2 (-e_i grad v_i + e_j grad v_i): real returns cancel post-(t+1) noise, yielding exact 1-step TD(0) reward
         branch_v_i = (e_i - sg(e_j)) ** 2
         # Terms 3 & 4 (-e_tilde_j grad v_j + e_tilde_i grad v_j): v_aux predictions eliminate all post-(t+1) return noise & double-sampling bias
         branch_v_j = jnp.where(true_terminal, 0.0, (sg(e_tilde_i) - e_tilde_j) ** 2)
-        laplacian_loss = 0.5 * gamma * jnp.mean(branch_v_i + branch_v_j)
-    elif variant in ["forward_e", "forward_only", "semi_gradient_e"]:
+        laplacian_loss = weight_dir * jnp.mean(branch_v_i + branch_v_j)
+    elif variant in ["forward_e", "forward_only", "semi_gradient_e", "forward", "fwd"]:
         # Terms 1 & 2 only (-e_i grad v_i + e_j grad v_i): drops grad v_j branch to eliminate double-sampling without auxiliary net
         branch_v_i = (e_i - sg(e_j)) ** 2
-        laplacian_loss = 0.5 * gamma * jnp.mean(branch_v_i)
+        laplacian_loss = weight_dir * jnp.mean(branch_v_i)
     elif variant in ["dirichlet_v_aux", "dirichlet"]:
         if v_aux_i is None:
             raise ValueError("variant='dirichlet_v_aux' requires v_aux_i and v_aux_j.")
-        laplacian_loss = 0.5 * gamma * jnp.mean((e_tilde_i - e_tilde_j) ** 2)
+        laplacian_loss = weight_dir * jnp.mean((e_tilde_i - e_tilde_j) ** 2)
     else:
-        laplacian_loss = 0.5 * gamma * jnp.mean((e_i - e_j) ** 2)
+        laplacian_loss = weight_dir * jnp.mean((e_i - e_j) ** 2)
 
     if variant in ["sep14", "uncorrected"]:
         value_loss = magnitude_loss + laplacian_loss
+        start_anchor_loss = 0.0
+        timeout_corr_loss = 0.0
     elif variant in ["corrected", "corr", "oct5"]:
-        corr_loss = 0.5 * gamma * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
+        corr_loss = weight_dir * (jnp.mean(e_i ** 2) - jnp.mean(e_j ** 2))
         value_loss = magnitude_loss + laplacian_loss + corr_loss
-    elif variant in ["oct8", "start_anchored", "surgical_v_aux", "dirichlet_v_aux", "forward_e", "forward_only", "semi_gradient_e"]:
-        if is_start is None:
-            raise ValueError(
-                f"e_critic_loss with variant='{variant}' requires boolean mask 'is_start' "
-                "to evaluate the start-state anchor E_{s0 ~ d0}[e(s0)^2]."
-            )
-        start_anchor_loss = 0.5 * gamma * jnp.mean(jnp.where(is_start, e_i ** 2, 0.0))
+        start_anchor_loss = 0.0
+        timeout_corr_loss = 0.0
+    elif variant in [
+        "oct8", "start_anchored", "surgical_v_aux", "surgical",
+        "dirichlet_v_aux", "forward_e", "forward_only", "semi_gradient_e",
+        "forward", "fwd", "aux", "v_aux",
+    ]:
+        start_anchor_loss = (
+            weight_dir * jnp.mean(jnp.where(is_start, e_i ** 2, 0.0))
+            if is_start is not None
+            else 0.0
+        )
         if is_timeout is not None:
-            timeout_corr_loss = -0.5 * gamma * jnp.mean(jnp.where(is_timeout, e_j ** 2, 0.0))
+            timeout_corr_loss = -weight_dir * jnp.mean(jnp.where(is_timeout, e_j ** 2, 0.0))
         else:
             timeout_corr_loss = 0.0
         value_loss = magnitude_loss + laplacian_loss + start_anchor_loss + timeout_corr_loss + aux_mc_loss
     else:
         raise ValueError(f"Unknown E variant: {variant}")
 
+    if return_details:
+        losses = {
+            "value_loss": value_loss,
+            "magnitude_loss": magnitude_loss,
+            "dirichlet_loss": laplacian_loss,
+            "start_loss": start_anchor_loss,
+            "timeout_loss": timeout_corr_loss,
+            "aux_loss": aux_mc_loss,
+        }
+        return value_loss, losses
     return value_loss, magnitude_loss, laplacian_loss
 
 
@@ -2048,7 +2084,7 @@ class BSMCTransition(NamedTuple):
     next_target: jnp.ndarray
     true_terminal: jnp.ndarray
     is_timeout: jnp.ndarray
-    start_weight: jnp.ndarray
+    is_start: jnp.ndarray
     aux_target: Optional[jnp.ndarray] = None
     action: Optional[jnp.ndarray] = None
     log_prob: Optional[jnp.ndarray] = None
@@ -2062,62 +2098,49 @@ def bsmc_critic_loss(
     targets_j: jax.Array,
     true_terminal: jax.Array,
     is_timeout: Optional[jax.Array] = None,
-    start_weight: Optional[jax.Array] = None,
-    w_mc: float = 0.5,
-    w_dir: float = 0.5,
+    is_start: Optional[jax.Array] = None,
+    w_mc: Optional[float] = None,
+    w_dir: Optional[float] = None,
     v_aux_i: Optional[jax.Array] = None,
     v_aux_j: Optional[jax.Array] = None,
     variant: str = "aux",
+    gamma: float = 0.99,
 ):
     """
-    Computes 1-step Bellman-Smoothed Monte Carlo critic loss based directly on the 1-step E(0) loss,
-    with relative term weights (w_mc, w_dir) as input:
-        L_BSMC = w_mc * L_MC + w_dir * L_smooth^(1-step) + start_loss
+    Computes 1-step Bellman-Smoothed Monte Carlo (BSMC) critic loss based directly on
+    the 1-step E(0) loss (e_critic_loss), with relative term weighting (w_mc, w_dir) as input:
+        L_BSMC = w_mc * L_MC + w_dir * L_smooth^(1-step) + start_loss + timeout_loss
     where:
         w_mc  = 0.5 * (1 - gamma) / (1 - gamma * lambda)
         w_dir = 0.5 * gamma * (1 - lambda) / (1 - gamma * lambda)
     When lambda = 0: w_mc = 0.5 * (1 - gamma), w_dir = 0.5 * gamma (exact E(0) loss).
+    When lambda = 1: w_mc = 0.5, w_dir = 0.0 (exact pure MC loss).
     """
-    sg = jax.lax.stop_gradient
+    if variant in ["aux", "v_aux", "surgical", "surgical_v_aux"]:
+        e_variant = "surgical_v_aux"
+    elif variant in ["forward", "forward_e", "forward_only", "fwd"]:
+        e_variant = "forward_e"
+    elif variant in ["dirichlet", "dirichlet_v_aux"]:
+        e_variant = "dirichlet_v_aux"
+    else:
+        e_variant = "oct8"
 
-    # Errors at s_t and s_{t+1}
-    e_i = sg(targets_i) - v_i
-    e_j = jnp.where(true_terminal, 0.0, sg(targets_j) - v_j)
-
-    if variant in ["fwd", "forward", "forward_e"]:
-        inner_diff_sq = (e_i - sg(e_j)) ** 2
-    elif variant in ["naive", "oct8"]:
-        inner_diff_sq = (e_i - e_j) ** 2
-    else:  # 'aux' / 'v_aux' debiased
-        if v_aux_i is None:
-            v_aux_i = v_i
-        if v_aux_j is None:
-            v_aux_j = v_j
-        e_aux_i = sg(v_aux_i) - v_i
-        e_aux_j = jnp.where(true_terminal, 0.0, sg(v_aux_j) - v_j)
-        inner_diff_sq = (e_i - sg(e_j)) ** 2 + (sg(e_aux_i) - e_aux_j) ** 2
-
-    # Boundary handling matching E(0):
-    # At true terminal, e_j = 0 and backward branch vanishes -> diff_sq = e_i ** 2
-    # At timeout (artificial truncation), drop smoothing -> diff_sq = 0.0
-    diff_sq = jnp.where(
-        true_terminal,
-        e_i ** 2,
-        jnp.where(is_timeout, 0.0, inner_diff_sq) if is_timeout is not None else inner_diff_sq,
+    return e_critic_loss(
+        v_i=v_i,
+        targets_i=targets_i,
+        v_j=v_j,
+        targets_j=targets_j,
+        true_terminal=true_terminal,
+        gamma=gamma,
+        variant=e_variant,
+        is_start=is_start,
+        is_timeout=is_timeout,
+        v_aux_i=v_aux_i,
+        v_aux_j=v_aux_j,
+        w_mc=w_mc,
+        w_dir=w_dir,
+        return_details=True,
     )
-
-    magnitude_loss = w_mc * jnp.mean(e_i ** 2)
-    dirichlet_loss = w_dir * jnp.mean(diff_sq)
-    start_loss = jnp.mean(start_weight * (e_i ** 2)) if start_weight is not None else 0.0
-    value_loss = magnitude_loss + dirichlet_loss + start_loss
-
-    losses = {
-        "value_loss": value_loss,
-        "magnitude_loss": magnitude_loss,
-        "dirichlet_loss": dirichlet_loss,
-        "start_loss": start_loss,
-    }
-    return value_loss, losses
 
 
 def bsmc_ppo_minibatch_loss(
@@ -2149,10 +2172,20 @@ def bsmc_ppo_minibatch_loss(
         v_aux_i = aux_network.apply(aux_params, mb.obs)
         v_aux_j = aux_network.apply(aux_params, mb.next_obs)
     else:
-        v_aux_i = v_i
-        v_aux_j = v_j
+        v_aux_i = None
+        v_aux_j = None
 
-    w_mc, w_dir, alpha = compute_bsmc_weights(config["GAMMA"], config["VALUE_LAMBDA"])
+    if "BSMC_WEIGHTS" in config:
+        w_mc, w_dir = config["BSMC_WEIGHTS"]
+        total_w = w_mc + w_dir
+        alpha = w_dir / jnp.maximum(total_w, 1e-8)
+    elif "BSMC_ALPHA" in config:
+        alpha = config["BSMC_ALPHA"]
+        w_mc = 0.5 * (1.0 - alpha)
+        w_dir = 0.5 * alpha
+    else:
+        w_mc, w_dir, alpha = compute_bsmc_weights(config["GAMMA"], config["VALUE_LAMBDA"])
+
     variant = config.get("BSMC_VARIANT", config.get("E_LAMBDA_VARIANT", "aux"))
 
     value_loss, critic_losses = bsmc_critic_loss(
@@ -2162,18 +2195,19 @@ def bsmc_ppo_minibatch_loss(
         targets_j=mb.next_target,
         true_terminal=mb.true_terminal,
         is_timeout=mb.is_timeout,
-        start_weight=mb.start_weight,
+        is_start=mb.is_start,
         w_mc=w_mc,
         w_dir=w_dir,
         v_aux_i=v_aux_i,
         v_aux_j=v_aux_j,
         variant=variant,
+        gamma=config["GAMMA"],
     )
 
     total_loss = (
-        config["POLICY_COEFF"] * loss_actor
-        + config["VF_COEF"] * value_loss
-        - config["ENT_COEF"] * entropy
+        config.get("POLICY_COEFF", 1.0) * loss_actor
+        + config.get("VF_COEF", 0.5) * value_loss
+        - config.get("ENT_COEF", 0.01) * entropy
     )
 
     losses = {
@@ -2181,7 +2215,7 @@ def bsmc_ppo_minibatch_loss(
         "value_loss": value_loss,
         "magnitude_loss": critic_losses["magnitude_loss"],
         "dirichlet_loss": critic_losses["dirichlet_loss"],
-        "start_loss": critic_losses["start_loss"],
+        "start_loss": critic_losses.get("start_loss", 0.0),
         "actor_loss": loss_actor,
         "entropy": entropy,
         "mc_share": 1.0 - alpha,
