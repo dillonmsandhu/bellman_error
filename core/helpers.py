@@ -2035,124 +2035,80 @@ def compute_bsmc_weights(gamma: float, lmbda: float) -> tuple[float, float, floa
     return w_mc, w_dir, alpha
 
 
-def prepare_bsmc_pairs(
-    traj_batch,
-    returns: jax.Array,
-    gamma: float,
-    lmbda: float,
-    rng: jax.Array,
-    steps_since_start: jax.Array,
-    advantages: Optional[jax.Array] = None,
-    runway_length: int = 16,
-    aux_returns: Optional[jax.Array] = None,
-):
+class BSMCTransition(NamedTuple):
     """
-    Pairs each source state s_t with its immediate next state s_{t+1} (jump m = 1),
-    with Monte Carlo weight calibrated via (1 - alpha) = (1 - gamma) / (1 - gamma * lambda).
-    Runs ONCE per rollout batch outside the gradient descent loop.
-    Returns (jump_batch, final_steps_since_start).
+    Transition container for 1-step Bellman-Smoothed Monte Carlo (BSMC).
+    Directly packages rollout transitions (s_t, s_{t+1}, G_t, G_{t+1}) with no runway cutoff.
+    Shape before shuffle_and_batch: (T, B, ...)
+    Shape inside minibatch: (minibatch_size, ...)
     """
-    T, B = returns.shape[:2]
-    # Keep T_start matching E(lambda) convention for fair comparability
-    T_start = min(T, max(1, T - runway_length))
-    gl = gamma * lmbda
-    safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
-
-    # 1. 1-step destination: j = t + 1 deterministically
-    is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
-    true_terminals = traj_batch.done & ~is_timeout
-
-    hit_true_terminal = true_terminals[:T_start]
-    hit_timeout = is_timeout[:T_start]
-    hit_horizon = jnp.zeros_like(hit_true_terminal, dtype=bool)
-
-    # 2. Track steps since start for initial boundary trace
-    def scan_steps(k, step_flags):
-        term, timeout = step_flags
-        k_next = jnp.where(term, 0, jnp.where(timeout, 10_000, k + 1))
-        return k_next, k
-
-    init_k = jnp.full((B,), 10_000, dtype=jnp.int32) if steps_since_start is None else steps_since_start
-    final_steps_since_start, all_steps = jax.lax.scan(scan_steps, init_k, (true_terminals, is_timeout))
-
-    tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
-    start_trace = jnp.where(
-        gl < 1e-6,
-        jnp.where(all_steps[:T_start] == 0, 1.0, 0.0),
-        safe_gl ** all_steps[:T_start],
-    )
-    start_weight = 0.25 * tilde_gamma * start_trace
-
-    # 3. Destination lookups: immediate next obs and next return
-    obs_ext = jnp.concatenate([traj_batch.obs, traj_batch.next_obs[-1][None]], axis=0)
-    target_ext = jnp.concatenate([returns, traj_batch.next_value[-1][None]], axis=0)
-
-    dest_obs = obs_ext[1 : T_start + 1]
-    dest_target = target_ext[1 : T_start + 1]
-
-    action = traj_batch.action[:T_start] if hasattr(traj_batch, "action") else None
-    log_prob = traj_batch.log_prob[:T_start] if hasattr(traj_batch, "log_prob") else None
-    adv = advantages[:T_start] if advantages is not None else None
-    aux_target = returns[:T_start] if aux_returns is None else aux_returns[:T_start]
-
-    jump_batch = ELambdaJumpTransition(
-        obs=traj_batch.obs[:T_start],
-        dest_obs=dest_obs,
-        target=returns[:T_start],
-        dest_target=dest_target,
-        hit_true_terminal=hit_true_terminal,
-        hit_timeout=hit_timeout,
-        start_weight=start_weight,
-        hit_horizon=hit_horizon,
-        aux_target=aux_target,
-        action=action,
-        log_prob=log_prob,
-        advantage=adv,
-    )
-    return jump_batch, final_steps_since_start
+    obs: jnp.ndarray
+    next_obs: jnp.ndarray
+    target: jnp.ndarray
+    next_target: jnp.ndarray
+    true_terminal: jnp.ndarray
+    is_timeout: jnp.ndarray
+    start_weight: jnp.ndarray
+    aux_target: Optional[jnp.ndarray] = None
+    action: Optional[jnp.ndarray] = None
+    log_prob: Optional[jnp.ndarray] = None
+    advantage: Optional[jnp.ndarray] = None
 
 
-def bsmc_pointwise_critic_loss(
-    v_start: jax.Array,
-    v_jump: jax.Array,
-    v_aux_start: jax.Array,
-    v_aux_jump: jax.Array,
-    mb: ELambdaJumpTransition,
-    gamma: float,
-    lmbda: float,
+def bsmc_critic_loss(
+    v_i: jax.Array,
+    targets_i: jax.Array,
+    v_j: jax.Array,
+    targets_j: jax.Array,
+    true_terminal: jax.Array,
+    is_timeout: Optional[jax.Array] = None,
+    start_weight: Optional[jax.Array] = None,
+    w_mc: float = 0.5,
+    w_dir: float = 0.5,
+    v_aux_i: Optional[jax.Array] = None,
+    v_aux_j: Optional[jax.Array] = None,
     variant: str = "aux",
 ):
     """
-    Evaluates the 1-step Bellman-Smoothed Monte Carlo critic loss with exact matching MC weight:
+    Computes 1-step Bellman-Smoothed Monte Carlo critic loss based directly on the 1-step E(0) loss,
+    with relative term weights (w_mc, w_dir) as input:
         L_BSMC = w_mc * L_MC + w_dir * L_smooth^(1-step) + start_loss
-    where w_mc and w_dir match the exact relative weights of E(lambda).
+    where:
+        w_mc  = 0.5 * (1 - gamma) / (1 - gamma * lambda)
+        w_dir = 0.5 * gamma * (1 - lambda) / (1 - gamma * lambda)
+    When lambda = 0: w_mc = 0.5 * (1 - gamma), w_dir = 0.5 * gamma (exact E(0) loss).
     """
     sg = jax.lax.stop_gradient
-    w_mc, w_dir, alpha = compute_bsmc_weights(gamma, lmbda)
 
-    e_start = sg(mb.target) - v_start
-    e_jump = jnp.where(mb.hit_true_terminal, 0.0, sg(mb.dest_target) - v_jump)
-
-    e_aux_start = sg(v_aux_start) - v_start
-    e_aux_jump = jnp.where(mb.hit_true_terminal, 0.0, sg(v_aux_jump) - v_jump)
+    # Errors at s_t and s_{t+1}
+    e_i = sg(targets_i) - v_i
+    e_j = jnp.where(true_terminal, 0.0, sg(targets_j) - v_j)
 
     if variant in ["fwd", "forward", "forward_e"]:
-        inner_diff_sq = (e_start - sg(e_jump)) ** 2
+        inner_diff_sq = (e_i - sg(e_j)) ** 2
     elif variant in ["naive", "oct8"]:
-        inner_diff_sq = (e_start - e_jump) ** 2
+        inner_diff_sq = (e_i - e_j) ** 2
     else:  # 'aux' / 'v_aux' debiased
-        inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
+        if v_aux_i is None:
+            v_aux_i = v_i
+        if v_aux_j is None:
+            v_aux_j = v_j
+        e_aux_i = sg(v_aux_i) - v_i
+        e_aux_j = jnp.where(true_terminal, 0.0, sg(v_aux_j) - v_j)
+        inner_diff_sq = (e_i - sg(e_j)) ** 2 + (sg(e_aux_i) - e_aux_j) ** 2
 
-    is_horizon = mb.hit_horizon if mb.hit_horizon is not None else False
+    # Boundary handling matching E(0):
+    # At true terminal, e_j = 0 and backward branch vanishes -> diff_sq = e_i ** 2
+    # At timeout (artificial truncation), drop smoothing -> diff_sq = 0.0
     diff_sq = jnp.where(
-        mb.hit_true_terminal | (is_horizon & ~mb.hit_timeout),
-        e_start ** 2,
-        jnp.where(mb.hit_timeout, 0.0, inner_diff_sq),
+        true_terminal,
+        e_i ** 2,
+        jnp.where(is_timeout, 0.0, inner_diff_sq) if is_timeout is not None else inner_diff_sq,
     )
 
-    magnitude_loss = w_mc * jnp.mean(e_start ** 2)
+    magnitude_loss = w_mc * jnp.mean(e_i ** 2)
     dirichlet_loss = w_dir * jnp.mean(diff_sq)
-    start_loss = jnp.mean(mb.start_weight * (e_start ** 2))
+    start_loss = jnp.mean(start_weight * (e_i ** 2)) if start_weight is not None else 0.0
     value_loss = magnitude_loss + dirichlet_loss + start_loss
 
     losses = {
@@ -2160,8 +2116,6 @@ def bsmc_pointwise_critic_loss(
         "magnitude_loss": magnitude_loss,
         "dirichlet_loss": dirichlet_loss,
         "start_loss": start_loss,
-        "mc_share": 1.0 - alpha,
-        "smooth_share": alpha,
     }
     return value_loss, losses
 
@@ -2169,7 +2123,7 @@ def bsmc_pointwise_critic_loss(
 def bsmc_ppo_minibatch_loss(
     params,
     network,
-    mb: ELambdaJumpTransition,
+    mb: BSMCTransition,
     config,
     aux_params=None,
     aux_network=None,
@@ -2187,26 +2141,32 @@ def bsmc_ppo_minibatch_loss(
     loss_actor = -jnp.minimum(loss_actor1, loss_actor2).mean()
     entropy = pi.entropy().mean()
 
-    # 2. Critic value predictions on (obs, dest_obs)
-    v_start = network.apply(params, mb.obs, method=network.value)
-    v_jump = network.apply(params, mb.dest_obs, method=network.value)
+    # 2. Critic value predictions on (obs, next_obs)
+    v_i = network.apply(params, mb.obs, method=network.value)
+    v_j = network.apply(params, mb.next_obs, method=network.value)
 
     if aux_network is not None and aux_params is not None:
-        v_aux_start = aux_network.apply(aux_params, mb.obs)
-        v_aux_jump = aux_network.apply(aux_params, mb.dest_obs)
+        v_aux_i = aux_network.apply(aux_params, mb.obs)
+        v_aux_j = aux_network.apply(aux_params, mb.next_obs)
     else:
-        v_aux_start = v_start
-        v_aux_jump = v_jump
+        v_aux_i = v_i
+        v_aux_j = v_j
 
+    w_mc, w_dir, alpha = compute_bsmc_weights(config["GAMMA"], config["VALUE_LAMBDA"])
     variant = config.get("BSMC_VARIANT", config.get("E_LAMBDA_VARIANT", "aux"))
-    value_loss, critic_losses = bsmc_pointwise_critic_loss(
-        v_start=v_start,
-        v_jump=v_jump,
-        v_aux_start=v_aux_start,
-        v_aux_jump=v_aux_jump,
-        mb=mb,
-        gamma=config["GAMMA"],
-        lmbda=config["VALUE_LAMBDA"],
+
+    value_loss, critic_losses = bsmc_critic_loss(
+        v_i=v_i,
+        targets_i=mb.target,
+        v_j=v_j,
+        targets_j=mb.next_target,
+        true_terminal=mb.true_terminal,
+        is_timeout=mb.is_timeout,
+        start_weight=mb.start_weight,
+        w_mc=w_mc,
+        w_dir=w_dir,
+        v_aux_i=v_aux_i,
+        v_aux_j=v_aux_j,
         variant=variant,
     )
 
@@ -2224,8 +2184,8 @@ def bsmc_ppo_minibatch_loss(
         "start_loss": critic_losses["start_loss"],
         "actor_loss": loss_actor,
         "entropy": entropy,
-        "mc_share": critic_losses["mc_share"],
-        "smooth_share": critic_losses["smooth_share"],
+        "mc_share": 1.0 - alpha,
+        "smooth_share": alpha,
     }
     return total_loss, losses
 

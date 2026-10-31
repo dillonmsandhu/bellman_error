@@ -26,16 +26,6 @@ def make_train(base_config):
     base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config["MINIBATCH_SIZE"])
     base_config["NUM_UPDATES"] = max(1, base_config["TOTAL_TIMESTEPS"] // batch_size)
 
-    # Static runway length computed once at build time for the entire run
-    runway_length = base_config.get("RUNWAY_LENGTH")
-    if runway_length is None:
-        runway_length = helpers.compute_adaptive_runway_length(
-            base_config["GAMMA"],
-            base_config["VALUE_LAMBDA"],
-            base_config["NUM_STEPS"],
-        )
-    base_config["RUNWAY_LENGTH"] = runway_length
-
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
@@ -110,18 +100,41 @@ def make_train(base_config):
             else:
                 aux_returns = returns
 
-            # 4. PREPARE 1-STEP BSMC TRANSITIONS (m = 1 jump, calibrated MC weight)
-            rng, _rng = jax.random.split(rng)
-            jump_batch, final_steps_since_start = helpers.prepare_bsmc_pairs(
-                traj_batch=traj_batch,
-                returns=returns,
-                advantages=advantages,
-                gamma=config["GAMMA"],
-                lmbda=config["VALUE_LAMBDA"],
-                rng=_rng,
-                steps_since_start=steps_since_start,
-                runway_length=runway_length,
-                aux_returns=aux_returns,
+            # 4. PREPARE 1-STEP BSMC TRANSITIONS (direct from full rollout, no pairs or runway cutoff)
+            next_target = jnp.concatenate([returns[1:], traj_batch.next_value[-1][None]], axis=0)
+            is_timeout = traj_batch.info.get("is_timeout", jnp.zeros_like(traj_batch.done, dtype=bool))
+            true_terminal = traj_batch.done & ~is_timeout
+
+            def scan_steps(k, step_flags):
+                term, timeout = step_flags
+                k_next = jnp.where(term, 0, jnp.where(timeout, 10_000, k + 1))
+                return k_next, k
+
+            init_k = jnp.full((config["NUM_ENVS"],), 10_000, dtype=jnp.int32) if steps_since_start is None else steps_since_start
+            final_steps_since_start, all_steps = jax.lax.scan(scan_steps, init_k, (true_terminal, is_timeout))
+
+            gl = config["GAMMA"] * config["VALUE_LAMBDA"]
+            safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
+            tilde_gamma = (config["GAMMA"] * (1.0 - config["VALUE_LAMBDA"])) / jnp.maximum(1.0 - gl, 1e-8)
+            start_trace = jnp.where(
+                gl < 1e-6,
+                jnp.where(all_steps == 0, 1.0, 0.0),
+                safe_gl ** all_steps,
+            )
+            start_weight = 0.25 * tilde_gamma * start_trace
+
+            bsmc_batch = helpers.BSMCTransition(
+                obs=traj_batch.obs,
+                next_obs=traj_batch.next_obs,
+                target=returns,
+                next_target=next_target,
+                true_terminal=true_terminal,
+                is_timeout=is_timeout,
+                start_weight=start_weight,
+                aux_target=aux_returns,
+                action=traj_batch.action,
+                log_prob=traj_batch.log_prob,
+                advantage=advantages,
             )
 
             # 5. UPDATE NETWORK OVER EPOCHS AND MINIBATCHES
@@ -156,7 +169,7 @@ def make_train(base_config):
 
                 train_state, aux_train_state, rng = update_state
                 rng, _rng = jax.random.split(rng)
-                minibatches = helpers.shuffle_and_batch(_rng, jump_batch, config["NUM_MINIBATCHES"])
+                minibatches = helpers.shuffle_and_batch(_rng, bsmc_batch, config["NUM_MINIBATCHES"])
 
                 (train_state, aux_train_state), loss_info = jax.lax.scan(
                     _update_minbatch, (train_state, aux_train_state), minibatches
