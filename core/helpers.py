@@ -1567,7 +1567,8 @@ def e_lambda_geometric_critic_loss(
     )
 
     hit_true_terminal = (jnp.take_along_axis(term_cumsum_excl, j, axis=0) - term_cumsum_excl[:T_start]) > 0
-    hit_timeout = (jnp.take_along_axis(timeout_cumsum_excl, j, axis=0) - timeout_cumsum_excl[:T_start]) > 0
+    hit_timeout = (jnp.take_along_axis(timeout_cumsum_excl, j, axis=0) - timeout_cumsum[:T_start]) > 0
+    hit_horizon = (t_arr + m >= T)
 
     e_start = errors[:T_start]
     e_aux_start = e_aux[:T_start]
@@ -1575,8 +1576,8 @@ def e_lambda_geometric_critic_loss(
     e_aux_jump = jnp.take_along_axis(e_aux_ext, j, axis=0)
 
     diff_sq = jnp.where(
-        hit_true_terminal,
-        e_start ** 2,  # Absorbs at e_term = 0; backward branch at s_term vanishes
+        hit_true_terminal | (hit_horizon & ~hit_timeout),
+        e_start ** 2,  # Absorbs at e_term = 0 or falls back to pure MC on horizon exceedance
         jnp.where(
             hit_timeout,
             0.0,
@@ -1701,6 +1702,26 @@ def e_lambda_geometric_loss_fn(
     return total_loss, losses
 
 
+def compute_adaptive_runway_length(
+    gamma: float,
+    lmbda: float,
+    total_steps: int = 256,
+) -> int:
+    """
+    Computes an adaptive runway length based on gamma and lambda:
+    runway = min(m_95, upper_bound), bounded below by 8.
+    Here m_95 is the 95th percentile of the geometric jump length Geom(1 - gamma * lambda):
+        P(m <= m_95) >= 0.95 <=> (gamma * lambda)^m_95 <= 0.05
+        m_95 = ceil(log(0.05) / log(gamma * lambda))
+    upper_bound is total_steps // 8 (e.g. 32 for T=256), preserving >= 87.5% of rollout steps as sources.
+    """
+    import math
+    gl = max(1e-6, min(0.9999, float(gamma * lmbda)))
+    m_95 = int(math.ceil(math.log(0.05) / math.log(gl)))
+    upper_bound = max(8, int(total_steps) // 8)
+    return max(8, min(m_95, upper_bound))
+
+
 class ELambdaJumpTransition(NamedTuple):
     """
     Transition container pairing source states with geometric jump destination states.
@@ -1714,6 +1735,7 @@ class ELambdaJumpTransition(NamedTuple):
     hit_true_terminal: jnp.ndarray
     hit_timeout: jnp.ndarray
     start_weight: jnp.ndarray
+    hit_horizon: Optional[jnp.ndarray] = None
     aux_target: Optional[jnp.ndarray] = None
     action: Optional[jnp.ndarray] = None
     log_prob: Optional[jnp.ndarray] = None
@@ -1785,6 +1807,7 @@ def prepare_e_lambda_jump_pairs(
 
     hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T_start]) > 0
     hit_timeout = (jnp.take_along_axis(timeout_cumsum, j, axis=0) - timeout_cumsum[:T_start]) > 0
+    hit_horizon = (t_arr + m >= T)
 
     # 3. Track steps since start (clearing to 10,000 on timeout)
     def scan_steps(k, step_flags):
@@ -1826,6 +1849,7 @@ def prepare_e_lambda_jump_pairs(
         hit_true_terminal=hit_true_terminal,
         hit_timeout=hit_timeout,
         start_weight=start_weight,
+        hit_horizon=hit_horizon,
         aux_target=aux_target,
         action=action,
         log_prob=log_prob,
@@ -1867,8 +1891,9 @@ def e_lambda_pointwise_critic_loss(
     else:
         inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
 
+    is_horizon = mb.hit_horizon if mb.hit_horizon is not None else False
     diff_sq = jnp.where(
-        mb.hit_true_terminal,
+        mb.hit_true_terminal | (is_horizon & ~mb.hit_timeout),
         e_start ** 2,
         jnp.where(mb.hit_timeout, 0.0, inner_diff_sq),
     )
@@ -2039,6 +2064,7 @@ def prepare_bsmc_pairs(
 
     hit_true_terminal = true_terminals[:T_start]
     hit_timeout = is_timeout[:T_start]
+    hit_horizon = jnp.zeros_like(hit_true_terminal, dtype=bool)
 
     # 2. Track steps since start for initial boundary trace
     def scan_steps(k, step_flags):
@@ -2077,6 +2103,7 @@ def prepare_bsmc_pairs(
         hit_true_terminal=hit_true_terminal,
         hit_timeout=hit_timeout,
         start_weight=start_weight,
+        hit_horizon=hit_horizon,
         aux_target=aux_target,
         action=action,
         log_prob=log_prob,
@@ -2116,8 +2143,9 @@ def bsmc_pointwise_critic_loss(
     else:  # 'aux' / 'v_aux' debiased
         inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
 
+    is_horizon = mb.hit_horizon if mb.hit_horizon is not None else False
     diff_sq = jnp.where(
-        mb.hit_true_terminal,
+        mb.hit_true_terminal | (is_horizon & ~mb.hit_timeout),
         e_start ** 2,
         jnp.where(mb.hit_timeout, 0.0, inner_diff_sq),
     )

@@ -24,6 +24,17 @@ def make_train(base_config):
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
     base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config["MINIBATCH_SIZE"])
     base_config["NUM_UPDATES"] = max(1, base_config["TOTAL_TIMESTEPS"] // batch_size)
+
+    # Static runway length computed once at build time for the entire run
+    runway_length = base_config.get("RUNWAY_LENGTH")
+    if runway_length is None:
+        runway_length = helpers.compute_adaptive_runway_length(
+            base_config["GAMMA"],
+            base_config["VALUE_LAMBDA"],
+            base_config["NUM_STEPS"],
+        )
+    base_config["RUNWAY_LENGTH"] = runway_length
+
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape
@@ -106,7 +117,7 @@ def make_train(base_config):
                 lmbda=config["VALUE_LAMBDA"],
                 rng=_rng,
                 steps_since_start=steps_since_start,
-                runway_length=config.get("RUNWAY_LENGTH", 16),
+                runway_length=runway_length,
                 aux_returns=aux_returns,
             )
 

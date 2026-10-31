@@ -123,7 +123,7 @@ def parse_args():
     parser.add_argument("--gae_lambda", type=float, default=0.8, help="Actor GAE lambda (default: 0.8)")
     parser.add_argument("--clip_eps", type=float, default=0.2, help="PPO clip epsilon (default: 0.2)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma (default: 0.99)")
-    parser.add_argument("--runway_length", type=int, default=16, help="Runway window length (default: 16)")
+    parser.add_argument("--runway_length", type=str, default="adaptive", help="Runway window length (integer or 'adaptive', default: 'adaptive')")
     parser.add_argument("--select_by", type=str, default="std_perf_auc", choices=["std_perf_auc", "std_perf_final", "ve_auc"], help="Metric to select best condition")
     parser.add_argument("--out_dir", type=str, default="results/bsmc_sweep", help="Root output directory")
     parser.add_argument("--algos", type=str, nargs="+", default=["td_lambda", "e_lambda", "e_lambda_fwd", "bsmc_aux", "bsmc_fwd"], help="Algorithms to evaluate")
@@ -150,6 +150,7 @@ def build_env_config(env_name: str, args: argparse.Namespace, critic_lr: float) 
     """Configures environment parameters matching sampled PPO standards."""
     is_mc = "mountaincar" in env_name.lower()
     batch_size = args.num_envs * args.num_steps
+    runway_val = None if str(args.runway_length).lower() in ["none", "adaptive", "auto"] else int(args.runway_length)
     cfg = base_cfg.copy()
     cfg.update({
         "ENV_NAME": env_name,
@@ -168,7 +169,7 @@ def build_env_config(env_name: str, args: argparse.Namespace, critic_lr: float) 
         "k": args.k,
         "NETWORK_TYPE": "mlp" if is_mc else "cnn",
         "NORMALIZE_OBS": is_mc,
-        "RUNWAY_LENGTH": args.runway_length,
+        "RUNWAY_LENGTH": runway_val,
         "CALC_TRUE_VALUES": args.calc_true_values,
         "LIGHT_METRICS": True,
         "LOG_FEATURE_METRICS": False,

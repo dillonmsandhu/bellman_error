@@ -29,7 +29,7 @@ MINIBATCH_SIZE=${10:-256}
 NUM_EPOCHS=${11:-4}
 GAE_LAMBDA=${12:-0.6}
 CLIP_EPS=${13:-0.2}
-RUNWAY_LENGTH=${14:-16}
+RUNWAY_LENGTH=${14:-adaptive}
 OUT_DIR=${15:-"results/bsmc_sweep"}
 ALGOS=${16:-"td_lambda e_lambda e_lambda_fwd bsmc_aux bsmc_fwd"}
 

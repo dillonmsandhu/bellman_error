@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument("--num_steps", type=int, default=128, help="Rollout steps per trajectory")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor gamma")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--runway_length", type=int, default=16, help="Runway window length at rollout end")
+    parser.add_argument("--runway_length", type=str, default="adaptive", help="Runway window length at rollout end (integer or 'adaptive', default: 'adaptive')")
     parser.add_argument("--out_dir", type=str, default="results/sampled_E_lambda_test", help="Output directory root")
     parser.add_argument("--save_checkpoint", action="store_true", help="Save complete train state checkpoints")
     parser.add_argument("--save_metrics", action="store_true", default=True, help="Save metrics dictionary")
@@ -73,6 +73,7 @@ def parse_args():
 
 def build_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
     is_mountaincar = "mountaincar" in env_name.lower()
+    runway_val = None if str(args.runway_length).lower() in ["none", "adaptive", "auto"] else int(args.runway_length)
 
     cfg = default_config.copy()
     cfg.update({
@@ -102,7 +103,7 @@ def build_config(env_name: str, args: argparse.Namespace) -> Dict[str, Any]:
         "SAMPLING_E_NUM_STEPS": args.num_steps,
         "SAMPLING_E_AUX_STEPS": args.aux_steps,
         "SAMPLING_E_AUX_TARGET_MODE": args.aux_target_mode,
-        "RUNWAY_LENGTH": args.runway_length,
+        "RUNWAY_LENGTH": runway_val,
     })
     return cfg
 

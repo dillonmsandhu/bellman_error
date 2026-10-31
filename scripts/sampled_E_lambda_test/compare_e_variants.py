@@ -61,7 +61,7 @@ def analyze_gradient_variance(
     num_trajectories: int = 64,
     num_steps: int = 128,
     seed: int = 42,
-    runway_length: int = 16,
+    runway_length: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Computes exact E(lambda) gradient and evaluates sample gradient distributions across
@@ -185,6 +185,8 @@ def analyze_gradient_variance(
     v_aux_sg = jax.lax.stop_gradient(v_aux_full)
 
     T, B = num_steps, num_trajectories
+    if runway_length is None:
+        runway_length = helpers.compute_adaptive_runway_length(gamma, lmbda, num_steps)
     T_start = min(T, max(1, T - runway_length))
     sg = jax.lax.stop_gradient
 
@@ -345,7 +347,7 @@ def run_training_comparison(
         "GAE_LAMBDA": 0.8,
         "CRITIC_LR": 0.001 if is_mc else 0.0003,
         "ACTOR_LR": 0.001 if is_mc else 0.0003,
-        "RUNWAY_LENGTH": 16,
+        "RUNWAY_LENGTH": None,
         "CALC_TRUE_VALUES": True,
         "LIGHT_METRICS": True,
     })
