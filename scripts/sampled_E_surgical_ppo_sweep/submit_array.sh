@@ -7,6 +7,7 @@ set -e
 
 # Ensure working directory is repo root
 [ -f "core/config.py" ] || cd "$(dirname "$0")/../.."
+REPO_ROOT="$(pwd)"
 DATE=${DATE:-$(date +%Y-%m-%d)}
 SWEEP_NAME="sampled_E_surgical_ppo_sweep"
 LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
