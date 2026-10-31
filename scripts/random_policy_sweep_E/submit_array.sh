@@ -4,8 +4,10 @@
 
 # Ensure working directory is repo root
 [ -f "core/config.py" ] || cd "$(dirname "$0")/../.."
-REPO_ROOT="$(pwd)"
-mkdir -p slurm
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="random_policy_sweep_E"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
 export PYTHONPATH="$REPO_ROOT"
 
 NUM_UPDATES=${1:-50}
@@ -24,12 +26,15 @@ echo "Num Seeds:          $N_SEEDS"
 echo "Rollouts:           $NUM_ENVS envs x $NUM_STEPS steps"
 echo "Minibatch Size:     $MINIBATCH_SIZE"
 echo "Output Directory:   $OUT_DIR"
+echo "Log Directory:      $LOG_DIR"
 echo "Repo Root:          $REPO_ROOT"
 echo "================================================================"
 
 ARRAY_SCRIPT="scripts/random_policy_sweep_E/run_slurm_array.sh"
 SBATCH_ARRAY_CMD="sbatch --parsable \
     --chdir=\"$REPO_ROOT\" \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,NUM_UPDATES=$NUM_UPDATES,N_SEEDS=$N_SEEDS,NUM_ENVS=$NUM_ENVS,NUM_STEPS=$NUM_STEPS,MINIBATCH_SIZE=$MINIBATCH_SIZE,OUT_DIR=$OUT_DIR,REPO_ROOT=$REPO_ROOT \
     \"$ARRAY_SCRIPT\""
 
@@ -48,8 +53,8 @@ fi
 POST_SCRIPT="scripts/random_policy_sweep_E/plot_results.py"
 SBATCH_POST_CMD="sbatch --parsable \
     --job-name=plot_rand_pol_E \
-    --output=slurm/%A.out \
-    --error=slurm/%A.err \
+    --output=\"${LOG_DIR}/%A_post.out\" \
+    --error=\"${LOG_DIR}/%A_post.err\" \
     --time=00:30:00 \
     --partition=compsci-gpu \
     --gres=gpu:a5000:1 \
@@ -62,4 +67,5 @@ SBATCH_POST_CMD="sbatch --parsable \
 POST_JOB_ID=$(eval "$SBATCH_POST_CMD")
 echo "Submitted Dependent Plotting Job ID: $POST_JOB_ID"
 echo "Chained: $ARRAY_JOB_ID -> $POST_JOB_ID"
+echo "Logs written to:    $LOG_DIR/"
 echo "================================================================"

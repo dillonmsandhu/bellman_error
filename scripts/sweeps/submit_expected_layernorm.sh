@@ -5,7 +5,10 @@
 # Ensure working directory is repo root
 [ -f "core/config.py" ] || cd "$(dirname "$0")/../.."
 REPO_ROOT="$(pwd)"
-mkdir -p slurm
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="expected_layernorm"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
 export PYTHONPATH="$REPO_ROOT"
 
 SWEEP_ID="ln_sweep_$(date +"%Y%m%d_%H%M%S")"
@@ -15,11 +18,14 @@ echo "================================================================"
 echo "Submitting Expected PPO LayerNorm & LR Sweep Array"
 echo "Sweep ID:  $SWEEP_ID"
 echo "Repo Root: $REPO_ROOT"
+echo "Log Dir:   $LOG_DIR"
 echo "================================================================"
 
 ARRAY_SCRIPT="scripts/sweeps/run_slurm_expected_layernorm.sh"
 SBATCH_ARRAY_CMD="sbatch --parsable \
     --chdir=\"$REPO_ROOT\" \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,SWEEP_ID=$SWEEP_ID,REPO_ROOT=$REPO_ROOT \
     \"$ARRAY_SCRIPT\""
 
@@ -27,4 +33,5 @@ ARRAY_JOB_ID=$(eval "$SBATCH_ARRAY_CMD")
 echo "Submitted Array Job ID: $ARRAY_JOB_ID"
 echo ""
 echo "Monitor status with: squeue -u \$USER"
+echo "Logs written to: $LOG_DIR/"
 echo "Outputs and plots will be written to: results/sweeps/expected_layernorm/<env_name>/"

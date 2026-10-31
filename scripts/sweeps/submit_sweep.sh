@@ -5,7 +5,10 @@
 # Ensure working directory is repo root
 [ -f "core/config.py" ] || cd "$(dirname "$0")/../.."
 REPO_ROOT="$(pwd)"
-mkdir -p slurm
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="sweeps"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
 export PYTHONPATH="$REPO_ROOT"
 
 # Python interpreter resolution
@@ -24,12 +27,15 @@ echo "================================================================"
 echo "Submitting Bellman Error Rollout Horizon Sweep"
 echo "Sweep ID:  $SWEEP_ID"
 echo "Repo Root: $REPO_ROOT"
+echo "Log Dir:   $LOG_DIR"
 echo "================================================================"
 
 # 1. Submit the 7-environment array job
 ARRAY_SCRIPT="scripts/sweeps/run_slurm_array.sh"
 SBATCH_ARRAY_CMD="sbatch --parsable \
     --chdir=\"$REPO_ROOT\" \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,SWEEP_ID=$SWEEP_ID,REPO_ROOT=$REPO_ROOT \
     \"$ARRAY_SCRIPT\""
 
@@ -42,8 +48,8 @@ PLOT_JOB_ID=$(sbatch --parsable \
     --dependency=afterany:$ARRAY_JOB_ID \
     --chdir="$REPO_ROOT" \
     --job-name="plot_${SWEEP_ID}" \
-    --output="slurm/%j_plot_${SWEEP_ID}.out" \
-    --error="slurm/%j_plot_${SWEEP_ID}.err" \
+    --output="${LOG_DIR}/%j_plot_${SWEEP_ID}.out" \
+    --error="${LOG_DIR}/%j_plot_${SWEEP_ID}.err" \
     --time=00:30:00 \
     --partition=compsci \
     --cpus-per-task=4 \
@@ -53,4 +59,5 @@ PLOT_JOB_ID=$(sbatch --parsable \
 echo "Submitted Chained Plotting Job ID: $PLOT_JOB_ID (depends on $ARRAY_JOB_ID)"
 echo ""
 echo "Monitor status with: squeue -u \$USER"
+echo "Logs written to: $LOG_DIR/"
 echo "Results will be stored in: results/sweeps/$SWEEP_ID/"

@@ -82,10 +82,17 @@ echo "Algorithms (5):    Ground Truth PPO, Exact E(λ=0.0, 0.8, 0.95, 1.0) PPO"
 echo "Mode:              $([ "$DRY_RUN" = true ] && echo 'DRY-RUN' || echo 'SLURM BATCH ARRAY')"
 echo "======================================================================"
 
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="fourrooms_lambda_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
+
 ARRAY_SCRIPT="$SCRIPT_DIR/run_slurm_fourrooms_array.sh"
 PLOT_SCRIPT="$SCRIPT_DIR/plot_fourrooms_learning_curves.py"
 
 SBATCH_ARRAY_CMD="sbatch --parsable \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,N_SEEDS=$SEEDS,TOTAL_TIMESTEPS=$TIMESTEPS,NUM_TIMESTEPS=$TIMESTEPS,SWEEP_ID=$SWEEP_ID,SLURM_SUBMIT_DIR=$REPO_ROOT \
     \"$ARRAY_SCRIPT\""
 
@@ -97,7 +104,8 @@ if [ "$DRY_RUN" = true ]; then
     echo "--> [DRY-RUN] Chained vector PDF generation command:"
     echo "sbatch --dependency=afterany:<ARRAY_JOB_ID> \
     --job-name=\"plot_${SWEEP_ID}\" \
-    --output=\"slurm/%j_plot.out\" \
+    --output=\"${LOG_DIR}/%j_plot.out\" \
+    --error=\"${LOG_DIR}/%j_plot.err\" \
     --time=00:30:00 \
     --partition=compsci \
     --wrap=\"$PYTHON $PLOT_SCRIPT --sweep-id $SWEEP_ID\""
@@ -121,7 +129,8 @@ echo "    Monitor jobs: squeue -j $ARRAY_JOB_ID"
 PLOT_JOB_CMD="sbatch \
     --dependency=afterany:$ARRAY_JOB_ID \
     --job-name=\"plot_${SWEEP_ID}\" \
-    --output=\"slurm/%j_plot_${SWEEP_ID}.out\" \
+    --output=\"${LOG_DIR}/%j_plot_${SWEEP_ID}.out\" \
+    --error=\"${LOG_DIR}/%j_plot_${SWEEP_ID}.err\" \
     --time=00:30:00 \
     --partition=compsci \
     --wrap=\"$PYTHON '$PLOT_SCRIPT' --sweep-id '$SWEEP_ID'\""
@@ -131,6 +140,7 @@ echo "Submitting chained plotting job (runs after array completes)..."
 PLOT_JOB_OUTPUT=$(eval "$PLOT_JOB_CMD")
 PLOT_JOB_ID=$(echo "$PLOT_JOB_OUTPUT" | awk '{print $NF}')
 echo "--> Plotting Job Submitted: $PLOT_JOB_ID"
+echo "    Logs written to: $LOG_DIR/"
 echo ""
 echo "When all jobs finish, the vector PDF learning curves and summary CSV will be saved to:"
 echo "    results/fourrooms_sweep/${SWEEP_ID}/plots/"

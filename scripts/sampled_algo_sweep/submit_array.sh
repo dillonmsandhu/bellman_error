@@ -5,7 +5,10 @@
 # and chains a dependent job to automatically aggregate and plot results.
 
 set -e
-mkdir -p slurm
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="sampled_algo_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
 
 REPO_ROOT="$(pwd)"
 export PYTHONPATH="$REPO_ROOT"
@@ -23,7 +26,10 @@ PLOT_SCRIPT="scripts/sampled_algo_sweep/plot_comparison.py"
 OUT_DIR=${OUT_DIR:-"results/sampled_algo_sweep"}
 
 echo "Submitting 10-environment array job (1 GPU per env)..."
+echo "Log Directory: $LOG_DIR"
 SBATCH_ARRAY_CMD="sbatch --parsable \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,SLURM_SUBMIT_DIR=$REPO_ROOT,OUT_DIR=$OUT_DIR \
     \"$ARRAY_SCRIPT\""
 
@@ -34,8 +40,8 @@ echo "Submitting chained plotting post-processing job..."
 PLOT_JOB_ID=$(sbatch --parsable \
     --dependency=afterany:$ARRAY_JOB_ID \
     --job-name="plot_sampled_sweep" \
-    --output="slurm/%j_plot_sampled_sweep.out" \
-    --error="slurm/%j_plot_sampled_sweep.err" \
+    --output="${LOG_DIR}/%j_plot_sampled_sweep.out" \
+    --error="${LOG_DIR}/%j_plot_sampled_sweep.err" \
     --time=00:30:00 \
     --partition=compsci \
     --cpus-per-task=2 \
@@ -43,4 +49,5 @@ PLOT_JOB_ID=$(sbatch --parsable \
     --wrap="$PYTHON $PLOT_SCRIPT --results_dir $OUT_DIR")
 
 echo "Submitted Chained Plot Job ID: $PLOT_JOB_ID (will run when array finishes)"
+echo "Logs written to: $LOG_DIR/"
 echo "Track status with: squeue -u \$USER"

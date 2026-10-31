@@ -241,11 +241,22 @@ def analyze_gradient_variance(
                 return ts.apply_gradients(grads=grads), None
             curr_aux_state, _ = jax.lax.scan(aux_step, curr_aux_state, None, length=aux_steps)
         else:
+            v_aux_cur = jnp.append(aux_network.apply(curr_aux_state.params, S_states).squeeze(), 0.0)
+            v_aux_final = v_aux_cur[final_s]
+
+            def rev_scan_aux(g_next, step_data):
+                r_t, d_t = step_data
+                g_cur = r_t + gamma * jnp.where(d_t, 0.0, g_next)
+                return g_cur, g_cur
+
+            _, aux_returns = jax.lax.scan(rev_scan_aux, v_aux_final, (traj_r, traj_done), reverse=True)
+            aux_returns_sg = jax.lax.stop_gradient(aux_returns)
+
             def aux_step(ts, _):
                 def loss(p_a):
                     v_pred = aux_network.apply(p_a, S_states).squeeze()
                     v_full = jnp.append(v_pred, 0.0)
-                    return jnp.mean((returns - v_full[traj_s]) ** 2)
+                    return jnp.mean((aux_returns_sg - v_full[traj_s]) ** 2)
                 grads = jax.grad(loss)(ts.params)
                 return ts.apply_gradients(grads=grads), None
             curr_aux_state, _ = jax.lax.scan(aux_step, curr_aux_state, None, length=aux_steps)

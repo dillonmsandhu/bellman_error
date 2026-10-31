@@ -58,8 +58,8 @@ ALGO_LABELS = {
     "mc": "MC (Sampled)",
     "td0": "TD(0) [Sampled]",
     "oct8_biased": "OG Oct 8 (Biased)",
-    "forward_e": "Forward-Only E",
-    "surgical_v_aux": "Surgical V_aux",
+    "forward_e": "Forward Only",
+    "surgical_v_aux": "V_aux",
 }
 
 ENV_TITLES = {
@@ -120,7 +120,15 @@ def load_all_env_data(results_dir: str):
     return env_data, master_df
 
 
-def plot_metric_learning_curves(env_data, k_val: int, metric_name: str, y_label: str, title_suffix: str, out_path_base: str):
+def plot_metric_learning_curves(
+    env_data,
+    k_val: int,
+    metric_name: str,
+    y_label: str,
+    title_suffix: str,
+    out_path_base: str,
+    log_scale: bool = False,
+):
     """Plots a 3x3 grid of learning curves across environments for a specified metric and capacity k."""
     present_envs = [e for e in ALL_ENVS if e in env_data]
     if not present_envs:
@@ -134,7 +142,11 @@ def plot_metric_learning_curves(env_data, k_val: int, metric_name: str, y_label:
         ax = axes[idx]
         title = ENV_TITLES.get(env_name, env_name)
         ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-        ax.grid(True, linestyle="--", alpha=0.4, color="#cccccc")
+        if log_scale:
+            ax.set_yscale("log")
+            ax.grid(True, which="both", linestyle="--", alpha=0.25, color="#cccccc")
+        else:
+            ax.grid(True, linestyle="--", alpha=0.4, color="#cccccc")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
@@ -156,8 +168,15 @@ def plot_metric_learning_curves(env_data, k_val: int, metric_name: str, y_label:
             steps = np.arange(1, len(mean_curve) + 1)
 
             label = ALGO_LABELS.get(algo_key, algo_key)
-            ax.plot(steps, mean_curve, color=color, label=label, linewidth=1.8)
-            ax.fill_between(steps, mean_curve - sem_curve, mean_curve + sem_curve, color=color, alpha=0.15)
+            if log_scale:
+                mean_curve_plot = np.maximum(mean_curve, 1e-12)
+                lower_bound = np.maximum(mean_curve - sem_curve, 1e-12)
+                upper_bound = np.maximum(mean_curve + sem_curve, 1e-12)
+                ax.plot(steps, mean_curve_plot, color=color, label=label, linewidth=1.8)
+                ax.fill_between(steps, lower_bound, upper_bound, color=color, alpha=0.15)
+            else:
+                ax.plot(steps, mean_curve, color=color, label=label, linewidth=1.8)
+                ax.fill_between(steps, mean_curve - sem_curve, mean_curve + sem_curve, color=color, alpha=0.15)
 
         if idx % n_cols == 0:
             ax.set_ylabel(y_label, fontsize=10, fontweight="semibold")
@@ -184,7 +203,16 @@ def plot_metric_learning_curves(env_data, k_val: int, metric_name: str, y_label:
     print(f"[Plot] Saved: {out_path_base}.pdf / .png")
 
 
-def plot_clustered_bars(df: pd.DataFrame, k_val: int, metric_col: str, sem_col: str, y_label: str, title: str, out_path_base: str):
+def plot_clustered_bars(
+    df: pd.DataFrame,
+    k_val: int,
+    metric_col: str,
+    sem_col: str,
+    y_label: str,
+    title: str,
+    out_path_base: str,
+    log_scale: bool = False,
+):
     """Plots clustered bar chart comparing all algorithms across environments."""
     sub_df = df[df["k"] == k_val].copy()
     if sub_df.empty:
@@ -201,6 +229,8 @@ def plot_clustered_bars(df: pd.DataFrame, k_val: int, metric_col: str, sem_col: 
         return
 
     fig, ax = plt.subplots(figsize=(15, 6))
+    if log_scale:
+        ax.set_yscale("log")
     width = 0.8 / n_algos
     indices = np.arange(n_envs)
 
@@ -213,15 +243,28 @@ def plot_clustered_bars(df: pd.DataFrame, k_val: int, metric_col: str, sem_col: 
                 algo_data.append(row[metric_col].values[0])
                 algo_sems.append(row[sem_col].values[0] if sem_col in row else 0.0)
             else:
-                algo_data.append(0.0)
+                algo_data.append(np.nan)
                 algo_sems.append(0.0)
 
         offset = (i - (n_algos - 1) / 2) * width
+
+        if log_scale:
+            lower_err = [
+                min(s, max(0.0, d * 0.999)) if (pd.notna(d) and d > 0) else 0.0
+                for d, s in zip(algo_data, algo_sems)
+            ]
+            upper_err = [s if pd.notna(s) else 0.0 for s in algo_sems]
+            yerr = [lower_err, upper_err]
+            plot_data = algo_data
+        else:
+            yerr = algo_sems
+            plot_data = algo_data
+
         ax.bar(
             indices + offset,
-            algo_data,
+            plot_data,
             width,
-            yerr=algo_sems,
+            yerr=yerr,
             label=ALGO_LABELS.get(algo, algo),
             color=ALGO_COLORS[algo],
             alpha=0.9,
@@ -234,7 +277,10 @@ def plot_clustered_bars(df: pd.DataFrame, k_val: int, metric_col: str, sem_col: 
     ax.set_xticklabels([ENV_TITLES.get(e, e) for e in present_envs], rotation=25, ha="right", fontsize=10)
     ax.set_ylabel(y_label, fontsize=11, fontweight="semibold")
     ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
-    ax.grid(True, linestyle="--", alpha=0.3, axis="y")
+    if log_scale:
+        ax.grid(True, which="both", linestyle="--", alpha=0.25, axis="y")
+    else:
+        ax.grid(True, linestyle="--", alpha=0.3, axis="y")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.legend(frameon=True, fontsize=10, loc="upper right")
@@ -269,16 +315,19 @@ def main():
             env_data, k, "v_pred_start", "$V_{\\mathrm{start}}$ Prediction",
             "$V_{\\mathrm{start}}$ Learning Curves",
             os.path.join(out_dir, f"vstart_curves_all_algos{suffix}"),
+            log_scale=False,
         )
         plot_metric_learning_curves(
-            env_data, k, "nn_weighted_VE", "Value Error (VE)",
-            "Value Error Curves",
+            env_data, k, "nn_weighted_VE", "Value Error (VE, Log Scale)",
+            "Value Error Curves (Log Scale)",
             os.path.join(out_dir, f"ve_curves_all_algos{suffix}"),
+            log_scale=True,
         )
         plot_metric_learning_curves(
             env_data, k, "nn_advantage_cossim", "Advantage Cosine Similarity",
             "Advantage Cosine Similarity",
             os.path.join(out_dir, f"advantage_cossim_curves_all_algos{suffix}"),
+            log_scale=False,
         )
 
         # 2. Clustered Bar Charts
@@ -287,16 +336,25 @@ def main():
                 df, k, "auc_vstart_mean", "auc_vstart_sem",
                 "AUC of $V_{\\mathrm{start}}$", "Start State Value Tracking AUC",
                 os.path.join(out_dir, f"auc_vstart_bars_all_algos{suffix}"),
+                log_scale=False,
             )
             plot_clustered_bars(
                 df, k, "auc_weighted_ve_mean", "auc_weighted_ve_sem",
-                "AUC of Value Error", "Value Error AUC",
+                "AUC of Value Error (Log Scale)", "Value Error AUC (Log Scale)",
                 os.path.join(out_dir, f"auc_ve_bars_all_algos{suffix}"),
+                log_scale=True,
+            )
+            plot_clustered_bars(
+                df, k, "final_weighted_ve_mean", "final_weighted_ve_sem",
+                "Final Value Error (Log Scale)", "Final Value Error (Log Scale)",
+                os.path.join(out_dir, f"final_ve_bars_all_algos{suffix}"),
+                log_scale=True,
             )
             plot_clustered_bars(
                 df, k, "auc_cossim_mean", "auc_cossim_sem",
                 "Advantage Cosine Sim AUC", "Advantage Direction Alignment AUC",
                 os.path.join(out_dir, f"auc_cossim_bars_all_algos{suffix}"),
+                log_scale=False,
             )
 
     print(f"\nAll publication figures saved in: {out_dir}")

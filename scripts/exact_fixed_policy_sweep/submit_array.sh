@@ -8,8 +8,10 @@ set -e
 
 # Ensure working directory is repo root
 [ -f "core/config.py" ] || cd "$(dirname "$0")/../.."
-REPO_ROOT="$(pwd)"
-mkdir -p slurm
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="exact_fixed_policy_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
 export PYTHONPATH="$REPO_ROOT"
 
 NUM_UPDATES=${1:-100}
@@ -58,12 +60,15 @@ echo "k Values:           $K_VALUES"
 echo "Learning Rates:     $LRS"
 echo "Value Lambda:       $VAL_LAMBDA"
 echo "Output Directory:   $OUT_DIR"
+echo "Log Directory:      $LOG_DIR"
 echo "Repo Root:          $REPO_ROOT"
 echo "================================================================"
 
 ARRAY_SCRIPT="scripts/exact_fixed_policy_sweep/run_slurm_array.sh"
 SBATCH_ARRAY_CMD="sbatch --parsable \
     --chdir=\"$REPO_ROOT\" \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,NUM_UPDATES=$NUM_UPDATES,N_SEEDS=$N_SEEDS,SEED=$SEED,K_VALUES=\"$K_VALUES\",LRS=\"$LRS\",VAL_LAMBDA=$VAL_LAMBDA,POLICY_DIR=\"$POLICY_DIR\",POLICY_UPDATES=$POLICY_UPDATES,OUT_DIR=\"$OUT_DIR\",REPO_ROOT=\"$REPO_ROOT\" \
     \"$ARRAY_SCRIPT\""
 
@@ -73,8 +78,8 @@ echo "Submitted Array Job ID: $ARRAY_JOB_ID"
 POST_SCRIPT="scripts/exact_fixed_policy_sweep/plot_results.py"
 SBATCH_POST_CMD="sbatch --parsable \
     --job-name=plot_exact_fix_pol \
-    --output=slurm/%A_plot.out \
-    --error=slurm/%A_plot.err \
+    --output=\"${LOG_DIR}/%A_plot.out\" \
+    --error=\"${LOG_DIR}/%A_plot.err\" \
     --time=00:30:00 \
     --partition=compsci \
     --cpus-per-task=2 \
@@ -85,4 +90,5 @@ SBATCH_POST_CMD="sbatch --parsable \
 
 POST_JOB_ID=$(eval "$SBATCH_POST_CMD")
 echo "Submitted Chained Post-Processing Job ID: $POST_JOB_ID (will run after $ARRAY_JOB_ID completes)"
+echo "Logs written to:    $LOG_DIR/"
 echo "Track status with: squeue -u \$USER"

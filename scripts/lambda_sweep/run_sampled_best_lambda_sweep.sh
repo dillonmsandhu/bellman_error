@@ -114,12 +114,16 @@ if [ "$DRY_RUN" = true ]; then
 else
     echo "Mode:           SLURM BATCH ARRAY"
 fi
-echo "======================================================================"
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="sampled_best_lambda_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
 
 ARRAY_CMD="sbatch --parsable \
     --array=0-$((NUM_TASKS - 1))%${MAX_CONCURRENT} \
     --job-name=\"tune_${SWEEP_ID}\" \
-    --output=\"slurm/%A_%a.out\" \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --time=\"$TIME_LIMIT\" \
     --partition=\"$PARTITION\" \
     --gres=\"$GPU_GRES\" \
@@ -139,16 +143,19 @@ else
     if [ $EXIT_CODE -eq 0 ] && [ -n "$ARRAY_JOB_ID" ]; then
         echo "    Status: SUBMITTED (Array Job ID: $ARRAY_JOB_ID)"
         echo "    Monitor progress: squeue -j $ARRAY_JOB_ID"
+        echo "    Logs written to:  $LOG_DIR/"
         
         echo ""
         echo "Submitting chained diagnostics job (triggers after array $ARRAY_JOB_ID completes)..."
         DIAG_JOB_NAME="diag_best_lambda_${SWEEP_ID}"
-        DIAG_LOG_OUT="slurm/%j_diag_best_lambda_${SWEEP_ID}.out"
+        DIAG_LOG_OUT="${LOG_DIR}/%j_diag_best_lambda_${SWEEP_ID}.out"
+        DIAG_LOG_ERR="${LOG_DIR}/%j_diag_best_lambda_${SWEEP_ID}.err"
         
         DIAG_CMD="sbatch \
             --dependency=afterany:$ARRAY_JOB_ID \
             --job-name=\"$DIAG_JOB_NAME\" \
             --output=\"$DIAG_LOG_OUT\" \
+            --error=\"$DIAG_LOG_ERR\" \
             --time=\"0:30:00\" \
             --partition=\"compsci\" \
             --cpus-per-task=4 \

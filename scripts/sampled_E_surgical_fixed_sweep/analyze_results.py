@@ -63,8 +63,8 @@ ALGO_DISPLAY_NAMES = {
     "mc": "MC (Sampled)",
     "td0": "TD(0) [Sampled]",
     "oct8_biased": "OG Oct 8 (Biased)",
-    "forward_e": "Forward-Only E",
-    "surgical_v_aux": "Surgical V_aux",
+    "forward_e": "Forward Only",
+    "surgical_v_aux": "V_aux",
 }
 
 

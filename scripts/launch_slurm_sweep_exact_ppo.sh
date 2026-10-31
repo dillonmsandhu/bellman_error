@@ -87,11 +87,17 @@ fi
 echo "Worker Script: $WORKER_SCRIPT"
 echo "======================================================================"
 
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="exact_ppo_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
+
 SUBMITTED_COUNT=0
 
 for env in "${TARGET_ENVS[@]}"; do
     JOB_NAME="sweep_exact_ppo_${env}"
-    LOG_OUT="slurm/%j_${env}.out"
+    LOG_OUT="${LOG_DIR}/%j_${env}.out"
+    LOG_ERR="${LOG_DIR}/%j_${env}.err"
     
     if [ "$LOCAL_RUN" = true ]; then
         echo ""
@@ -101,6 +107,7 @@ for env in "${TARGET_ENVS[@]}"; do
         SBATCH_CMD="sbatch \
             --job-name=\"$JOB_NAME\" \
             --output=\"$LOG_OUT\" \
+            --error=\"$LOG_ERR\" \
             --time=\"$TIME_LIMIT\" \
             --partition=\"$PARTITION\" \
             --gres=\"$GPU_GRES\" \

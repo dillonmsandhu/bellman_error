@@ -53,6 +53,11 @@ else
 fi
 echo "======================================================================"
 
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="lambda_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
+
 JOB_IDS=""
 SUBMITTED_COUNT=0
 MAX_CONCURRENT=10
@@ -63,7 +68,8 @@ for env in "${DEFAULT_ENVS[@]}"; do
         for algo in "${DEFAULT_ALGOS[@]}"; do
             
             JOB_NAME="lswp_${env}_${policy}_${algo}"
-            LOG_OUT="slurm/%j_lswp_${env}_${policy}_${algo}.out"
+            LOG_OUT="${LOG_DIR}/%j_lswp_${env}_${policy}_${algo}.out"
+            LOG_ERR="${LOG_DIR}/%j_lswp_${env}_${policy}_${algo}.err"
             
             DEP=""
             if [ $SUBMITTED_COUNT -ge $MAX_CONCURRENT ]; then
@@ -76,6 +82,7 @@ for env in "${DEFAULT_ENVS[@]}"; do
                 $DEP \
                 --job-name=\"$JOB_NAME\" \
                 --output=\"$LOG_OUT\" \
+                --error=\"$LOG_ERR\" \
                 --time=\"$TIME_LIMIT\" \
                 --partition=\"$PARTITION\" \
                 --gres=\"$GPU_GRES\" \
@@ -109,17 +116,20 @@ done
 echo "======================================================================"
 if [ "$DRY_RUN" = false ]; then
     echo "Successfully dispatched $SUBMITTED_COUNT SLURM jobs."
+    echo "Logs written to: $LOG_DIR/"
     
     # Dispatch Diagnostics Job
     if [ ! -z "$JOB_IDS" ]; then
         DIAG_JOB_NAME="lswp_diag_${SWEEP_ID}"
-        DIAG_LOG_OUT="slurm/%j_lswp_diag_${SWEEP_ID}.out"
+        DIAG_LOG_OUT="${LOG_DIR}/%j_lswp_diag_${SWEEP_ID}.out"
+        DIAG_LOG_ERR="${LOG_DIR}/%j_lswp_diag_${SWEEP_ID}.err"
         # Diagnostics doesn't necessarily need a GPU, but if it runs model rollouts it does.
         # We'll request one GPU to be safe since it runs LIGHT_METRICS=False rollout.
         DIAG_CMD="sbatch \
             --dependency=afterany:$JOB_IDS \
             --job-name=\"$DIAG_JOB_NAME\" \
             --output=\"$DIAG_LOG_OUT\" \
+            --error=\"$DIAG_LOG_ERR\" \
             --time=\"04:00:00\" \
             --partition=\"$PARTITION\" \
             --gres=\"$GPU_GRES\" \

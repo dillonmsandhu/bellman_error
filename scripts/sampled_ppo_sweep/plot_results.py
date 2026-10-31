@@ -159,7 +159,14 @@ def plot_learning_curves_grid(
             if res is None:
                 continue
 
-            arr = res.get(metric_key)
+            if isinstance(metric_key, (list, tuple)):
+                arr = None
+                for mk in metric_key:
+                    if mk in res:
+                        arr = res[mk]
+                        break
+            else:
+                arr = res.get(metric_key)
 
             if arr is None:
                 continue
@@ -401,13 +408,25 @@ def main():
     # 1. Full 5-Algorithm Standardized Performance Curves (Cross Comparison: E with lambda=1)
     plot_learning_curves_grid(
         env_data=env_data,
-        metric_key="standardized_v_start",
+        metric_key=["standardized_v_start", "std_perf"],
         output_pdf=os.path.join(save_dir, "standardized_performance_learning_curves.pdf"),
         y_label="Standardized Policy Return",
         y_limits=(-0.1, 1.15),
         add_baselines=True,
         use_lam1_for_e=True,
         plot_title="Full Sampled PPO: Standardized Policy Return Learning Curves (E: λ=1)",
+    )
+
+    # 1b. Full 5-Algorithm Empirical Discounted Return Curves (Empirical G_0 across rollouts)
+    plot_learning_curves_grid(
+        env_data=env_data,
+        metric_key=["returned_discounted_episode_returns", "returned_episode_discounted_returns"],
+        output_pdf=os.path.join(save_dir, "empirical_discounted_return_curves.pdf"),
+        y_label="Empirical Discounted Return $G_0$",
+        y_limits=None,
+        add_baselines=False,
+        use_lam1_for_e=True,
+        plot_title="Full Sampled PPO: Empirical Discounted Return ($G_0 = \\sum \\gamma^t r_t$) [E: λ=1]",
     )
 
     # 2. Focused E(0) Sampling Variants Triad Comparison (E Variants: tuned lambda in {0.95, 1.0})
