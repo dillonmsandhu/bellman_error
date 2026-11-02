@@ -120,7 +120,7 @@ def make_train(base_config):
                 rng=_rng,
                 steps_since_start=steps_since_start,
                 aux_returns=aux_returns,
-                jump_mode=config.get("E_LAMBDA_JUMP_MODE", "drop_invalid_jump"),
+                jump_mode=config.get("E_LAMBDA_JUMP_MODE", "mc_invalid_jump"),
             )
 
             # 5. UPDATE NETWORK OVER EPOCHS AND FLAT MINIBATCHES
