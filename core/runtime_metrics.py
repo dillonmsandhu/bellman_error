@@ -19,9 +19,8 @@ def compute_runtime_metrics(
         - returned_episode_returns: Undiscounted episode return (primary optimization metric)
         - returned_discounted_episode_returns: Discounted episode return (G_0)
         - returned_episode_lengths: Episode length
-        - mean_rew: Mean per-step reward in rollout batch
-        - V_start / v_pred_start: Critic value prediction on initial observation(s)
-        - v_pred: Mean predicted value on rollout batch
+        - V_start: Analytical true policy start-state value (computed when evaluator is enabled)
+        - v_pred_start: Critic value prediction on initial observation(s) (diagnostic only, not policy performance)
         - total_loss, value_loss, actor_loss, entropy: Training loss components
         - approx_kl: Approximate KL divergence between old rollout policy and updated policy
         - clip_fraction: Fraction of policy ratio clips in PPO
@@ -99,7 +98,6 @@ def compute_runtime_metrics(
         "returned_discounted_episode_returns": returned_discounted_episode_returns,
         "returned_episode_lengths": returned_episode_lengths,
         "mean_rew": traj_batch.reward.mean(),
-        "V_start": v_start_pred,
         "v_pred_start": v_start_pred,
         "v_pred": traj_batch.value.mean(),
         "total_loss": total_loss,

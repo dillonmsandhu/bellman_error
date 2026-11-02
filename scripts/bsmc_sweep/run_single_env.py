@@ -127,7 +127,8 @@ def parse_args():
     parser.add_argument("--select_by", type=str, default="std_perf_auc", choices=["std_perf_auc", "std_perf_final", "ve_auc"], help="Metric to select best condition")
     parser.add_argument("--out_dir", type=str, default="results/bsmc_sweep", help="Root output directory")
     parser.add_argument("--algos", type=str, nargs="+", default=["td_lambda", "e_lambda", "e_lambda_fwd", "bsmc_aux", "bsmc_fwd"], help="Algorithms to evaluate")
-    parser.add_argument("--calc_true_values", action="store_true", default=False, help="Calculate tabular true values during rollout updates (default: False)")
+    parser.add_argument("--calc_true_values", action="store_true", default=True, help="Calculate tabular true values during rollout updates (default: True)")
+    parser.add_argument("--no_calc_true_values", dest="calc_true_values", action="store_false", help="Disable tabular true values calculation")
     return parser.parse_args()
 
 
@@ -296,18 +297,36 @@ def main():
                 full_results["all_runs"][cond_key][str(c_lr)] = res
 
                 # Calculate standardized metrics across seeds
-                # Performance metrics
-                v_start_all = res.get("V_start", res.get("v_pred_start", None))
-                if v_start_all is None:
-                    v_start_all = res.get("returned_episode_returns", np.zeros((args.n_seeds, args.num_updates)))
+                # Performance metrics: strictly prefer true analytical V_start from evaluator.
+                # If unavailable (e.g., non-tabular or CALC_TRUE_VALUES=False), use empirical discounted returns.
+                # NEVER use critic prediction v_pred_start as a drop-in for policy performance.
+                v_start_all = res.get("V_start", None)
+                if v_start_all is not None:
+                    perf_metric_name = "true_v_start"
+                    perf_data = v_start_all
+                else:
+                    perf_metric_name = "discounted_episode_returns"
+                    perf_data = res.get(
+                        "returned_discounted_episode_returns",
+                        res.get("returned_episode_discounted_returns", np.zeros((args.n_seeds, args.num_updates)))
+                    )
                 
-                norm_perf = (v_start_all - v_rand) / delta
+                norm_perf = (perf_data - v_rand) / delta
                 perf_auc_per_seed = trapz_fn(norm_perf, axis=1) / (args.num_updates - 1)
                 std_perf_auc = float(np.mean(perf_auc_per_seed))
                 std_perf_final = float(np.mean(norm_perf[:, -1]))
 
-                # Episode return metrics
-                ep_rets = res.get("returned_episode_returns", v_start_all)
+                # Also compute standardized discounted episode returns explicitly for uniform comparison
+                disc_ret_raw = res.get(
+                    "returned_discounted_episode_returns",
+                    res.get("returned_episode_discounted_returns", np.zeros((args.n_seeds, args.num_updates)))
+                )
+                norm_disc_ret = (disc_ret_raw - v_rand) / delta
+                disc_ret_auc = float(np.mean(trapz_fn(norm_disc_ret, axis=1) / (args.num_updates - 1)))
+                disc_ret_final = float(np.mean(norm_disc_ret[:, -1]))
+
+                # Undiscounted episode return metrics (diagnostics)
+                ep_rets = res.get("returned_episode_returns", perf_data)
                 final_ep_ret_mean = float(np.mean(ep_rets[:, -1]))
 
                 # Value error metrics if available
@@ -369,12 +388,28 @@ def main():
 
             # Extract seed-level metrics for winning condition
             win_res = full_results["runs"][cond_key]
-            v_start_win = win_res.get("V_start", win_res.get("v_pred_start", None))
-            if v_start_win is None:
-                v_start_win = win_res.get("returned_episode_returns", np.zeros((args.n_seeds, args.num_updates)))
-            norm_perf_win = (v_start_win - v_rand) / delta
+            v_start_win = win_res.get("V_start", None)
+            if v_start_win is not None:
+                perf_win_metric = "True V_start"
+                perf_win_data = v_start_win
+            else:
+                perf_win_metric = "Discounted Episode Return"
+                perf_win_data = win_res.get(
+                    "returned_discounted_episode_returns",
+                    win_res.get("returned_episode_discounted_returns", np.zeros((args.n_seeds, args.num_updates)))
+                )
+
+            norm_perf_win = (perf_win_data - v_rand) / delta
             perf_auc_per_seed = trapz_fn(norm_perf_win, axis=1) / (args.num_updates - 1)
             final_perf_per_seed = norm_perf_win[:, -1]
+
+            # Also compute seed-level discounted returns explicitly for uniform cross-algorithm analysis
+            disc_win_data = win_res.get(
+                "returned_discounted_episode_returns",
+                win_res.get("returned_episode_discounted_returns", np.zeros((args.n_seeds, args.num_updates)))
+            )
+            norm_disc_win = (disc_win_data - v_rand) / delta
+            disc_auc_per_seed = trapz_fn(norm_disc_win, axis=1) / (args.num_updates - 1)
 
             w_mc, w_dir, alpha = helpers.compute_bsmc_weights(args.gamma, float(lam))
 
@@ -383,6 +418,7 @@ def main():
                 "Algorithm": algo_key,
                 "Algo_Display": algo_info["display_name"],
                 "Lambda": float(lam),
+                "Performance_Metric": perf_win_metric,
                 "MC_Weight_Pct": float((1.0 - alpha) * 100.0),
                 "Smoothing_Weight_Pct": float(alpha * 100.0),
                 "Best_Critic_LR": best_lr,
@@ -391,6 +427,8 @@ def main():
                 "Std_Perf_AUC_SEM": float(np.std(perf_auc_per_seed, ddof=1) / np.sqrt(args.n_seeds)),
                 "Std_Perf_Final_Mean": float(np.mean(final_perf_per_seed)),
                 "Std_Perf_Final_SEM": float(np.std(final_perf_per_seed, ddof=1) / np.sqrt(args.n_seeds)),
+                "Disc_Ret_AUC_Mean": float(np.mean(disc_auc_per_seed)),
+                "Disc_Ret_AUC_SEM": float(np.std(disc_auc_per_seed, ddof=1) / np.sqrt(args.n_seeds)),
                 "Final_Ep_Ret_Mean": best_cand["final_ep_ret_mean"],
                 "VE_AUC": best_cand["ve_auc"],
                 "VE_Final": best_cand["ve_final"],

@@ -262,7 +262,7 @@ def plot_comparison_figures(df: pd.DataFrame, out_dir: str):
 
     ax1.set_title(r"A. $v_{\rm aux}$ Debiased: Multi-Step vs 1-Step", fontsize=12, fontweight="bold", pad=10)
     ax1.set_xlabel(r"Trace Parameter $\lambda$", fontsize=11)
-    ax1.set_ylabel("Mean Standardized AUC Return", fontsize=11)
+    ax1.set_ylabel("Standardized Discounted Return AUC", fontsize=11)
     ax1.grid(True, linestyle="--", alpha=0.5)
     ax1.legend(frameon=True, facecolor="white", edgecolor="#cccccc", fontsize=9)
 
@@ -280,7 +280,7 @@ def plot_comparison_figures(df: pd.DataFrame, out_dir: str):
 
     ax2.set_title("B. Forward-Only: Multi-Step vs 1-Step", fontsize=12, fontweight="bold", pad=10)
     ax2.set_xlabel(r"Trace Parameter $\lambda$", fontsize=11)
-    ax2.set_ylabel("Mean Standardized AUC Return", fontsize=11)
+    ax2.set_ylabel("Standardized Discounted Return AUC", fontsize=11)
     ax2.grid(True, linestyle="--", alpha=0.5)
     ax2.legend(frameon=True, facecolor="white", edgecolor="#cccccc", fontsize=9)
 

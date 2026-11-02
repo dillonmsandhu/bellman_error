@@ -4,6 +4,7 @@ import core.helpers as helpers
 import core.networks as networks
 import core.utils as utils
 import core.bellman_error as bellman_error
+import core.runtime_metrics as runtime_metrics
 
 SAVE_DIR = "ppo/td_lambda"
 
@@ -45,6 +46,7 @@ def make_train(base_config):
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
+        start_obs = obsv
 
         runner_state = (train_state, env_state, obsv, rng, 1)
 
@@ -161,34 +163,26 @@ def make_train(base_config):
             else:
                 critic_loss_info = {"value_loss": jnp.array(0.0)}
 
-            # 5. METRICS
-            metric = {k: v.mean() for k, v in traj_batch.info.items()}
-            metric.update({k: v.mean() for k, v in actor_loss_info.items()})
-            metric.update({k: v.mean() for k, v in critic_loss_info.items()})
-            metric["total_loss"] = (
-                metric.get("actor_loss", 0.0)
-                + config.get("VF_COEF", 0.5) * metric.get("value_loss", 0.0)
-                - metric.get("entropy", 0.0) * config.get("ENT_COEF", 0.01)
+            # 5. RUNTIME METRICS
+            combined_loss_info = {
+                "actor_loss": actor_loss_info["actor_loss"].mean(),
+                "entropy": actor_loss_info["entropy"].mean(),
+                "value_loss": critic_loss_info["value_loss"].mean(),
+            }
+            combined_loss_info["total_loss"] = (
+                combined_loss_info["actor_loss"]
+                + config.get("VF_COEF", 0.5) * combined_loss_info["value_loss"]
+                - config.get("ENT_COEF", 0.01) * combined_loss_info["entropy"]
             )
-            metric.update({"mean_rew": traj_batch.reward.mean()})
-
-            if evaluator is not None:
-                value_metrics = bellman_error.value_metrics(
-                    evaluator, network, train_state.params, random_policy=False, light=config.get("LIGHT_METRICS", True)
-                )
-                metric.update(value_metrics)
-
-                if config.get("LOG_FEATURE_METRICS", False):
-                    from core.feature_metrics import feature_metrics
-                    metric.update(feature_metrics(
-                        evaluator, network, train_state.params, random_policy=False
-                    ))
-
-                if hasattr(evaluator, "obs_stack"):
-                    s_states = evaluator.obs_stack
-                    v_pred_all = network.apply(train_state.params, s_states, method=network.value)
-                    if hasattr(evaluator, "start_idx"):
-                        metric["v_pred_start"] = v_pred_all[evaluator.start_idx]
+            metric = runtime_metrics.compute_runtime_metrics(
+                train_state=train_state,
+                network=network,
+                traj_batch=traj_batch,
+                loss_info=combined_loss_info,
+                start_obs=start_obs,
+                config=config,
+                evaluator=evaluator,
+            )
 
             runner_state = (train_state, env_state, last_obs, rng, idx + 1)
             return runner_state, metric
