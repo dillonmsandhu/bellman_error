@@ -144,10 +144,6 @@ def make_train(base_config):
                         def _aux_loss_fn(aux_p):
                             aux_vals = aux_network.apply(aux_p, mb.obs)
                             diff_sq = (jax.lax.stop_gradient(mb.aux_target) - aux_vals) ** 2
-                            if mb.critic_mask is not None:
-                                c_mask = mb.critic_mask.astype(jnp.float32)
-                                n_crit = jnp.maximum(jnp.sum(c_mask), 1.0)
-                                return 0.5 * jnp.sum(diff_sq * c_mask) / n_crit
                             return 0.5 * jnp.mean(diff_sq)
 
                         aux_loss, aux_grads = jax.value_and_grad(_aux_loss_fn)(aux_train_state.params)

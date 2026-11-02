@@ -113,10 +113,10 @@ A jump is **invalid** strictly when $t + m > T$ and the trajectory did not termi
 > **Why not clamp overshoots ($t + m > T$) to $s_T$?**
 > If a sampled jump of length $m = 10$ occurs at $t = T - 2$, the horizon state $s_T$ is only $\Delta t = 2$ steps away, not $10$. Forcing a Dirichlet penalty $(e(s_t) - e(s_T))^2$ would artificially pile probability mass onto $(s_t, s_T)$ and distort the geometric jump distribution. Instead of distorting the jump geometry, we handle overshoots via the two principled variants below.
 
-### 3.2 Invariant Across Both Variants: Actor Uses All Data
-In both variants, the policy/actor is **always trained on 100% of collected data**:
-- Advantages $\hat{A}_{t,b}$ are computed via standard GAE over all $t \in [0, T)$.
-- The policy objective $\mathcal{L}_{\text{clip}}(\phi)$ and entropy bonus average over all $T \times B$ transitions.
+### 3.2 Invariant Across Both Variants: Actor and $v_{\text{aux}}$ Use All Data
+In both variants, the policy/actor and the auxiliary critic $v_{\text{aux}}$ are **always trained on 100% of collected data**:
+- **Policy/Actor**: Advantages $\hat{A}_{t,b}$ are computed via standard GAE over all $t \in [0, T)$, and the policy objective $\mathcal{L}_{\text{clip}}(\phi)$ and entropy bonus average over all $T \times B$ transitions.
+- **Auxiliary Critic $v_{\text{aux}}$**: Because $v_{\text{aux}}$ is an independent value estimator regressing onto self-bootstrapped empirical returns $G_{\text{aux}, t}$, it does not involve geometric jump differences. It trains on the squared error $(G_{\text{aux}, t} - v_{\text{aux}}(s_t))^2$ across **all** $T \times B$ collected states, ensuring maximum accuracy as a destination proxy across the entire state space.
 
 ### 3.3 Variant 1: `drop_invalid_jump` (Dynamic Drop)
 
@@ -159,7 +159,7 @@ In this variant, no transitions are dropped. When a jump falls outside the rollo
 
 ## 4. Comparison Summary
 
-| Property | `drop_invalid_jump` | `mc_invalid_jump` |
+| Property | `drop_invalid_jump` | `mc_invalid_jump` (Default) |
 | :--- | :--- | :--- |
 | **Actor Data Usage** | 100% of transitions ($T \times B$) | 100% of transitions ($T \times B$) |
 | **Critic Data Usage** | Only valid jump transitions ($\approx 90\text{--}95\%$) | 100% of transitions ($T \times B$) |
