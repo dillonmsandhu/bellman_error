@@ -24,16 +24,6 @@ def make_train(base_config):
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
     base_config["NUM_MINIBATCHES"] = max(1, batch_size // base_config["MINIBATCH_SIZE"])
     base_config["NUM_UPDATES"] = max(1, base_config["TOTAL_TIMESTEPS"] // batch_size)
-
-    # Static runway length computed once at build time for the entire run
-    runway_length = base_config.get("RUNWAY_LENGTH")
-    if runway_length is None:
-        runway_length = helpers.compute_adaptive_runway_length(
-            base_config["GAMMA"],
-            base_config["VALUE_LAMBDA"],
-            base_config["NUM_STEPS"],
-        )
-    base_config["RUNWAY_LENGTH"] = runway_length
     
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
@@ -129,8 +119,8 @@ def make_train(base_config):
                 lmbda=config["VALUE_LAMBDA"],
                 rng=_rng,
                 steps_since_start=steps_since_start,
-                runway_length=runway_length,
                 aux_returns=aux_returns,
+                jump_mode=config.get("E_LAMBDA_JUMP_MODE", "drop_invalid_jump"),
             )
 
             # 5. UPDATE NETWORK OVER EPOCHS AND FLAT MINIBATCHES
@@ -153,7 +143,12 @@ def make_train(base_config):
                     if variant in ["aux", "v_aux"]:
                         def _aux_loss_fn(aux_p):
                             aux_vals = aux_network.apply(aux_p, mb.obs)
-                            return 0.5 * jnp.mean((jax.lax.stop_gradient(mb.aux_target) - aux_vals) ** 2)
+                            diff_sq = (jax.lax.stop_gradient(mb.aux_target) - aux_vals) ** 2
+                            if mb.critic_mask is not None:
+                                c_mask = mb.critic_mask.astype(jnp.float32)
+                                n_crit = jnp.maximum(jnp.sum(c_mask), 1.0)
+                                return 0.5 * jnp.sum(diff_sq * c_mask) / n_crit
+                            return 0.5 * jnp.mean(diff_sq)
 
                         aux_loss, aux_grads = jax.value_and_grad(_aux_loss_fn)(aux_train_state.params)
                         aux_train_state = aux_train_state.apply_gradients(grads=aux_grads)

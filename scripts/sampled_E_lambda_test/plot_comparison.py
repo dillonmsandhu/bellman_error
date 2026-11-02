@@ -46,14 +46,16 @@ ALL_ENVS = [
 
 VAR_COLORS = {
     "naive": "#2ca02c",     # Green (Oct 8 analog)
-    "aux": "#9467bd",       # Purple (v_aux)
+    "aux": "#9467bd",       # Purple (Drop Invalid Jump)
+    "aux_mc": "#d62728",    # Red / Coral (MC Invalid Jump)
     "fwd": "#00bcd4",       # Cyan/Teal (forward only)
     "exact": "#000000",     # Black
 }
 
 VAR_LABELS = {
     "naive": "Naive (Oct 8 Analog)",
-    "aux": "Aux Version (v_aux)",
+    "aux": "V_aux (Drop Invalid Jump)",
+    "aux_mc": "V_aux (MC Invalid Jump)",
     "fwd": "Forward Only",
 }
 
@@ -112,7 +114,7 @@ def plot_aggregate_bar_chart(all_data: Dict[str, Dict[str, Tuple[np.ndarray, np.
     n_envs = len(envs)
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.5), sharey=False)
     x = np.arange(n_envs)
-    width = 0.25
+    width = 0.20
 
     # 1. Cosine Similarity to Exact E(lambda)
     ax = axes[0]
@@ -124,11 +126,11 @@ def plot_aggregate_bar_chart(all_data: Dict[str, Dict[str, Tuple[np.ndarray, np.
 
     ax.set_title(r"Cosine Similarity to Exact $\nabla E(\lambda)$", fontsize=12, fontweight="bold")
     ax.set_ylabel(r"$\cos(\bar{g}, g^*)$", fontsize=11)
-    ax.set_xticks(x + width)
+    ax.set_xticks(x + 1.5 * width)
     ax.set_xticklabels(envs, rotation=35, ha="right", fontsize=9)
     ax.set_ylim(-0.1, 1.05)
     ax.grid(True, alpha=0.3, axis="y")
-    ax.legend(frameon=True, fontsize=9)
+    ax.legend(frameon=True, fontsize=8)
 
     # 2. Gradient Variance
     ax = axes[1]
@@ -140,7 +142,7 @@ def plot_aggregate_bar_chart(all_data: Dict[str, Dict[str, Tuple[np.ndarray, np.
     ax.set_title(r"Gradient Estimator Variance $\mathrm{Var}(\bar{g})$", fontsize=12, fontweight="bold")
     ax.set_ylabel("Variance (log scale)", fontsize=11)
     ax.set_yscale("log")
-    ax.set_xticks(x + width)
+    ax.set_xticks(x + 1.5 * width)
     ax.set_xticklabels(envs, rotation=35, ha="right", fontsize=9)
     ax.grid(True, alpha=0.3, axis="y")
 
@@ -154,7 +156,7 @@ def plot_aggregate_bar_chart(all_data: Dict[str, Dict[str, Tuple[np.ndarray, np.
     ax.set_title(r"Gradient MSE $||\bar{g} - g^*||^2$", fontsize=12, fontweight="bold")
     ax.set_ylabel("MSE (log scale)", fontsize=11)
     ax.set_yscale("log")
-    ax.set_xticks(x + width)
+    ax.set_xticks(x + 1.5 * width)
     ax.set_xticklabels(envs, rotation=35, ha="right", fontsize=9)
     ax.grid(True, alpha=0.3, axis="y")
 

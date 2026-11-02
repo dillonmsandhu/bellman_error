@@ -1761,7 +1761,7 @@ def compute_adaptive_runway_length(
 class ELambdaJumpTransition(NamedTuple):
     """
     Transition container pairing source states with geometric jump destination states.
-    Shape before shuffle_and_batch: (T_start, B, ...)
+    Shape before shuffle_and_batch: (T, B, ...)
     Shape inside minibatch: (minibatch_size, ...)
     """
     obs: jnp.ndarray
@@ -1776,6 +1776,7 @@ class ELambdaJumpTransition(NamedTuple):
     action: Optional[jnp.ndarray] = None
     log_prob: Optional[jnp.ndarray] = None
     advantage: Optional[jnp.ndarray] = None
+    critic_mask: Optional[jnp.ndarray] = None
 
 
 def calculate_self_bootstrapped_aux_returns(
@@ -1803,31 +1804,34 @@ def prepare_e_lambda_jump_pairs(
     rng: jax.Array,
     steps_since_start: jax.Array,
     advantages: Optional[jax.Array] = None,
-    runway_length: int = 16,
     aux_returns: Optional[jax.Array] = None,
+    jump_mode: str = "drop_invalid_jump",
 ):
     """
     Pairs each source state s_t with its geometric jump destination s_j = s_{min(t+m, T)},
-    evaluates boundary conditions in O(1), and packages an ELambdaJumpTransition of shape (T_start, B, ...).
+    evaluates boundary conditions in O(1), and packages an ELambdaJumpTransition of shape (T, B, ...).
     Runs ONCE per rollout batch outside the gradient descent loop.
     Returns (jump_batch, final_steps_since_start).
+
+    Supported jump_modes:
+    - 'drop_invalid_jump': Actor uses all T data. If a sampled jump overshoots the buffer (t + m >= T)
+      without hitting an absorbing terminal, that transition is excluded from the critic (critic_mask = 0).
+    - 'mc_invalid_jump': Actor and critic use all T data (critic_mask = 1.0). If a sampled jump overshoots
+      the buffer (t + m >= T), its Dirichlet smoothing term is zeroed out and it trains purely on the MC return target.
     """
     T, B = returns.shape[:2]
-    if runway_length is None:
-        runway_length = compute_adaptive_runway_length(gamma, lmbda, total_steps=T)
-    T_start = min(T, max(1, T - runway_length))
     gl = gamma * lmbda
     safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
 
-    # 1. Sample geometric jump lengths: m = K + 1 where K ~ Geom(1 - gl)
-    u = jax.random.uniform(rng, shape=(T_start, B))
+    # 1. Sample geometric jump lengths: m = K + 1 where K ~ Geom(1 - gl) for all T steps
+    u = jax.random.uniform(rng, shape=(T, B))
     jumps = jnp.where(
         gl < 1e-6,
-        jnp.zeros((T_start, B), dtype=jnp.int32),
+        jnp.zeros((T, B), dtype=jnp.int32),
         jnp.floor(jnp.log(jnp.clip(1.0 - u, 1e-8, 1.0)) / jnp.log(safe_gl)).astype(jnp.int32),
     )
     m = jnp.maximum(jumps, 0) + 1
-    t_arr = jnp.arange(T_start)[:, None]
+    t_arr = jnp.arange(T)[:, None]
     j = jnp.minimum(t_arr + m, T)
 
     # 2. Episode boundary queries in [t, j - 1]
@@ -1843,9 +1847,16 @@ def prepare_e_lambda_jump_pairs(
         axis=0,
     )
 
-    hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T_start]) > 0
-    hit_timeout = (jnp.take_along_axis(timeout_cumsum, j, axis=0) - timeout_cumsum[:T_start]) > 0
+    hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T]) > 0
+    hit_timeout = (jnp.take_along_axis(timeout_cumsum, j, axis=0) - timeout_cumsum[:T]) > 0
     hit_horizon = (t_arr + m >= T)
+
+    # A jump is valid if it lands in bounds (< T) or reaches an absorbing terminal
+    is_valid_jump = (t_arr + m < T) | hit_true_terminal
+    if jump_mode in ["mc_invalid_jump", "mc_runway"]:
+        critic_mask = jnp.ones((T, B), dtype=jnp.float32)
+    else:  # "drop_invalid_jump" (default) or legacy "drop_runway"
+        critic_mask = is_valid_jump.astype(jnp.float32)
 
     # 3. Track steps since start (clearing to 10,000 on timeout)
     def scan_steps(k, step_flags):
@@ -1859,8 +1870,8 @@ def prepare_e_lambda_jump_pairs(
     tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
     start_trace = jnp.where(
         gl < 1e-6,
-        jnp.where(all_steps[:T_start] == 0, 1.0, 0.0),
-        safe_gl ** all_steps[:T_start],
+        jnp.where(all_steps == 0, 1.0, 0.0),
+        safe_gl ** all_steps,
     )
     start_weight = 0.25 * tilde_gamma * start_trace
 
@@ -1870,19 +1881,19 @@ def prepare_e_lambda_jump_pairs(
 
     # Gather destination states and targets along time axis (axis 0)
     j_expanded = j.reshape(j.shape + (1,) * (obs_ext.ndim - 2))
-    j_expanded = jnp.broadcast_to(j_expanded, (T_start, B) + obs_ext.shape[2:])
+    j_expanded = jnp.broadcast_to(j_expanded, (T, B) + obs_ext.shape[2:])
     dest_obs = jnp.take_along_axis(obs_ext, j_expanded, axis=0)
     dest_target = jnp.take_along_axis(target_ext, j, axis=0)
 
-    action = traj_batch.action[:T_start] if hasattr(traj_batch, "action") else None
-    log_prob = traj_batch.log_prob[:T_start] if hasattr(traj_batch, "log_prob") else None
-    adv = advantages[:T_start] if advantages is not None else None
-    aux_target = returns[:T_start] if aux_returns is None else aux_returns[:T_start]
+    action = traj_batch.action if hasattr(traj_batch, "action") else None
+    log_prob = traj_batch.log_prob if hasattr(traj_batch, "log_prob") else None
+    adv = advantages if advantages is not None else None
+    aux_target = returns if aux_returns is None else aux_returns
 
     jump_batch = ELambdaJumpTransition(
-        obs=traj_batch.obs[:T_start],
+        obs=traj_batch.obs,
         dest_obs=dest_obs,
-        target=returns[:T_start],
+        target=returns,
         dest_target=dest_target,
         hit_true_terminal=hit_true_terminal,
         hit_timeout=hit_timeout,
@@ -1892,6 +1903,7 @@ def prepare_e_lambda_jump_pairs(
         action=action,
         log_prob=log_prob,
         advantage=adv,
+        critic_mask=critic_mask,
     )
     return jump_batch, final_steps_since_start
 
@@ -1905,6 +1917,7 @@ def e_lambda_pointwise_critic_loss(
     gamma: float,
     lmbda: float,
     variant: str = "aux",
+    jump_mode: str = "drop_invalid_jump",
 ):
     """
     Evaluates the exact Dirichlet, magnitude, and start losses on a 1D minibatch of jump pairs.
@@ -1930,19 +1943,28 @@ def e_lambda_pointwise_critic_loss(
         inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
 
     is_horizon = mb.hit_horizon if mb.hit_horizon is not None else False
+    # If hit true absorbing terminal: (e_start - 0)^2 = e_start^2.
+    # If hit timeout or horizon overshoot (t + m >= T): zero out smoothing term, training purely towards MC return.
     diff_sq = jnp.where(
-        mb.hit_true_terminal | (is_horizon & ~mb.hit_timeout),
+        mb.hit_true_terminal,
         e_start ** 2,
-        jnp.where(mb.hit_timeout, 0.0, inner_diff_sq),
+        jnp.where(mb.hit_timeout | is_horizon, 0.0, inner_diff_sq),
     )
 
     tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
     magnitude_weight = 0.5 * (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
     dirichlet_weight = 0.5 * tilde_gamma
 
-    magnitude_loss = magnitude_weight * jnp.mean(e_start ** 2)
-    dirichlet_loss = dirichlet_weight * jnp.mean(diff_sq)
-    start_loss = jnp.mean(mb.start_weight * (e_start ** 2))
+    if mb.critic_mask is not None:
+        c_mask = mb.critic_mask.astype(jnp.float32)
+        n_crit = jnp.maximum(jnp.sum(c_mask), 1.0)
+        magnitude_loss = magnitude_weight * (jnp.sum((e_start ** 2) * c_mask) / n_crit)
+        dirichlet_loss = dirichlet_weight * (jnp.sum(diff_sq * c_mask) / n_crit)
+        start_loss = jnp.sum(mb.start_weight * (e_start ** 2) * c_mask) / n_crit
+    else:
+        magnitude_loss = magnitude_weight * jnp.mean(e_start ** 2)
+        dirichlet_loss = dirichlet_weight * jnp.mean(diff_sq)
+        start_loss = jnp.mean(mb.start_weight * (e_start ** 2))
     value_loss = magnitude_loss + dirichlet_loss + start_loss
 
     losses = {
@@ -1987,6 +2009,7 @@ def e_lambda_ppo_minibatch_loss(
         v_aux_jump = v_jump
 
     variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
+    jump_mode = config.get("E_LAMBDA_JUMP_MODE", "drop_invalid_jump")
     value_loss, critic_losses = e_lambda_pointwise_critic_loss(
         v_start=v_start,
         v_jump=v_jump,
@@ -1996,6 +2019,7 @@ def e_lambda_ppo_minibatch_loss(
         gamma=config["GAMMA"],
         lmbda=config["VALUE_LAMBDA"],
         variant=variant,
+        jump_mode=jump_mode,
     )
 
     total_loss = (
@@ -2038,6 +2062,7 @@ def e_lambda_fixed_critic_minibatch_loss(
         v_aux_jump = v_jump
 
     variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
+    jump_mode = config.get("E_LAMBDA_JUMP_MODE", "drop_invalid_jump")
     value_loss, critic_losses = e_lambda_pointwise_critic_loss(
         v_start=v_start,
         v_jump=v_jump,
@@ -2047,6 +2072,7 @@ def e_lambda_fixed_critic_minibatch_loss(
         gamma=config["GAMMA"],
         lmbda=config["VALUE_LAMBDA"],
         variant=variant,
+        jump_mode=jump_mode,
     )
 
     total_loss = config.get("VF_COEF", 1.0) * value_loss

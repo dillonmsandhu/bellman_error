@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 from typing import Dict, Any, Tuple, Optional
 
+import core.helpers as helpers
 from core.gradient_tracking import extract_critic_flat_grads, cos_similarity
 
 
@@ -132,34 +133,31 @@ def compute_sampling_e_lambda_metrics(
 
     v_aux_sg = jax.lax.stop_gradient(v_aux)
 
-    # 2. Geometric Jump Lookaheads for E(lambda)
+    # 2. Geometric Jump Lookaheads for E(lambda) across all T steps (no runway concept)
     T, B = num_steps, num_trajectories
-    if runway_length is None:
-        from core.helpers import compute_adaptive_runway_length
-        runway_length = compute_adaptive_runway_length(gamma, lmbda, total_steps=T)
-    T_start = min(T, max(1, T - runway_length))
     gl = gamma * lmbda
     safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
 
-    u = jax.random.uniform(rng_jump, shape=(T_start, B))
+    u = jax.random.uniform(rng_jump, shape=(T, B))
     jumps = jnp.where(
         gl < 1e-6,
-        jnp.zeros((T_start, B), dtype=jnp.int32),
+        jnp.zeros((T, B), dtype=jnp.int32),
         jnp.floor(jnp.log(jnp.clip(1.0 - u, 1e-8, 1.0)) / jnp.log(safe_gl)).astype(jnp.int32),
     )
     m = jnp.maximum(jumps, 0) + 1
-    t_arr = jnp.arange(T_start)[:, None]
+    t_arr = jnp.arange(T)[:, None]
     j = jnp.minimum(t_arr + m, T)
 
     # Check terminal boundaries in [t, j - 1]
-    # In exact_E environments with no artificial timeout, done is true_terminal
     true_terminals = traj_done
     term_cumsum = jnp.concatenate(
         [jnp.zeros((1, B), dtype=jnp.int32), jnp.cumsum(true_terminals.astype(jnp.int32), axis=0)],
         axis=0,
     )
-    hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T_start]) > 0
+    hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T]) > 0
     hit_timeout = jnp.zeros_like(hit_true_terminal, dtype=bool)
+    hit_horizon = (t_arr + m >= T)
+    is_valid_jump = (t_arr + m < T) | hit_true_terminal
 
     # Track steps since start for geometrically decaying reset grounding
     def scan_steps(k, term):
@@ -172,8 +170,8 @@ def compute_sampling_e_lambda_metrics(
     tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
     start_trace = jnp.where(
         gl < 1e-6,
-        jnp.where(all_steps[:T_start] == 0, 1.0, 0.0),
-        safe_gl ** all_steps[:T_start],
+        jnp.where(all_steps == 0, 1.0, 0.0),
+        safe_gl ** all_steps,
     )
     start_weight = 0.25 * tilde_gamma * start_trace
 
@@ -184,9 +182,9 @@ def compute_sampling_e_lambda_metrics(
     dest_s = jnp.take_along_axis(traj_s_ext, j, axis=0)
     dest_target = jnp.take_along_axis(target_ext, j, axis=0)
 
-    # Prefactors
-    w_mag = 0.5 * (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
-    w_dir = 0.5 * tilde_gamma
+    # Masks for drop_invalid_jump vs mc_invalid_jump
+    critic_mask_drop = is_valid_jump.astype(jnp.float32)
+    critic_mask_mc = jnp.ones((T, B), dtype=jnp.float32)
 
     # 3. Exact Matrix Loss & Gradient
     def loss_exact(p):
@@ -197,170 +195,231 @@ def compute_sampling_e_lambda_metrics(
     g_exact = extract_critic_flat_grads(jax.grad(loss_exact)(params))
     norm_g_exact = jnp.linalg.norm(g_exact)
 
-    # 4. Trajectory-Level Gradient Analysis & Vectorization across B Trajectories
-    # Transpose to (B, T_start) for vmap over trajectories
-    s_trajs = jnp.transpose(traj_s[:T_start], (1, 0))
+    # 4. Trajectory-Level Gradient Analysis across B Trajectories
+    s_trajs = jnp.transpose(traj_s, (1, 0))
     dest_s_trajs = jnp.transpose(dest_s, (1, 0))
-    ret_trajs = jnp.transpose(returns_sg[:T_start], (1, 0))
+    ret_trajs = jnp.transpose(returns_sg, (1, 0))
     dest_ret_trajs = jnp.transpose(dest_target, (1, 0))
     hit_term_trajs = jnp.transpose(hit_true_terminal, (1, 0))
     hit_time_trajs = jnp.transpose(hit_timeout, (1, 0))
+    hit_horiz_trajs = jnp.transpose(hit_horizon, (1, 0))
     w_start_trajs = jnp.transpose(start_weight, (1, 0))
+    is_valid_trajs = jnp.transpose(is_valid_jump, (1, 0))
 
     sg = jax.lax.stop_gradient
 
+    def compute_single_traj_grad(
+        s_b,
+        dest_s_b,
+        ret_b,
+        dest_ret_b,
+        hit_term_b,
+        hit_time_b,
+        hit_horiz_b,
+        w_start_b,
+        is_valid_b,
+        variant="aux",
+        jump_mode="drop_invalid_jump",
+    ):
+        critic_mask = is_valid_b.astype(jnp.float32) if jump_mode == "drop_invalid_jump" else None
+        mb_b = helpers.ELambdaJumpTransition(
+            obs=s_b,
+            dest_obs=dest_s_b,
+            target=ret_b,
+            dest_target=dest_ret_b,
+            hit_true_terminal=hit_term_b,
+            hit_timeout=hit_time_b,
+            start_weight=w_start_b,
+            hit_horizon=hit_horiz_b,
+            critic_mask=critic_mask,
+        )
+
+        def l_fn(p):
+            v = jnp.append(network.apply(p, S_states, method=network.value).squeeze(), 0.0)
+            v_start = v[s_b]
+            v_jump = v[dest_s_b]
+            v_aux_start = v_aux_sg[s_b]
+            v_aux_jump = v_aux_sg[dest_s_b]
+            val_loss, _ = helpers.e_lambda_pointwise_critic_loss(
+                v_start=v_start,
+                v_jump=v_jump,
+                v_aux_start=v_aux_start,
+                v_aux_jump=v_aux_jump,
+                mb=mb_b,
+                gamma=gamma,
+                lmbda=lmbda,
+                variant=variant,
+                jump_mode=jump_mode,
+            )
+            return val_loss
+
+        return extract_critic_flat_grads(jax.grad(l_fn)(params))
+
     # Single trajectory gradient functions:
-    # 4a. Naive Sampling (Oct 8 analog: differentiates both ends of jump)
-    def single_traj_grad_naive(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, w_start_b):
-        def l_fn(p):
-            v = jnp.append(network.apply(p, S_states, method=network.value).squeeze(), 0.0)
-            es = ret_b - v[s_b]
-            ej = jnp.where(hit_term_b, 0.0, dest_ret_b - v[dest_s_b])
+    def single_traj_grad_drop(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b):
+        return compute_single_traj_grad(
+            s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b,
+            variant="aux", jump_mode="drop_invalid_jump",
+        )
 
-            diff_sq = jnp.where(
-                hit_term_b,
-                es ** 2,
-                jnp.where(hit_time_b, 0.0, (es - ej) ** 2),
-            )
-            mag = w_mag * jnp.mean(es ** 2)
-            dir_loss = w_dir * jnp.mean(diff_sq)
-            start = jnp.mean(w_start_b * (es ** 2))
-            return mag + dir_loss + start
+    def single_traj_grad_mc(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b):
+        return compute_single_traj_grad(
+            s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b,
+            variant="aux", jump_mode="mc_invalid_jump",
+        )
 
-        return extract_critic_flat_grads(jax.grad(l_fn)(params))
+    def single_traj_grad_naive(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b):
+        return compute_single_traj_grad(
+            s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b,
+            variant="naive", jump_mode="drop_invalid_jump",
+        )
 
-    # 4b. Aux Version (debiased surrogate using v_aux)
-    def single_traj_grad_aux(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, w_start_b):
-        def l_fn(p):
-            v = jnp.append(network.apply(p, S_states, method=network.value).squeeze(), 0.0)
-            es = ret_b - v[s_b]
-            ej = jnp.where(hit_term_b, 0.0, dest_ret_b - v[dest_s_b])
-
-            e_tilde_s = v_aux_sg[s_b] - v[s_b]
-            e_tilde_j = jnp.where(hit_term_b, 0.0, v_aux_sg[dest_s_b] - v[dest_s_b])
-
-            diff_sq = jnp.where(
-                hit_term_b,
-                es ** 2,
-                jnp.where(
-                    hit_time_b,
-                    0.0,
-                    (es - sg(ej)) ** 2 + (sg(e_tilde_s) - e_tilde_j) ** 2,
-                ),
-            )
-            mag = w_mag * jnp.mean(es ** 2)
-            dir_loss = w_dir * jnp.mean(diff_sq)
-            start = jnp.mean(w_start_b * (es ** 2))
-            return mag + dir_loss + start
-
-        return extract_critic_flat_grads(jax.grad(l_fn)(params))
-
-    # 4c. Forward Only (drops backward branch)
-    def single_traj_grad_fwd(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, w_start_b):
-        def l_fn(p):
-            v = jnp.append(network.apply(p, S_states, method=network.value).squeeze(), 0.0)
-            es = ret_b - v[s_b]
-            ej = jnp.where(hit_term_b, 0.0, dest_ret_b - v[dest_s_b])
-
-            diff_sq = jnp.where(
-                hit_term_b,
-                es ** 2,
-                jnp.where(hit_time_b, 0.0, (es - sg(ej)) ** 2),
-            )
-            mag = w_mag * jnp.mean(es ** 2)
-            dir_loss = w_dir * jnp.mean(diff_sq)
-            start = jnp.mean(w_start_b * (es ** 2))
-            return mag + dir_loss + start
-
-        return extract_critic_flat_grads(jax.grad(l_fn)(params))
+    def single_traj_grad_fwd(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b):
+        return compute_single_traj_grad(
+            s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b,
+            variant="fwd", jump_mode="drop_invalid_jump",
+        )
 
     # Vectorized gradient computation across all B trajectories
-    args_trajs = (s_trajs, dest_s_trajs, ret_trajs, dest_ret_trajs, hit_term_trajs, hit_time_trajs, w_start_trajs)
+    args_trajs = (
+        s_trajs, dest_s_trajs, ret_trajs, dest_ret_trajs,
+        hit_term_trajs, hit_time_trajs, hit_horiz_trajs, w_start_trajs, is_valid_trajs
+    )
+
+    G_drop = jax.vmap(single_traj_grad_drop)(*args_trajs)
+    G_mc = jax.vmap(single_traj_grad_mc)(*args_trajs)
     G_naive = jax.vmap(single_traj_grad_naive)(*args_trajs)
-    G_aux = jax.vmap(single_traj_grad_aux)(*args_trajs)
     G_fwd = jax.vmap(single_traj_grad_fwd)(*args_trajs)
 
     # Total average gradient across the full rollout batch (B trajectories)
+    g_bar_drop = jnp.mean(G_drop, axis=0)
+    g_bar_mc = jnp.mean(G_mc, axis=0)
     g_bar_naive = jnp.mean(G_naive, axis=0)
-    g_bar_aux = jnp.mean(G_aux, axis=0)
     g_bar_fwd = jnp.mean(G_fwd, axis=0)
 
     # Full batch cosine similarities to exact gradient g*
+    rho_s_drop = cos_similarity(g_bar_drop, g_exact)
+    rho_s_mc = cos_similarity(g_bar_mc, g_exact)
     rho_s_naive = cos_similarity(g_bar_naive, g_exact)
-    rho_s_aux = cos_similarity(g_bar_aux, g_exact)
     rho_s_fwd = cos_similarity(g_bar_fwd, g_exact)
 
     # Trajectory gradient variance (spread of trajectories): (1/B) sum ||g_b - g_bar||^2
+    var_traj_drop = jnp.mean(jnp.sum((G_drop - g_bar_drop[None, :]) ** 2, axis=1))
+    var_traj_mc = jnp.mean(jnp.sum((G_mc - g_bar_mc[None, :]) ** 2, axis=1))
     var_traj_naive = jnp.mean(jnp.sum((G_naive - g_bar_naive[None, :]) ** 2, axis=1))
-    var_traj_aux = jnp.mean(jnp.sum((G_aux - g_bar_aux[None, :]) ** 2, axis=1))
     var_traj_fwd = jnp.mean(jnp.sum((G_fwd - g_bar_fwd[None, :]) ** 2, axis=1))
 
     # Variance of the mean gradient estimator: Var(g_bar) = Var_traj / B
+    var_drop = var_traj_drop / float(num_trajectories)
+    var_mc = var_traj_mc / float(num_trajectories)
     var_naive = var_traj_naive / float(num_trajectories)
-    var_aux = var_traj_aux / float(num_trajectories)
     var_fwd = var_traj_fwd / float(num_trajectories)
 
     # Total MSE of average gradient to exact g*
+    mse_drop = jnp.sum((g_bar_drop - g_exact) ** 2)
+    mse_mc = jnp.sum((g_bar_mc - g_exact) ** 2)
     mse_naive = jnp.sum((g_bar_naive - g_exact) ** 2)
-    mse_aux = jnp.sum((g_bar_aux - g_exact) ** 2)
     mse_fwd = jnp.sum((g_bar_fwd - g_exact) ** 2)
 
+    norm_drop = jnp.linalg.norm(g_bar_drop)
+    norm_mc = jnp.linalg.norm(g_bar_mc)
     norm_naive = jnp.linalg.norm(g_bar_naive)
-    norm_aux = jnp.linalg.norm(g_bar_aux)
     norm_fwd = jnp.linalg.norm(g_bar_fwd)
 
-    # Sample loss values across entire batch
-    es_all = returns_sg[:T_start] - v_full_cur[traj_s[:T_start]]
-    ej_all = jnp.where(hit_true_terminal, 0.0, dest_target - v_full_cur[dest_s])
-    e_tilde_s_all = v_aux_sg[traj_s[:T_start]] - v_full_cur[traj_s[:T_start]]
-    e_tilde_j_all = jnp.where(hit_true_terminal, 0.0, v_aux_sg[dest_s] - v_full_cur[dest_s])
+    # Full-batch sample losses via helpers.e_lambda_pointwise_critic_loss
+    v_cur_start = v_full_cur[traj_s]
+    v_cur_jump = v_full_cur[dest_s]
+    v_aux_cur_start = v_aux_sg[traj_s]
+    v_aux_cur_jump = v_aux_sg[dest_s]
 
-    mag_all = w_mag * jnp.mean(es_all ** 2)
-    start_all = jnp.mean(start_weight * (es_all ** 2))
-
-    dir_naive_all = w_dir * jnp.mean(jnp.where(hit_true_terminal, es_all ** 2, (es_all - ej_all) ** 2))
-    dir_aux_all = w_dir * jnp.mean(
-        jnp.where(
-            hit_true_terminal,
-            es_all ** 2,
-            (es_all - sg(ej_all)) ** 2 + (sg(e_tilde_s_all) - e_tilde_j_all) ** 2,
-        )
+    mb_drop = helpers.ELambdaJumpTransition(
+        obs=traj_s,
+        dest_obs=dest_s,
+        target=returns_sg,
+        dest_target=dest_target,
+        hit_true_terminal=hit_true_terminal,
+        hit_timeout=hit_timeout,
+        start_weight=start_weight,
+        hit_horizon=hit_horizon,
+        critic_mask=critic_mask_drop,
     )
-    dir_fwd_all = w_dir * jnp.mean(jnp.where(hit_true_terminal, es_all ** 2, (es_all - sg(ej_all)) ** 2))
+    mb_mc = helpers.ELambdaJumpTransition(
+        obs=traj_s,
+        dest_obs=dest_s,
+        target=returns_sg,
+        dest_target=dest_target,
+        hit_true_terminal=hit_true_terminal,
+        hit_timeout=hit_timeout,
+        start_weight=start_weight,
+        hit_horizon=hit_horizon,
+        critic_mask=critic_mask_mc,
+    )
 
-    l_samp_naive = mag_all + dir_naive_all + start_all
-    l_samp_aux = mag_all + dir_aux_all + start_all
-    l_samp_fwd = mag_all + dir_fwd_all + start_all
+    l_samp_aux, _ = helpers.e_lambda_pointwise_critic_loss(
+        v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
+        mb_drop, gamma, lmbda, variant="aux", jump_mode="drop_invalid_jump",
+    )
+    l_samp_aux_mc, _ = helpers.e_lambda_pointwise_critic_loss(
+        v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
+        mb_mc, gamma, lmbda, variant="aux", jump_mode="mc_invalid_jump",
+    )
+    l_samp_naive, _ = helpers.e_lambda_pointwise_critic_loss(
+        v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
+        mb_drop, gamma, lmbda, variant="naive", jump_mode="drop_invalid_jump",
+    )
+    l_samp_fwd, _ = helpers.e_lambda_pointwise_critic_loss(
+        v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
+        mb_drop, gamma, lmbda, variant="fwd", jump_mode="drop_invalid_jump",
+    )
 
     metrics = {
         "E_exact": l_exact,
         "E_samp_naive": l_samp_naive,
         "E_samp_aux": l_samp_aux,
+        "E_samp_aux_mc": l_samp_aux_mc,
         "E_samp_fwd": l_samp_fwd,
         "norm_g_exact": norm_g_exact,
         # Full-Batch Average Gradient Cosine Similarities to Exact E(lambda)
         "rho_samp_naive_exact": rho_s_naive,
-        "rho_samp_aux_exact": rho_s_aux,
+        "rho_samp_aux_exact": rho_s_drop,
+        "rho_samp_aux_mc_exact": rho_s_mc,
+        "rho_samp_drop_exact": rho_s_drop,
+        "rho_samp_mc_exact": rho_s_mc,
         "rho_samp_fwd_exact": rho_s_fwd,
         # Trajectory gradient variance (spread of trajectories)
         "var_traj_samp_naive": var_traj_naive,
-        "var_traj_samp_aux": var_traj_aux,
+        "var_traj_samp_aux": var_traj_drop,
+        "var_traj_samp_aux_mc": var_traj_mc,
+        "var_traj_samp_drop": var_traj_drop,
+        "var_traj_samp_mc": var_traj_mc,
         "var_traj_samp_fwd": var_traj_fwd,
         # Variance of the average gradient estimator
         "var_samp_naive": var_naive,
-        "var_samp_aux": var_aux,
+        "var_samp_aux": var_drop,
+        "var_samp_aux_mc": var_mc,
+        "var_samp_drop": var_drop,
+        "var_samp_mc": var_mc,
         "var_samp_fwd": var_fwd,
         # Total MSE of average gradient to exact g*
         "mse_samp_naive": mse_naive,
-        "mse_samp_aux": mse_aux,
+        "mse_samp_aux": mse_drop,
+        "mse_samp_aux_mc": mse_mc,
+        "mse_samp_drop": mse_drop,
+        "mse_samp_mc": mse_mc,
         "mse_samp_fwd": mse_fwd,
         # Gradient norms of average gradients
         "norm_g_samp_naive": norm_naive,
-        "norm_g_samp_aux": norm_aux,
+        "norm_g_samp_aux": norm_drop,
+        "norm_g_samp_aux_mc": norm_mc,
+        "norm_g_samp_drop": norm_drop,
+        "norm_g_samp_mc": norm_mc,
         "norm_g_samp_fwd": norm_fwd,
         # Norm ratios
         "norm_ratio_naive": norm_naive / jnp.maximum(1e-8, norm_g_exact),
-        "norm_ratio_aux": norm_aux / jnp.maximum(1e-8, norm_g_exact),
+        "norm_ratio_aux": norm_drop / jnp.maximum(1e-8, norm_g_exact),
+        "norm_ratio_aux_mc": norm_mc / jnp.maximum(1e-8, norm_g_exact),
+        "norm_ratio_drop": norm_drop / jnp.maximum(1e-8, norm_g_exact),
+        "norm_ratio_mc": norm_mc / jnp.maximum(1e-8, norm_g_exact),
         "norm_ratio_fwd": norm_fwd / jnp.maximum(1e-8, norm_g_exact),
         # Auxiliary value network accuracy to V_true
         "mse_v_aux_target": jnp.mean((V_true - v_aux) ** 2),

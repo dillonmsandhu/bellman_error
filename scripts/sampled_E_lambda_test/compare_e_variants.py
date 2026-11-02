@@ -43,6 +43,7 @@ matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
 from core.config import config as base_cfg
+import core.helpers as helpers
 from core.helpers import make_env, create_evaluator
 from core.networks import initialize_network, initialize_flax_train_state
 from core.gradient_tracking import extract_critic_flat_grads, cos_similarity
@@ -61,7 +62,6 @@ def analyze_gradient_variance(
     num_trajectories: int = 64,
     num_steps: int = 128,
     seed: int = 42,
-    runway_length: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Computes exact E(lambda) gradient and evaluates sample gradient distributions across
@@ -185,33 +185,33 @@ def analyze_gradient_variance(
     v_aux_sg = jax.lax.stop_gradient(v_aux_full)
 
     T, B = num_steps, num_trajectories
-    if runway_length is None:
-        runway_length = helpers.compute_adaptive_runway_length(gamma, lmbda, num_steps)
-    T_start = min(T, max(1, T - runway_length))
     sg = jax.lax.stop_gradient
 
-    # Single-batch gradient computation for all 3 variants
+    # Single-batch gradient computation for all 4 variants
     @partial(jax.jit, static_argnums=(4,))
     def compute_batch_grads(p, traj_s, returns, traj_done, lmbda_val, r_jump):
         returns_sg = sg(returns)
         gl = gamma * lmbda_val
         safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
 
-        u = jax.random.uniform(r_jump, shape=(T_start, B))
+        u = jax.random.uniform(r_jump, shape=(T, B))
         jumps = jnp.where(
             gl < 1e-6,
-            jnp.zeros((T_start, B), dtype=jnp.int32),
+            jnp.zeros((T, B), dtype=jnp.int32),
             jnp.floor(jnp.log(jnp.clip(1.0 - u, 1e-8, 1.0)) / jnp.log(safe_gl)).astype(jnp.int32),
         )
         m = jnp.maximum(jumps, 0) + 1
-        t_arr = jnp.arange(T_start)[:, None]
+        t_arr = jnp.arange(T)[:, None]
         j = jnp.minimum(t_arr + m, T)
 
         term_cumsum = jnp.concatenate(
             [jnp.zeros((1, B), dtype=jnp.int32), jnp.cumsum(traj_done.astype(jnp.int32), axis=0)],
             axis=0,
         )
-        hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T_start]) > 0
+        hit_true_terminal = (jnp.take_along_axis(term_cumsum, j, axis=0) - term_cumsum[:T]) > 0
+        hit_timeout = jnp.zeros_like(hit_true_terminal, dtype=bool)
+        hit_horizon = (t_arr + m >= T)
+        is_valid_jump = (t_arr + m < T) | hit_true_terminal
 
         def scan_steps(k, term):
             k_next = jnp.where(term, 0, k + 1)
@@ -223,8 +223,8 @@ def analyze_gradient_variance(
         tilde_gamma = (gamma * (1.0 - lmbda_val)) / jnp.maximum(1.0 - gl, 1e-8)
         start_trace = jnp.where(
             gl < 1e-6,
-            jnp.where(all_steps[:T_start] == 0, 1.0, 0.0),
-            safe_gl ** all_steps[:T_start],
+            jnp.where(all_steps == 0, 1.0, 0.0),
+            safe_gl ** all_steps,
         )
         start_weight = 0.25 * tilde_gamma * start_trace
 
@@ -234,50 +234,54 @@ def analyze_gradient_variance(
         dest_s = jnp.take_along_axis(traj_s_ext, j, axis=0)
         dest_target = jnp.take_along_axis(target_ext, j, axis=0)
 
-        w_mag = 0.5 * (1.0 - gamma) / jnp.maximum(1.0 - gl, 1e-8)
-        w_dir = 0.5 * tilde_gamma
+        mb_drop = helpers.ELambdaJumpTransition(
+            obs=traj_s,
+            dest_obs=dest_s,
+            target=returns_sg,
+            dest_target=dest_target,
+            hit_true_terminal=hit_true_terminal,
+            hit_timeout=hit_timeout,
+            start_weight=start_weight,
+            hit_horizon=hit_horizon,
+            critic_mask=is_valid_jump.astype(jnp.float32),
+        )
+        mb_mc = helpers.ELambdaJumpTransition(
+            obs=traj_s,
+            dest_obs=dest_s,
+            target=returns_sg,
+            dest_target=dest_target,
+            hit_true_terminal=hit_true_terminal,
+            hit_timeout=hit_timeout,
+            start_weight=start_weight,
+            hit_horizon=hit_horizon,
+            critic_mask=jnp.ones((T, B), dtype=jnp.float32),
+        )
 
-        s_t = traj_s[:T_start]
-        ret_t = returns_sg[:T_start]
-
-        # 1. Naive Sampling Loss (Oct 8 Analog: differentiates both ends of jump)
-        def l_naive(p_curr):
+        def loss_fn(p_curr, mb_obj, var_name, j_mode):
             v = jnp.append(network.apply(p_curr, S_states, method=network.value).squeeze(), 0.0)
-            es = ret_t - v[s_t]
-            ej = jnp.where(hit_true_terminal, 0.0, dest_target - v[dest_s])
-            diff_sq = jnp.where(hit_true_terminal, es ** 2, (es - ej) ** 2)
-            return w_mag * jnp.mean(es ** 2) + w_dir * jnp.mean(diff_sq) + jnp.mean(start_weight * (es ** 2))
-
-        # 2. Aux Version Loss (debiased surrogate via v_aux)
-        def l_aux(p_curr):
-            v = jnp.append(network.apply(p_curr, S_states, method=network.value).squeeze(), 0.0)
-            es = ret_t - v[s_t]
-            ej = jnp.where(hit_true_terminal, 0.0, dest_target - v[dest_s])
-            e_tilde_s = v_aux_sg[s_t] - v[s_t]
-            e_tilde_j = jnp.where(hit_true_terminal, 0.0, v_aux_sg[dest_s] - v[dest_s])
-            diff_sq = jnp.where(
-                hit_true_terminal,
-                es ** 2,
-                (es - sg(ej)) ** 2 + (sg(e_tilde_s) - e_tilde_j) ** 2,
+            val_loss, _ = helpers.e_lambda_pointwise_critic_loss(
+                v_start=v[traj_s],
+                v_jump=v[dest_s],
+                v_aux_start=v_aux_sg[traj_s],
+                v_aux_jump=v_aux_sg[dest_s],
+                mb=mb_obj,
+                gamma=gamma,
+                lmbda=lmbda_val,
+                variant=var_name,
+                jump_mode=j_mode,
             )
-            return w_mag * jnp.mean(es ** 2) + w_dir * jnp.mean(diff_sq) + jnp.mean(start_weight * (es ** 2))
+            return val_loss
 
-        # 3. Forward Only Loss
-        def l_fwd(p_curr):
-            v = jnp.append(network.apply(p_curr, S_states, method=network.value).squeeze(), 0.0)
-            es = ret_t - v[s_t]
-            ej = jnp.where(hit_true_terminal, 0.0, dest_target - v[dest_s])
-            diff_sq = jnp.where(hit_true_terminal, es ** 2, (es - sg(ej)) ** 2)
-            return w_mag * jnp.mean(es ** 2) + w_dir * jnp.mean(diff_sq) + jnp.mean(start_weight * (es ** 2))
-
-        g_n = extract_critic_flat_grads(jax.grad(l_naive)(p))
-        g_a = extract_critic_flat_grads(jax.grad(l_aux)(p))
-        g_f = extract_critic_flat_grads(jax.grad(l_fwd)(p))
-        return g_n, g_a, g_f
+        g_n = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_drop, "naive", "drop_invalid_jump"))(p))
+        g_drop = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_drop, "aux", "drop_invalid_jump"))(p))
+        g_mc = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_mc, "aux", "mc_invalid_jump"))(p))
+        g_f = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_drop, "fwd", "drop_invalid_jump"))(p))
+        return g_n, g_drop, g_mc, g_f
 
     # Sample over num_batches independent rollout draws
     grads_naive = []
-    grads_aux = []
+    grads_drop = []
+    grads_mc = []
     grads_fwd = []
 
     batch_keys = jax.random.split(rng, num_batches)
@@ -286,17 +290,20 @@ def analyze_gradient_variance(
         traj_s, _, traj_r, traj_done, final_s = sample_rollout(r_roll)
         returns = compute_returns(traj_r, traj_done, final_s)
 
-        gn, ga, gf = compute_batch_grads(params, traj_s, returns, traj_done, lmbda, r_jump)
+        gn, gdrop, gmc, gf = compute_batch_grads(params, traj_s, returns, traj_done, lmbda, r_jump)
         grads_naive.append(np.array(gn))
-        grads_aux.append(np.array(ga))
+        grads_drop.append(np.array(gdrop))
+        grads_mc.append(np.array(gmc))
         grads_fwd.append(np.array(gf))
 
     G_n = np.stack(grads_naive, axis=0)
-    G_a = np.stack(grads_aux, axis=0)
+    G_drop = np.stack(grads_drop, axis=0)
+    G_mc = np.stack(grads_mc, axis=0)
     G_f = np.stack(grads_fwd, axis=0)
 
     mean_n = np.mean(G_n, axis=0)
-    mean_a = np.mean(G_a, axis=0)
+    mean_drop = np.mean(G_drop, axis=0)
+    mean_mc = np.mean(G_mc, axis=0)
     mean_f = np.mean(G_f, axis=0)
 
     def compute_stats(G, mean_g):
@@ -314,7 +321,8 @@ def analyze_gradient_variance(
         "val_exact": val_exact,
         "norm_g_exact": norm_g_exact,
         "stats_naive": compute_stats(G_n, mean_n),
-        "stats_aux": compute_stats(G_a, mean_a),
+        "stats_aux": compute_stats(G_drop, mean_drop),
+        "stats_aux_mc": compute_stats(G_mc, mean_mc),
         "stats_fwd": compute_stats(G_f, mean_f),
     }
 
@@ -347,22 +355,23 @@ def run_training_comparison(
         "GAE_LAMBDA": 0.8,
         "CRITIC_LR": 0.001 if is_mc else 0.0003,
         "ACTOR_LR": 0.001 if is_mc else 0.0003,
-        "RUNWAY_LENGTH": None,
         "CALC_TRUE_VALUES": True,
         "LIGHT_METRICS": True,
     })
 
     variants = [
-        {"name": "naive", "label": "Naive (Oct 8 Analog)", "color": "#2ca02c"},
-        {"name": "fwd", "label": "Forward Only", "color": "#00bcd4"},
-        {"name": "aux", "label": "V_aux (Aux Version)", "color": "#9467bd"},
+        {"name": "naive", "label": "Naive (Oct 8 Analog)", "color": "#2ca02c", "jump_mode": "drop_invalid_jump"},
+        {"name": "fwd", "label": "Forward Only", "color": "#00bcd4", "jump_mode": "drop_invalid_jump"},
+        {"name": "aux", "label": "V_aux (Drop Invalid)", "color": "#9467bd", "jump_mode": "drop_invalid_jump"},
+        {"name": "aux_mc", "label": "V_aux (MC Invalid)", "color": "#d62728", "jump_mode": "mc_invalid_jump"},
     ]
 
     results = {}
     for var in variants:
         v_name = var["name"]
         cfg = base_env_cfg.copy()
-        cfg["E_LAMBDA_VARIANT"] = v_name
+        cfg["E_LAMBDA_VARIANT"] = "aux" if v_name == "aux_mc" else v_name
+        cfg["E_LAMBDA_JUMP_MODE"] = var.get("jump_mode", "drop_invalid_jump")
         print(f"Training variant: {var['label']} (lambda={lmbda})...", end="", flush=True)
         t0 = time.time()
         train_fn = make_e_lambda_train(cfg)
@@ -434,7 +443,8 @@ def main():
     for name, key in [
         ("Naive (Oct 8 Analog)", "stats_naive"),
         ("Forward Only", "stats_fwd"),
-        ("V_aux (Aux Version)", "stats_aux"),
+        ("V_aux (Drop Invalid)", "stats_aux"),
+        ("V_aux (MC Invalid)", "stats_aux_mc"),
     ]:
         st = grad_analysis[key]
         cos_str = f"{st['sample_cosine_mean']:.4f} +/- {st['sample_cosine_std']:.4f}"
@@ -484,24 +494,26 @@ def main():
     ax_ret.legend(frameon=True, fontsize=9)
 
     # Panel 3: Gradient Variance & MSE Bar Chart
-    var_labels = ["Naive (Oct 8)", "Forward Only", "V_aux"]
+    var_labels = ["Naive (Oct 8)", "Forward Only", "V_aux (Drop)", "V_aux (MC)"]
     variances = [
         grad_analysis["stats_naive"]["variance"],
         grad_analysis["stats_fwd"]["variance"],
         grad_analysis["stats_aux"]["variance"],
+        grad_analysis["stats_aux_mc"]["variance"],
     ]
     mses = [
         grad_analysis["stats_naive"]["mse"],
         grad_analysis["stats_fwd"]["mse"],
         grad_analysis["stats_aux"]["mse"],
+        grad_analysis["stats_aux_mc"]["mse"],
     ]
-    colors = ["#2ca02c", "#00bcd4", "#9467bd"]
+    colors = ["#2ca02c", "#00bcd4", "#9467bd", "#d62728"]
     x_idx = np.arange(len(var_labels))
     width = 0.35
     ax_var.bar(x_idx - width/2, variances, width, label="Sample Gradient Variance", color=colors, alpha=0.85)
     ax_var.bar(x_idx + width/2, mses, width, label="Gradient MSE to Exact", color=colors, hatch="//", alpha=0.55)
     ax_var.set_xticks(x_idx)
-    ax_var.set_xticklabels(var_labels, fontsize=10, fontweight="bold")
+    ax_var.set_xticklabels(var_labels, fontsize=9, fontweight="bold")
     ax_var.set_title(f"Gradient Variance & MSE to Exact E($\\lambda={args.value_lambda}$)", fontsize=11, fontweight="bold")
     ax_var.set_ylabel("Magnitude (Log Scale)", fontsize=10)
     ax_var.set_yscale("log")
