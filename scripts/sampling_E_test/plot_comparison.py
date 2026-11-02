@@ -110,11 +110,27 @@ def load_env_metrics(results_dir: str, env_name: str):
         return None, None
 
 
+def _resolve_metric_key(metrics: dict, key: str) -> Optional[str]:
+    if metrics is None:
+        return None
+    if key in metrics:
+        return key
+    # Check alias mappings between oct8/naive and v_aux/aux
+    candidate = key.replace("oct8", "naive").replace("v_aux", "aux")
+    if candidate in metrics:
+        return candidate
+    candidate2 = key.replace("naive", "oct8").replace("aux", "v_aux")
+    if candidate2 in metrics:
+        return candidate2
+    return None
+
+
 def extract_metric(metrics: dict, key: str):
     """Extracts mean and std over seeds for a given metric."""
-    if metrics is None or key not in metrics:
+    real_key = _resolve_metric_key(metrics, key)
+    if real_key is None:
         return None, None
-    arr = np.asarray(metrics[key])
+    arr = np.asarray(metrics[real_key])
     if arr.ndim == 1:
         return arr, np.zeros_like(arr)
     elif arr.ndim >= 2:
@@ -263,9 +279,10 @@ def compute_metric_auc(metrics: dict, key: str) -> tuple[float, float]:
     Computes normalized trapezoidal Area Under the Curve (AUC) across update steps.
     Returns (mean_auc, sem_auc) across seeds.
     """
-    if metrics is None or key not in metrics:
+    real_key = _resolve_metric_key(metrics, key)
+    if real_key is None:
         return 0.0, 0.0
-    arr = np.asarray(metrics[key])
+    arr = np.asarray(metrics[real_key])
     if arr.ndim == 1:
         steps = len(arr)
         val = float(trapz_fn(arr) / max(1, steps - 1)) if steps > 1 else float(arr[0])
