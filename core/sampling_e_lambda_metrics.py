@@ -134,6 +134,9 @@ def compute_sampling_e_lambda_metrics(
 
     # 2. Geometric Jump Lookaheads for E(lambda)
     T, B = num_steps, num_trajectories
+    if runway_length is None:
+        from core.helpers import compute_adaptive_runway_length
+        runway_length = compute_adaptive_runway_length(gamma, lmbda, total_steps=T)
     T_start = min(T, max(1, T - runway_length))
     gl = gamma * lmbda
     safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)

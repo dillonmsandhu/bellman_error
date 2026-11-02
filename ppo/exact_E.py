@@ -27,6 +27,15 @@ def make_train(base_config):
     base_config['NUM_ENVS'] = 1
     base_config['NUM_STEPS'] = 1
     
+    runway_length = base_config.get("RUNWAY_LENGTH")
+    if runway_length is None:
+        runway_length = helpers.compute_adaptive_runway_length(
+            base_config.get("GAMMA", 0.99),
+            base_config.get("VALUE_LAMBDA", 0.8),
+            total_steps=base_config.get("SAMPLING_E_NUM_STEPS", 128),
+        )
+    base_config["RUNWAY_LENGTH"] = runway_length
+
     env, env_params = helpers.make_env(base_config)
     evaluator = helpers.initialize_evaluator(base_config, env, env_params)
     obs_shape = env.observation_space(env_params).shape

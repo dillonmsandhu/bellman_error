@@ -1813,6 +1813,8 @@ def prepare_e_lambda_jump_pairs(
     Returns (jump_batch, final_steps_since_start).
     """
     T, B = returns.shape[:2]
+    if runway_length is None:
+        runway_length = compute_adaptive_runway_length(gamma, lmbda, total_steps=T)
     T_start = min(T, max(1, T - runway_length))
     gl = gamma * lmbda
     safe_gl = jnp.clip(gl, 1e-8, 1.0 - 1e-8)
