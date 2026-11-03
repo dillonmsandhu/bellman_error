@@ -48,21 +48,25 @@ ALL_ENVS = [
 
 ALGORITHMS = {
     "e_lambda_drop": {
-        "label": "E(λ=0.9) [Drop Invalid Jump]",
+        "label": "E(λ=0.95) [Drop Invalid Jump]",
         "color": "#9467bd",  # Purple
     },
     "e_lambda_mc": {
-        "label": "E(λ=0.9) [MC Invalid Jump]",
+        "label": "E(λ=0.95) [MC Invalid Jump]",
         "color": "#d62728",  # Red / Coral
     },
+    "e_lambda_full_mc": {
+        "label": "E(λ=0.95) [Full MC Invalid Jump]",
+        "color": "#ff7f0e",  # Orange
+    },
     "bsmc": {
-        "label": "BSMC [1-step, Calibrated λ=0.9]",
+        "label": "BSMC [1-step, Calibrated λ=0.95]",
         "color": "#1f77b4",  # Blue
     },
 }
 
 
-def load_sweep_data(results_dir: str, value_lambda: float = 0.9) -> Dict[str, Dict[str, Dict[str, np.ndarray]]]:
+def load_sweep_data(results_dir: str, value_lambda: float = 0.95) -> Dict[str, Dict[str, Dict[str, np.ndarray]]]:
     lambda_dir = os.path.join(results_dir, f"lambda_{value_lambda}")
     all_data = {}
 
@@ -85,7 +89,7 @@ def load_sweep_data(results_dir: str, value_lambda: float = 0.9) -> Dict[str, Di
     return all_data
 
 
-def plot_learning_curves(all_data: Dict[str, Dict[str, Any]], out_dir: str, value_lambda: float = 0.9):
+def plot_learning_curves(all_data: Dict[str, Dict[str, Any]], out_dir: str, value_lambda: float = 0.95):
     envs = [e for e in ALL_ENVS if e in all_data and len(all_data[e]) > 0]
     if not envs:
         print("No environment data found for learning curves.")
@@ -142,16 +146,16 @@ def plot_learning_curves(all_data: Dict[str, Dict[str, Any]], out_dir: str, valu
     print(f"Saved: {out_file}")
 
 
-def plot_bar_comparisons(all_data: Dict[str, Dict[str, Any]], out_dir: str, value_lambda: float = 0.9):
+def plot_bar_comparisons(all_data: Dict[str, Dict[str, Any]], out_dir: str, value_lambda: float = 0.95):
     envs = [e for e in ALL_ENVS if e in all_data and len(all_data[e]) > 0]
     if not envs:
         return
 
     n_envs = len(envs)
-    algos = list(ALGORITHMS.keys())
+    algos = [a for a in ALGORITHMS.keys() if any(a in all_data[e] for e in envs)]
     n_algos = len(algos)
     x = np.arange(n_envs)
-    width = 0.25
+    width = min(0.20, 0.8 / max(1, n_algos))
 
     # 1. AUC Comparison
     fig, ax = plt.subplots(figsize=(14, 5.5), dpi=300)
@@ -282,7 +286,7 @@ def generate_summary_tables(all_data: Dict[str, Dict[str, Any]], out_dir: str):
 def main():
     parser = argparse.ArgumentParser(description="Analyze Jump Mode & BSMC Sweep Results")
     parser.add_argument("--results_dir", type=str, default="results/jump_mode_sweep", help="Root results directory")
-    parser.add_argument("--value_lambda", type=float, default=0.9, help="Value lambda to analyze (default: 0.9)")
+    parser.add_argument("--value_lambda", type=float, default=0.95, help="Value lambda to analyze (default: 0.95)")
     args = parser.parse_args()
 
     out_dir = os.path.join(args.results_dir, f"lambda_{args.value_lambda}")

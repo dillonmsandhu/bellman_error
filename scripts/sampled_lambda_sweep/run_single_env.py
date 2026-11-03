@@ -125,6 +125,8 @@ def parse_args():
     parser.add_argument("--out_dir", type=str, default="results/sampled_lambda_sweep", help="Root output directory")
     parser.add_argument("--algos", type=str, nargs="+", default=["td_lambda", "e_lambda", "e_lambda_fwd"], choices=["td_lambda", "e_lambda", "e_lambda_fwd"], help="Algorithms to evaluate")
     parser.add_argument("--eval_grad_fidelity", action="store_true", default=True, help="Compute exact gradient MSE, variance, and cossim (default: True)")
+    parser.add_argument("--jump_mode", type=str, default="mc_invalid_jump", choices=["mc_invalid_jump", "full_mc_invalid_jump", "mc_full_weight", "drop_invalid_jump"], help="Invalid jump handling mode (default: mc_invalid_jump)")
+    parser.add_argument("--full_weight_mc", action="store_true", default=False, help="Train at full weight towards MC target on invalid jumps")
     return parser.parse_args()
 
 
@@ -178,6 +180,8 @@ def build_env_config(env_name: str, args: argparse.Namespace, critic_lr: float) 
         "LIGHT_METRICS": True,
         "LOG_FEATURE_METRICS": False,
         "RUNWAY_LENGTH": runway_val,
+        "E_LAMBDA_JUMP_MODE": "full_mc_invalid_jump" if args.full_weight_mc else args.jump_mode,
+        "E_LAMBDA_FULL_WEIGHT_MC": bool(args.full_weight_mc or args.jump_mode in ["full_mc_invalid_jump", "mc_full_weight"]),
     })
     return cfg
 

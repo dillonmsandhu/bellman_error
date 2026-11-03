@@ -2,9 +2,10 @@
 # scripts/jump_mode_sweep/submit_array.sh
 #
 # Submits the 9-environment SLURM array comparing:
-# 1. e_lambda_drop (Drop Invalid Jump)
-# 2. e_lambda_mc   (MC Invalid Jump)
-# 3. bsmc          (1-step BSMC with matched weight for lambda=0.9)
+# 1. e_lambda_drop    (Drop Invalid Jump)
+# 2. e_lambda_mc      (MC Invalid Jump)
+# 3. e_lambda_full_mc (Full MC Invalid Jump)
+# 4. bsmc             (1-step BSMC with matched weight for lambda=0.95)
 #
 # Automatically creates the slurm/ log directory and chains analyze_sweep.py as a dependent job.
 
@@ -15,7 +16,7 @@ cd "$REPO_ROOT"
 
 mkdir -p slurm
 
-export VALUE_LAMBDA=${VALUE_LAMBDA:-0.9}
+export VALUE_LAMBDA=${VALUE_LAMBDA:-0.95}
 export TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-100000}
 export N_SEEDS=${N_SEEDS:-5}
 export OUT_DIR=${OUT_DIR:-"results/jump_mode_sweep"}
@@ -29,7 +30,7 @@ echo "Total Timesteps: $TOTAL_TIMESTEPS"
 echo "Output Root:     $OUT_DIR"
 echo "Partition:       compsci-gpu (A5000:1)"
 echo "Environments:    9 environments (Array 0-8)"
-echo "Algorithms:      e_lambda_drop, e_lambda_mc, bsmc"
+echo "Algorithms:      e_lambda_drop, e_lambda_mc, e_lambda_full_mc, bsmc"
 echo "================================================================"
 
 ARRAY_JOB_OUTPUT=$(sbatch scripts/jump_mode_sweep/run_slurm_array.sh)

@@ -268,6 +268,12 @@ def compute_sampling_e_lambda_metrics(
             variant="aux", jump_mode="mc_invalid_jump",
         )
 
+    def single_traj_grad_full_mc(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b):
+        return compute_single_traj_grad(
+            s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b,
+            variant="aux", jump_mode="full_mc_invalid_jump",
+        )
+
     def single_traj_grad_naive(s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b):
         return compute_single_traj_grad(
             s_b, dest_s_b, ret_b, dest_ret_b, hit_term_b, hit_time_b, hit_horiz_b, w_start_b, is_valid_b,
@@ -288,41 +294,48 @@ def compute_sampling_e_lambda_metrics(
 
     G_drop = jax.vmap(single_traj_grad_drop)(*args_trajs)
     G_mc = jax.vmap(single_traj_grad_mc)(*args_trajs)
+    G_full_mc = jax.vmap(single_traj_grad_full_mc)(*args_trajs)
     G_naive = jax.vmap(single_traj_grad_naive)(*args_trajs)
     G_fwd = jax.vmap(single_traj_grad_fwd)(*args_trajs)
 
     # Total average gradient across the full rollout batch (B trajectories)
     g_bar_drop = jnp.mean(G_drop, axis=0)
     g_bar_mc = jnp.mean(G_mc, axis=0)
+    g_bar_full_mc = jnp.mean(G_full_mc, axis=0)
     g_bar_naive = jnp.mean(G_naive, axis=0)
     g_bar_fwd = jnp.mean(G_fwd, axis=0)
 
     # Full batch cosine similarities to exact gradient g*
     rho_s_drop = cos_similarity(g_bar_drop, g_exact)
     rho_s_mc = cos_similarity(g_bar_mc, g_exact)
+    rho_s_full_mc = cos_similarity(g_bar_full_mc, g_exact)
     rho_s_naive = cos_similarity(g_bar_naive, g_exact)
     rho_s_fwd = cos_similarity(g_bar_fwd, g_exact)
 
     # Trajectory gradient variance (spread of trajectories): (1/B) sum ||g_b - g_bar||^2
     var_traj_drop = jnp.mean(jnp.sum((G_drop - g_bar_drop[None, :]) ** 2, axis=1))
     var_traj_mc = jnp.mean(jnp.sum((G_mc - g_bar_mc[None, :]) ** 2, axis=1))
+    var_traj_full_mc = jnp.mean(jnp.sum((G_full_mc - g_bar_full_mc[None, :]) ** 2, axis=1))
     var_traj_naive = jnp.mean(jnp.sum((G_naive - g_bar_naive[None, :]) ** 2, axis=1))
     var_traj_fwd = jnp.mean(jnp.sum((G_fwd - g_bar_fwd[None, :]) ** 2, axis=1))
 
     # Variance of the mean gradient estimator: Var(g_bar) = Var_traj / B
     var_drop = var_traj_drop / float(num_trajectories)
     var_mc = var_traj_mc / float(num_trajectories)
+    var_full_mc = var_traj_full_mc / float(num_trajectories)
     var_naive = var_traj_naive / float(num_trajectories)
     var_fwd = var_traj_fwd / float(num_trajectories)
 
     # Total MSE of average gradient to exact g*
     mse_drop = jnp.sum((g_bar_drop - g_exact) ** 2)
     mse_mc = jnp.sum((g_bar_mc - g_exact) ** 2)
+    mse_full_mc = jnp.sum((g_bar_full_mc - g_exact) ** 2)
     mse_naive = jnp.sum((g_bar_naive - g_exact) ** 2)
     mse_fwd = jnp.sum((g_bar_fwd - g_exact) ** 2)
 
     norm_drop = jnp.linalg.norm(g_bar_drop)
     norm_mc = jnp.linalg.norm(g_bar_mc)
+    norm_full_mc = jnp.linalg.norm(g_bar_full_mc)
     norm_naive = jnp.linalg.norm(g_bar_naive)
     norm_fwd = jnp.linalg.norm(g_bar_fwd)
 
@@ -363,6 +376,10 @@ def compute_sampling_e_lambda_metrics(
         v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
         mb_mc, gamma, lmbda, variant="aux", jump_mode="mc_invalid_jump",
     )
+    l_samp_aux_full_mc, _ = helpers.e_lambda_pointwise_critic_loss(
+        v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
+        mb_mc, gamma, lmbda, variant="aux", jump_mode="full_mc_invalid_jump",
+    )
     l_samp_naive, _ = helpers.e_lambda_pointwise_critic_loss(
         v_cur_start, v_cur_jump, v_aux_cur_start, v_aux_cur_jump,
         mb_drop, gamma, lmbda, variant="naive", jump_mode="drop_invalid_jump",
@@ -377,49 +394,62 @@ def compute_sampling_e_lambda_metrics(
         "E_samp_naive": l_samp_naive,
         "E_samp_aux": l_samp_aux,
         "E_samp_aux_mc": l_samp_aux_mc,
+        "E_samp_aux_full_mc": l_samp_aux_full_mc,
         "E_samp_fwd": l_samp_fwd,
         "norm_g_exact": norm_g_exact,
         # Full-Batch Average Gradient Cosine Similarities to Exact E(lambda)
         "rho_samp_naive_exact": rho_s_naive,
         "rho_samp_aux_exact": rho_s_drop,
         "rho_samp_aux_mc_exact": rho_s_mc,
+        "rho_samp_aux_full_mc_exact": rho_s_full_mc,
         "rho_samp_drop_exact": rho_s_drop,
         "rho_samp_mc_exact": rho_s_mc,
+        "rho_samp_full_mc_exact": rho_s_full_mc,
         "rho_samp_fwd_exact": rho_s_fwd,
         # Trajectory gradient variance (spread of trajectories)
         "var_traj_samp_naive": var_traj_naive,
         "var_traj_samp_aux": var_traj_drop,
         "var_traj_samp_aux_mc": var_traj_mc,
+        "var_traj_samp_aux_full_mc": var_traj_full_mc,
         "var_traj_samp_drop": var_traj_drop,
         "var_traj_samp_mc": var_traj_mc,
+        "var_traj_samp_full_mc": var_traj_full_mc,
         "var_traj_samp_fwd": var_traj_fwd,
         # Variance of the average gradient estimator
         "var_samp_naive": var_naive,
         "var_samp_aux": var_drop,
         "var_samp_aux_mc": var_mc,
+        "var_samp_aux_full_mc": var_full_mc,
         "var_samp_drop": var_drop,
         "var_samp_mc": var_mc,
+        "var_samp_full_mc": var_full_mc,
         "var_samp_fwd": var_fwd,
         # Total MSE of average gradient to exact g*
         "mse_samp_naive": mse_naive,
         "mse_samp_aux": mse_drop,
         "mse_samp_aux_mc": mse_mc,
+        "mse_samp_aux_full_mc": mse_full_mc,
         "mse_samp_drop": mse_drop,
         "mse_samp_mc": mse_mc,
+        "mse_samp_full_mc": mse_full_mc,
         "mse_samp_fwd": mse_fwd,
         # Gradient norms of average gradients
         "norm_g_samp_naive": norm_naive,
         "norm_g_samp_aux": norm_drop,
         "norm_g_samp_aux_mc": norm_mc,
+        "norm_g_samp_aux_full_mc": norm_full_mc,
         "norm_g_samp_drop": norm_drop,
         "norm_g_samp_mc": norm_mc,
+        "norm_g_samp_full_mc": norm_full_mc,
         "norm_g_samp_fwd": norm_fwd,
         # Norm ratios
         "norm_ratio_naive": norm_naive / jnp.maximum(1e-8, norm_g_exact),
         "norm_ratio_aux": norm_drop / jnp.maximum(1e-8, norm_g_exact),
         "norm_ratio_aux_mc": norm_mc / jnp.maximum(1e-8, norm_g_exact),
+        "norm_ratio_aux_full_mc": norm_full_mc / jnp.maximum(1e-8, norm_g_exact),
         "norm_ratio_drop": norm_drop / jnp.maximum(1e-8, norm_g_exact),
         "norm_ratio_mc": norm_mc / jnp.maximum(1e-8, norm_g_exact),
+        "norm_ratio_full_mc": norm_full_mc / jnp.maximum(1e-8, norm_g_exact),
         "norm_ratio_fwd": norm_fwd / jnp.maximum(1e-8, norm_g_exact),
         # Auxiliary value network accuracy to V_true
         "mse_v_aux_target": jnp.mean((V_true - v_aux) ** 2),

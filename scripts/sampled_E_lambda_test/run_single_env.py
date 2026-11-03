@@ -47,7 +47,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run Sampling E(lambda) Test on a Single Environment")
     parser.add_argument("--env_name", type=str, default=None, help="Name of the environment")
     parser.add_argument("--env_idx", type=int, default=None, help="Index of the environment (0-8)")
-    parser.add_argument("--value_lambda", type=float, default=0.8, help="Trace parameter lambda for E(lambda)")
+    parser.add_argument("--value_lambda", type=float, default=0.95, help="Trace parameter lambda for E(lambda)")
     parser.add_argument("--num_updates", type=int, default=50, help="Number of policy updates")
     parser.add_argument("--n_seeds", type=int, default=3, help="Number of random seeds")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")

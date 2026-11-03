@@ -44,7 +44,7 @@ ALL_ENVS = [
 
 ALGORITHMS = {
     "e_lambda_drop": {
-        "display_name": "E(λ=0.9) [Drop Invalid Jump]",
+        "display_name": "E(λ=0.95) [Drop Invalid Jump]",
         "builder": make_e_lambda_train,
         "config_overrides": {
             "E_LAMBDA_VARIANT": "aux",
@@ -54,7 +54,7 @@ ALGORITHMS = {
         "color": "#9467bd",  # Purple
     },
     "e_lambda_mc": {
-        "display_name": "E(λ=0.9) [MC Invalid Jump]",
+        "display_name": "E(λ=0.95) [MC Invalid Jump]",
         "builder": make_e_lambda_train,
         "config_overrides": {
             "E_LAMBDA_VARIANT": "aux",
@@ -63,8 +63,18 @@ ALGORITHMS = {
         },
         "color": "#d62728",  # Red / Coral
     },
+    "e_lambda_full_mc": {
+        "display_name": "E(λ=0.95) [Full MC Invalid Jump]",
+        "builder": make_e_lambda_train,
+        "config_overrides": {
+            "E_LAMBDA_VARIANT": "aux",
+            "E_LAMBDA_JUMP_MODE": "full_mc_invalid_jump",
+            "RETURN_LAMBDA": 1.0,
+        },
+        "color": "#ff7f0e",  # Orange
+    },
     "bsmc": {
-        "display_name": "BSMC [1-step, Calibrated λ=0.9]",
+        "display_name": "BSMC [1-step, Calibrated λ=0.95]",
         "builder": make_bsmc_train,
         "config_overrides": {
             "BSMC_VARIANT": "aux",
@@ -79,8 +89,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="PPO Jump Modes vs BSMC Comparison on a Single Environment")
     parser.add_argument("--env_name", type=str, default=None, help="Name of the environment")
     parser.add_argument("--env_idx", type=int, default=None, help="Index of the environment (0-8)")
-    parser.add_argument("--algo", type=str, default=None, choices=list(ALGORITHMS.keys()), help="Algorithm to run (default: runs all 3)")
-    parser.add_argument("--value_lambda", type=float, default=0.9, help="Trace parameter lambda / equivalent BSMC weight parameter (default: 0.9)")
+    parser.add_argument("--algo", type=str, default=None, choices=list(ALGORITHMS.keys()), help="Algorithm to run (default: runs all algorithms)")
+    parser.add_argument("--value_lambda", type=float, default=0.95, help="Trace parameter lambda / equivalent BSMC weight parameter (default: 0.95)")
     parser.add_argument("--total_timesteps", type=int, default=100000, help="Total environment timesteps per seed (default: 100,000)")
     parser.add_argument("--n_seeds", type=int, default=5, help="Number of random seeds (default: 5)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")

@@ -275,13 +275,15 @@ def analyze_gradient_variance(
         g_n = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_drop, "naive", "drop_invalid_jump"))(p))
         g_drop = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_drop, "aux", "drop_invalid_jump"))(p))
         g_mc = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_mc, "aux", "mc_invalid_jump"))(p))
+        g_full_mc = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_mc, "aux", "full_mc_invalid_jump"))(p))
         g_f = extract_critic_flat_grads(jax.grad(lambda p: loss_fn(p, mb_drop, "fwd", "drop_invalid_jump"))(p))
-        return g_n, g_drop, g_mc, g_f
+        return g_n, g_drop, g_mc, g_full_mc, g_f
 
     # Sample over num_batches independent rollout draws
     grads_naive = []
     grads_drop = []
     grads_mc = []
+    grads_full_mc = []
     grads_fwd = []
 
     batch_keys = jax.random.split(rng, num_batches)
@@ -290,20 +292,23 @@ def analyze_gradient_variance(
         traj_s, _, traj_r, traj_done, final_s = sample_rollout(r_roll)
         returns = compute_returns(traj_r, traj_done, final_s)
 
-        gn, gdrop, gmc, gf = compute_batch_grads(params, traj_s, returns, traj_done, lmbda, r_jump)
+        gn, gdrop, gmc, gfullmc, gf = compute_batch_grads(params, traj_s, returns, traj_done, lmbda, r_jump)
         grads_naive.append(np.array(gn))
         grads_drop.append(np.array(gdrop))
         grads_mc.append(np.array(gmc))
+        grads_full_mc.append(np.array(gfullmc))
         grads_fwd.append(np.array(gf))
 
     G_n = np.stack(grads_naive, axis=0)
     G_drop = np.stack(grads_drop, axis=0)
     G_mc = np.stack(grads_mc, axis=0)
+    G_full_mc = np.stack(grads_full_mc, axis=0)
     G_f = np.stack(grads_fwd, axis=0)
 
     mean_n = np.mean(G_n, axis=0)
     mean_drop = np.mean(G_drop, axis=0)
     mean_mc = np.mean(G_mc, axis=0)
+    mean_full_mc = np.mean(G_full_mc, axis=0)
     mean_f = np.mean(G_f, axis=0)
 
     def compute_stats(G, mean_g):
@@ -323,6 +328,7 @@ def analyze_gradient_variance(
         "stats_naive": compute_stats(G_n, mean_n),
         "stats_aux": compute_stats(G_drop, mean_drop),
         "stats_aux_mc": compute_stats(G_mc, mean_mc),
+        "stats_aux_full_mc": compute_stats(G_full_mc, mean_full_mc),
         "stats_fwd": compute_stats(G_f, mean_f),
     }
 
@@ -364,13 +370,14 @@ def run_training_comparison(
         {"name": "fwd", "label": "Forward Only", "color": "#00bcd4", "jump_mode": "drop_invalid_jump"},
         {"name": "aux", "label": "V_aux (Drop Invalid)", "color": "#9467bd", "jump_mode": "drop_invalid_jump"},
         {"name": "aux_mc", "label": "V_aux (MC Invalid)", "color": "#d62728", "jump_mode": "mc_invalid_jump"},
+        {"name": "aux_full_mc", "label": "V_aux (Full MC Invalid)", "color": "#ff7f0e", "jump_mode": "full_mc_invalid_jump"},
     ]
 
     results = {}
     for var in variants:
         v_name = var["name"]
         cfg = base_env_cfg.copy()
-        cfg["E_LAMBDA_VARIANT"] = "aux" if v_name == "aux_mc" else v_name
+        cfg["E_LAMBDA_VARIANT"] = "aux" if v_name in ["aux_mc", "aux_full_mc"] else v_name
         cfg["E_LAMBDA_JUMP_MODE"] = var.get("jump_mode", "drop_invalid_jump")
         print(f"Training variant: {var['label']} (lambda={lmbda})...", end="", flush=True)
         t0 = time.time()
@@ -395,7 +402,7 @@ def run_training_comparison(
 def main():
     parser = argparse.ArgumentParser(description="Compare Naive (Oct 8) vs Forward Only vs V_aux Sampled E(lambda) variants")
     parser.add_argument("--env_name", type=str, default="FourRooms-misc", help="Benchmark environment name")
-    parser.add_argument("--value_lambda", type=float, default=0.8, help="Trace parameter lambda for E(lambda)")
+    parser.add_argument("--value_lambda", type=float, default=0.95, help="Trace parameter lambda for E(lambda)")
     parser.add_argument("--num_batches", type=int, default=50, help="Number of rollout batches for gradient analysis")
     parser.add_argument("--num_trajectories", type=int, default=64, help="Trajectories per rollout batch")
     parser.add_argument("--num_steps", type=int, default=128, help="Steps per trajectory")
@@ -445,6 +452,7 @@ def main():
         ("Forward Only", "stats_fwd"),
         ("V_aux (Drop Invalid)", "stats_aux"),
         ("V_aux (MC Invalid)", "stats_aux_mc"),
+        ("V_aux (Full MC Invalid)", "stats_aux_full_mc"),
     ]:
         st = grad_analysis[key]
         cos_str = f"{st['sample_cosine_mean']:.4f} +/- {st['sample_cosine_std']:.4f}"
@@ -494,26 +502,28 @@ def main():
     ax_ret.legend(frameon=True, fontsize=9)
 
     # Panel 3: Gradient Variance & MSE Bar Chart
-    var_labels = ["Naive (Oct 8)", "Forward Only", "V_aux (Drop)", "V_aux (MC)"]
+    var_labels = ["Naive (Oct 8)", "Forward Only", "V_aux (Drop)", "V_aux (MC)", "V_aux (Full MC)"]
     variances = [
         grad_analysis["stats_naive"]["variance"],
         grad_analysis["stats_fwd"]["variance"],
         grad_analysis["stats_aux"]["variance"],
         grad_analysis["stats_aux_mc"]["variance"],
+        grad_analysis["stats_aux_full_mc"]["variance"],
     ]
     mses = [
         grad_analysis["stats_naive"]["mse"],
         grad_analysis["stats_fwd"]["mse"],
         grad_analysis["stats_aux"]["mse"],
         grad_analysis["stats_aux_mc"]["mse"],
+        grad_analysis["stats_aux_full_mc"]["mse"],
     ]
-    colors = ["#2ca02c", "#00bcd4", "#9467bd", "#d62728"]
+    colors = ["#2ca02c", "#00bcd4", "#9467bd", "#d62728", "#ff7f0e"]
     x_idx = np.arange(len(var_labels))
     width = 0.35
     ax_var.bar(x_idx - width/2, variances, width, label="Sample Gradient Variance", color=colors, alpha=0.85)
     ax_var.bar(x_idx + width/2, mses, width, label="Gradient MSE to Exact", color=colors, hatch="//", alpha=0.55)
     ax_var.set_xticks(x_idx)
-    ax_var.set_xticklabels(var_labels, fontsize=9, fontweight="bold")
+    ax_var.set_xticklabels(var_labels, fontsize=8, fontweight="bold")
     ax_var.set_title(f"Gradient Variance & MSE to Exact E($\\lambda={args.value_lambda}$)", fontsize=11, fontweight="bold")
     ax_var.set_ylabel("Magnitude (Log Scale)", fontsize=10)
     ax_var.set_yscale("log")
