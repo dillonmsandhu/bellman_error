@@ -1815,7 +1815,9 @@ def prepare_e_lambda_jump_pairs(
 
     Supported jump_modes:
     - 'mc_invalid_jump' (default): Actor and critic use all T data (critic_mask = 1.0). If a sampled jump
-      overshoots the buffer (t + m > T), its Dirichlet smoothing term is zeroed out and it trains purely on the MC return target.
+      overshoots the buffer (t + m > T), its Dirichlet smoothing term is zeroed out and it trains purely on the MC return target with weight (1 - tilde_gamma).
+    - 'full_mc_invalid_jump' / 'mc_full_weight': Actor and critic use all T data (critic_mask = 1.0). If a sampled jump
+      overshoots the buffer (t + m > T), it trains purely on the MC return target with FULL weight (1.0).
     - 'drop_invalid_jump': Actor uses all T data. If a sampled jump overshoots the buffer (t + m > T)
       without hitting an absorbing terminal, that transition is excluded from the critic (critic_mask = 0).
     """
@@ -1855,7 +1857,7 @@ def prepare_e_lambda_jump_pairs(
     is_valid_jump = (t_arr + m <= T) | hit_true_terminal
     if jump_mode == "drop_invalid_jump":
         critic_mask = is_valid_jump.astype(jnp.float32)
-    else:  # "mc_invalid_jump" (default)
+    else:  # "mc_invalid_jump", "full_mc_invalid_jump", "mc_full_weight"
         critic_mask = jnp.ones((T, B), dtype=jnp.float32)
 
     # 3. Track steps since start (clearing to 10,000 on timeout)
@@ -1918,6 +1920,7 @@ def e_lambda_pointwise_critic_loss(
     lmbda: float,
     variant: str = "aux",
     jump_mode: str = "mc_invalid_jump",
+    full_weight_mc: bool = False,
 ):
     """
     Evaluates the exact Dirichlet, magnitude, and start losses on a 1D minibatch of jump pairs.
@@ -1925,6 +1928,12 @@ def e_lambda_pointwise_critic_loss(
     - 'aux' / 'v_aux': Debiased surrogate using auxiliary critic v_aux for the backward branch
     - 'naive' / 'oct8': Naive jump sampling (Oct 8 analog) differentiating both source and destination
     - 'fwd' / 'forward': Forward-only sampling dropping the backward gradient branch
+
+    Supported jump_modes for invalid jumps (hit_timeout or hit_horizon t + m > T):
+    - 'mc_invalid_jump': zeroes Dirichlet smoothing (0.0), keeping standard magnitude weight (1 - tilde_gamma).
+    - 'full_mc_invalid_jump' / 'mc_full_weight' (or full_weight_mc=True): sets diff_sq = e_start ** 2 so that
+      (magnitude_weight + dirichlet_weight) * e_start ** 2 = 0.5 * e_start ** 2 (FULL unit-weight MC target).
+    - 'drop_invalid_jump': excluded via critic_mask.
     """
     sg = jax.lax.stop_gradient
     gl = gamma * lmbda
@@ -1943,12 +1952,18 @@ def e_lambda_pointwise_critic_loss(
         inner_diff_sq = (e_start - sg(e_jump)) ** 2 + (sg(e_aux_start) - e_aux_jump) ** 2
 
     is_horizon = mb.hit_horizon if mb.hit_horizon is not None else False
-    # If hit true absorbing terminal: (e_start - 0)^2 = e_start^2.
-    # If hit timeout or horizon overshoot (t + m >= T): zero out smoothing term, training purely towards MC return.
+    is_invalid = mb.hit_timeout | is_horizon
+    is_full_mc = full_weight_mc or (jump_mode in ["full_mc_invalid_jump", "mc_full_weight", "mc_full", "full_weight_mc", "mc_invalid_jump_full"])
+
+    # If hit true absorbing terminal: (e_start - 0)^2 = e_start^2 (full-weight MC target).
+    # If hit timeout or horizon overshoot (t + m >= T):
+    #   - If is_full_mc: set diff_sq = e_start ** 2 so (magnitude + dirichlet) = 0.5 * e_start ** 2 (full-weight MC target).
+    #   - Otherwise: zero out smoothing term (0.0), keeping standard magnitude weight (1 - tilde_gamma).
+    invalid_diff_sq = jnp.where(is_full_mc, e_start ** 2, 0.0)
     diff_sq = jnp.where(
         mb.hit_true_terminal,
         e_start ** 2,
-        jnp.where(mb.hit_timeout | is_horizon, 0.0, inner_diff_sq),
+        jnp.where(is_invalid, invalid_diff_sq, inner_diff_sq),
     )
 
     tilde_gamma = (gamma * (1.0 - lmbda)) / jnp.maximum(1.0 - gl, 1e-8)
@@ -2010,6 +2025,7 @@ def e_lambda_ppo_minibatch_loss(
 
     variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
     jump_mode = config.get("E_LAMBDA_JUMP_MODE", "mc_invalid_jump")
+    full_mc = config.get("E_LAMBDA_FULL_WEIGHT_MC", config.get("FULL_WEIGHT_MC_INVALID", False))
     value_loss, critic_losses = e_lambda_pointwise_critic_loss(
         v_start=v_start,
         v_jump=v_jump,
@@ -2020,6 +2036,7 @@ def e_lambda_ppo_minibatch_loss(
         lmbda=config["VALUE_LAMBDA"],
         variant=variant,
         jump_mode=jump_mode,
+        full_weight_mc=full_mc,
     )
 
     total_loss = (
@@ -2063,6 +2080,7 @@ def e_lambda_fixed_critic_minibatch_loss(
 
     variant = config.get("E_LAMBDA_VARIANT", config.get("E_VARIANT", "aux"))
     jump_mode = config.get("E_LAMBDA_JUMP_MODE", "mc_invalid_jump")
+    full_mc = config.get("E_LAMBDA_FULL_WEIGHT_MC", config.get("FULL_WEIGHT_MC_INVALID", False))
     value_loss, critic_losses = e_lambda_pointwise_critic_loss(
         v_start=v_start,
         v_jump=v_jump,
@@ -2073,6 +2091,7 @@ def e_lambda_fixed_critic_minibatch_loss(
         lmbda=config["VALUE_LAMBDA"],
         variant=variant,
         jump_mode=jump_mode,
+        full_weight_mc=full_mc,
     )
 
     total_loss = config.get("VF_COEF", 1.0) * value_loss

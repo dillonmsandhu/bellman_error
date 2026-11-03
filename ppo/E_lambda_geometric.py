@@ -99,6 +99,10 @@ def make_train(base_config):
 
             # 4. PREPARE JUMP PAIRS ONCE PER ROLLOUT
             rng, _rng = jax.random.split(rng)
+            jump_mode = config.get("E_LAMBDA_JUMP_MODE", "mc_invalid_jump")
+            if config.get("E_LAMBDA_FULL_WEIGHT_MC", config.get("FULL_WEIGHT_MC_INVALID", False)):
+                jump_mode = "full_mc_invalid_jump"
+
             jump_batch, final_steps_since_start = helpers.prepare_e_lambda_jump_pairs(
                 traj_batch=traj_batch,
                 returns=returns,
@@ -108,7 +112,7 @@ def make_train(base_config):
                 rng=_rng,
                 steps_since_start=steps_since_start,
                 aux_returns=aux_returns,
-                jump_mode=config.get("E_LAMBDA_JUMP_MODE", "mc_invalid_jump"),
+                jump_mode=jump_mode,
             )
 
             # 5. UPDATE NETWORK OVER EPOCHS AND FLAT MINIBATCHES
