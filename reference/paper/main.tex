@@ -50,6 +50,7 @@
 \newtheorem{assumption}[theorem]{Assumption}
 \theoremstyle{remark}
 \newtheorem{remark}[theorem]{Remark}
+\newtheorem{defn}{Definition}
 
 % Todonotes is useful during development; simply uncomment the next line
 %    and comment out the line below the next line to turn off comments
@@ -313,14 +314,17 @@ Recall that $\bm{e}$ depends on $\theta$, with $\nabla_\theta \bm{e} = -\nabla_\
   \end{align}
 Further examining each of these terms:
 \begin{align}
-   \nabla_\theta \mathcal{E}_i  &=  \frac{1}{2} \sum_jp_{ij} \nabla_\theta(e_i - e_j)^2 \\
+   \nabla_\theta \mathcal{E}_i  &=  \frac{1}{2} \sum_jp_{ij} \nabla_\theta(e_i - e_j)^2 \nonumber \\
    &=   \sum_jp_{ij}
-  (e_i - e_j)\nabla_\theta(e_i - e_j) \\
+  (e_i - e_j)\nabla_\theta(e_i - e_j) \nonumber\\
     &=    \sum_jp_{ij}
-  (e_i - e_j) (\nabla_\theta v_\theta(s_j) -\nabla_\theta v_\theta(s_i)) \\
+  (e_i - e_j) (\nabla_\theta v_\theta(s_j) -\nabla_\theta v_\theta(s_i)) \nonumber \\
       &=    \underbrace{\sum_jp_{ij}
-  (e_i - e_j) \nabla_\theta v_\theta(s_j)}_{\text{term } (1)} \\ & \qquad - \underbrace{\sum_jp_{ij}
-  (e_i - e_j) \nabla_\theta v_\theta(s_i) }_{\text{term } (2)}
+  (e_i - e_j) \nabla_\theta v_\theta(s_j)}_{\text{term } (1)} \nonumber \\ & \qquad - \underbrace{\sum_jp_{ij}
+  (e_i - e_j) \nabla_\theta v_\theta(s_i) }_{\text{term } (2)} \\
+    &=  \mathbb{E}_{j \sim P_i} \big[
+  \underbrace{(e_i - e_j) \nabla_\theta v_\theta(s_j)}_{\text{term } (1)} - \underbrace{
+  (e_i - e_j) \nabla_\theta v_\theta(s_i) }_{\text{term } (2)} \big]
 \end{align}
 This decomposition splits the gradient into terms depending on the current state (Term (2)), and those depending on \textbf{expected} gradient at the next state (Term (1)). We call Term (2) the \textit{forward term}. It can be rewritten using the identity $\bm{\delta} = \bm{e} - \gamma P \bm{e}$ as:
 \begin{align}
@@ -379,7 +383,7 @@ Next, we test these algorithms for control, using them to train the critic in PP
 
 
 % ----------------------------------------------------------------
-% Figure: Fixed Pi
+% Figure: PPO E(0)
 % ----------------------------------------------------------------
 \begin{figure*}[tbp]
   \centering
@@ -391,6 +395,122 @@ Next, we test these algorithms for control, using them to train the critic in PP
 % ----------------------------------------------------------------
 % End Figure
 % -------------------
+Finally, we examine the alignment of the sampled gradient to the ground truth gradient for a realistic setting: using policies obtained by a seperate policy optimization algorithm, and batch rollouts as in PPO. Figure \ref{fig:gradient_cosine_across_envs} plots the results during learning. We measure gradient alignment with the cosine similarity $\rho(\hat{g}, g)$ where $g = \nabla E$, and $\hat{g}$ is the estimate. Somewhat striking is that the Forward Only variant, which drops the backward term, actually has strong gradient alignment on Space Invaders. Despite this environment having strong asymmetry, we speculate that the directed nature of the task is responsible for the forward and backward term being strongly similar. Notably, only the version that uses an auxiliary value network maintains positive alignment throughout learning. The forward only variant is misaligned due to bias on the maze tasks, and the double-sampling version is almost always worse than the version that uses an auxiliary network.
+
+
+% ----------------------------------------------------------------
+% Figure: Gradient Cosine Sim
+% ----------------------------------------------------------------
+\begin{figure*}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/gradient_cosine_across_envs.pdf}
+  \caption{\textbf{Gradient Accuracy}: We compare the ground truth gradient of $E$ with three sampled variants: October 8, which uses raw returns and suffers from double sampling; Forward Only which drops the backward term, incurring bias; and V Aux, which uses an auxiliary network in the backward term. The cosine similarity varies between $1$ (directional alignment), to $-1$, full misalignment, and is $0$ when the gradients are orthogonal.}
+  \label{fig:gradient_cosine_across_envs}
+\end{figure*}
+\newpage 
+% ----------------------------------------------------------------
+% End Figure
+% -------------------
+
+\section{$E(\lambda)$}
+The TD($\lambda$) algorithm \cite{sutton_td} interpolates between one-step-bootstrapping ($\lambda=0$) and Monte Carlo value learning $(\lambda \rightarrow 1)$. The Bellman-Smoothed value error be extended naturally in the same way:
+\begin{defn}
+The $\lambda$-Bellman Smoothed value error generalizes $E$, and is defined as follows. 
+\begin{equation}
+    E(\lambda) \doteq \frac{1}{2}\bm{e}^\intercal A(I-\gamma \lambda)^{-1} \bm{e}    
+\end{equation}
+\end{defn}
+\begin{theorem} \label{thm:td_lambda_E_lambda}
+    In expectation, when sampling states from $\mu$, the TD($\lambda$) update is:
+    \begin{equation}
+        \bm{\theta} \leftarrow \bm{\theta} - \frac{1}{2}\alpha\big[  \nabla_\theta E(\lambda) - J_{\theta}^\intercal K_\lambda e \big] \label{eq:td_lambda_update_expected} 
+    \end{equation}
+    Where $K_\lambda$ is the skew-symmetric component of $A(I-\gamma \lambda)^{-1}$. 
+\end{theorem}
+We can obtain a sampling form of $E(\lambda)$ by defining a row-stochastic transition matrix $P_\lambda \doteq (I-\gamma \lambda) P (I-\gamma \lambda)^{-1}$. Since $P_\lambda$ and $P$ have the same stationary distribution, we can write:
+\begin{theorem} \label{thm:sampling_form_E_lambda}
+    Define an effective discount rate $\tilde{\gamma} = \frac{\gamma(1 - \lambda)}{1 - \gamma \lambda}$. Note that $\lim_{\lambda \rightarrow 1}\tilde{\gamma}=0$. If $\bm{\mu}$ is the stationary distribution, then $E(\lambda)$ can be written as:
+    \begin{align} 
+    E(\lambda) &= (1 - \tilde{\gamma}) \Vert{}\bm{e}\Vert{}_D^2 + \frac{\tilde{\gamma}}{2} \sum_{i,j} \mu_i [P_\lambda]_{ij} (e_i - e_j)^2 \end{align}
+\end{theorem}
+
+Taken together, theorems \ref{thm:td_lambda_E_lambda} and \ref{thm:sampling_form_E_lambda} emphasize that increasing $\lambda$ has two effects:
+\begin{enumerate}
+    \item \textbf{Anchor weighting:} Increases the weight on the MSE term $(1-\tilde{\gamma})\|\bm{e}\|_D^2$.
+    \item \textbf{Kernel reach:} Increases the ``smoothing radius,'' or how far along a trajectory the energy term smooths.
+\end{enumerate}
+
+\subsection{Sampling $E(\lambda)$}
+We consider sampling $E(\lambda)$ using an auxiliary value network -- just as we did in the prior section. To sample from $P_\lambda$, we use the fact that $P_\lambda$ is a geometric mixture of multi-step distributions. Writing $P_\lambda$ in the following form shows that it weights each $m$-step transition matrix $P^m$ with weight $(1-\gamma\lambda_(\gamma \lambda)^m$. This corresponds to the expected value of $P^m$ where the jump length $m$ is due to a geometric distribution $\mathbb{E}[m] = \frac{1}{1-\gamma \lambda}$. This mirros the alternative view of discounting based a modified undiscounted MDP that terminates with probability $1-\gamma$ every step.
+
+\[
+\begin{aligned}
+P_\lambda
+&=\sum_{m=1}^{\infty}
+(1-\gamma\lambda)(\gamma\lambda)^{m-1}P^m.
+\end{aligned}
+\]
+
+Based on this, a Monte Carlo estimator for $\mathbb{E}_{i\sim\mu,\,j\sim P_\lambda(i,\cdot)}
+\left[(e_i-e_j)^2\right]$ can be obtained by sampling state $i \sim \bm{\mu}$ and jump length $m \sim \text{Geom}(1-\gamma \lambda)$, letting $j$ be the state reached after $m$ steps. This allows one to sample $E(\lambda)$ from on-policy rollouts, maintaining backward differentiability through $v(s_j)$. This geometric jump perspective, where $\mathbb{E}[m] = \frac{1}{1-\lambda \gamma}$, tangibly demonstrates how the smoothing radius grows with $\lambda$.
+
+\textbf{Experiment: Sampled $E(\lambda)$ Gradient Alignment. (Tables \ref{tab:E_lambda_sampling_aggregate} and \ref{tab:sampled_E_lambda_per_env})}
+In practice, we collect fixed-length rollouts -- typically of $T=128$ or $T=256$ steps. This presents an issue when the jump length exceeds the roll-out length, something that becomes more common at higher values of $\lambda$. We considered two ways to handle this: (1) zeroing out the critic update for timestep $t$, and (2) zeroing out the smoothing term, and updating based on the empirical return only. We compare the ability of each of these sampling methods to estimate the ground truth gradient in Table \ref{tab:E_lambda_sampling_aggregate}. Using the Monte Carlo term adds a small amount of bias, but maintains a strong cosine similarity and lowers the variance of the gradient estimator. Per-Environment analysis reveals that Space Invaders, an infinite horizon task that is approximately a DAG, is entirely responsible for the strong results due to Forward Only variant, but that across environments, the gradients due to the $v_{aux}$ methods are more aligned with the analytical gradient in weight-space.
+
+\begin{table*}[t]
+\centering
+\caption{Aggregated Sampled $E(\lambda)$ Performance Summary across 8 Benchmark Environments ($\lambda=0.8, \gamma=0.99$).} \label{tab:E_lambda_sampling_aggregate}
+\vspace{4pt}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Formulation} & \textbf{Cosine Sim} $\cos(\bar{g}, g^*) \uparrow$ & \textbf{Variance} $\mathrm{Var}(\bar{g}) \downarrow$ & \textbf{MSE} $||\bar{g} - g^*||^2 \downarrow$ & \textbf{MSE vs Naive} \\
+\midrule
+Naive (Oct 8 Analog) & +0.4101 & 4.68e-03 & 1.4590 & 1.00$\times$ \\
+$V_{\mathrm{aux}}$ (Drop Invalid Jump) & +0.5559 & 1.23e-02 & 0.2252 & 0.15$\times$ \\
+$V_{\mathrm{aux}}$ (MC Invalid Jump) & +0.5558 & 1.14e-02 & 0.2335 & 0.16$\times$ \\
+Forward Only & +0.3187 & 7.26e-03 & 0.0182 & 0.01$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\newpage
+\begin{table*}[t]
+\centering
+% \small
+\setlength{\tabcolsep}{4.3pt}
+\caption{Empirical comparison of Sampled $E(\lambda)$ gradient formulations against Exact Matrix $\nabla E(\lambda)$ across 8 benchmark environments ($\lambda=0.8, \gamma=0.99$). Cosine similarity measures directional alignment ($\uparrow$), while Variance and MSE measure estimator dispersion and accuracy ($\downarrow$).}
+\label{tab:sampled_E_lambda_per_env}
+\vspace{4pt}
+\begin{tabular}{l cccc cccc cccc}
+\toprule
+& \multicolumn{4}{c}{\textbf{Cosine Sim} $\uparrow$} & \multicolumn{4}{c}{\textbf{Variance} $\downarrow$} & \multicolumn{4}{c}{\textbf{MSE} $\downarrow$} \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-9} \cmidrule(lr){10-13}
+\textbf{Environment} & Naive & Drop & MC & Fwd & Naive & Drop & MC & Fwd & Naive & Drop & MC & Fwd \\
+\midrule
+fourrooms-dense       & \textbf{0.60} & \textbf{0.60} & \textbf{0.60} & -0.07 & \textbf{2.0e-4} & 5.4e-4 & 5.0e-4 & 3.8e-4 & 2.6e-3 & 1.8e-3 & 1.7e-3 & \textbf{9.5e-4} \\
+FourRooms-misc        & 0.47 & \textbf{0.55} & 0.54 & -0.07 & 8.8e-5 & 1.8e-4 & 1.6e-4 & \textbf{7.8e-5} & 2.2e-3 & 1.8e-3 & \textbf{1.7e-3} & 2.0e-3 \\
+fourrooms-mines       & 0.24 & 0.01 & 0.01 & \textbf{0.30} & 2.6e-5 & 3.4e-5 & 3.1e-5 & \textbf{1.8e-5} & \textbf{4.3e-5} & 2.4e-4 & 2.2e-4 & 2.5e-4 \\
+fourrooms-mines-dense & -0.28 & \textbf{0.50} & \textbf{0.50} & 0.11 & 5.4e-4 & 5.7e-4 & 5.3e-4 & \textbf{4.1e-4} & 7.0e-3 & 6.5e-4 & \textbf{6.1e-4} & 8.0e-4 \\
+eightrooms-dense      & \textbf{0.55} & 0.53 & 0.53 & 0.54 & \textbf{2.3e-4} & 6.1e-4 & 5.7e-4 & 6.1e-4 & 3.1e-3 & \textbf{1.2e-3} & \textbf{1.2e-3} & 1.7e-3 \\
+eightrooms-misc       & 0.49 & \textbf{0.58} & \textbf{0.58} & 0.18 & 5.1e-5 & 7.7e-5 & 7.2e-5 & \textbf{4.3e-5} & 7.4e-4 & 6.0e-4 & 5.6e-4 & \textbf{4.6e-4} \\
+SpaceInvaders         & 0.46 & 0.85 & 0.85 & \textbf{0.93} & \textbf{0.04} & 0.10 & 0.09 & 0.06 & 11.66 & 1.80 & 1.86 & \textbf{0.14} \\
+mountaincar-dense     & 0.75 & \textbf{0.83} & \textbf{0.83} & 0.64 & \textbf{3.9e-6} & 6.6e-6 & 6.2e-6 & \textbf{3.9e-6} & \textbf{1.3e-5} & 1.8e-5 & 1.6e-5 & 1.7e-5 \\
+\midrule
+\textbf{Mean (All Envs)} & 0.41 & \textbf{0.56} & \textbf{0.56} & 0.32 & \textbf{4.7e-3} & 0.01 & 0.01 & 7.3e-3 & 1.46 & 0.23 & 0.23 & \textbf{0.02} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\textbf{Experiment: $E(\lambda)$ vs Bellman Smoothed Monte Carlo (Figure \ref{fig:bsmc_vs_elambda_overview})}
+As mentioned earlier, $E(\lambda)$ differs from $E(0)$ in exactly two ways: (1) higher anchor weight, and (2), longer jumps. To disentangle these effects, we consider Bellman Smoothed Monte Carlo (BSMC), which engages in one-step smoothing of the Monte Carlo loss only. Precisely, it has objective $\mathcal{L}_{bsmc} = w_{mc} \|\bm{e}(\theta)\|_D^2 + (1-w_{mc}) \mathcal{E}(\theta)$. We compare BSMC to $E(\lambda)$ by setting  $w_{\text{MC}}(\lambda) = \frac{1-\gamma}{1-\gamma\lambda}$ to match $E(\lambda)$. Results are shown in Figure \ref{fig:bsmc_vs_elambda_overview}. At intermediate values of $\lambda$, $E(\lambda)$ outperforms BSMC, implying that the $m$-step smoothing is beneficial on our testing suite of environments. However, at high values of $\lambda$, BSMC outperforms. We can say that $E(\lambda)'s$ failure to match BSMC at high $\lambda$ is due to the jump length $m$. However, whether this is because the variance in $m \sim \text{Geom}(1-\gamma \lambda)$ or because $\mathbb{E}[m]$ grew too large to be helpful for our test suite ($\mathbb{E}[m]\approx 17$ for $\lambda = 0.95$) cannot be ascertained from these experiments alone.
+
+\begin{figure*}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/bsmc_vs_elambda_overview.pdf}
+  \caption{\textbf{Comparison to BSCM}: We compare runs of PPO where the critic is due either to BSMC or $E(\lambda)$ at various weightings of the Monte Carlo term. Per  10 seeds.}
+  \label{fig:bsmc_vs_elambda_overview}
+\end{figure*}
+\newpage
 
 % \paragraph{Stochastic Gradient Estimator and Expected Dynamics.}
 % Combining the Monte Carlo objective $(1-\gamma)\|e\|_D^2$ with the smoothness energy $\gamma \mathcal{E}$, where Term (1) uses $e_{\text{aux}}(s) \doteq v_{\text{aux}}(s) - v_\theta(s)$ and Term (2) uses the decomposition of Equation~(24), yields the per-transition stochastic gradient estimator $\hat{g}_i$ for transition $(s_i, r_i, s_j)$ and return $G_i^T$:
@@ -421,196 +541,196 @@ Next, we test these algorithms for control, using them to train the critic in PP
   \newpage
   \bibliography{main}
   \bibliographystyle{icml2026}
-  
+  \end{document}
   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   % APPENDIX
   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  \newpage
-  \appendix
-  \onecolumn
+  % \newpage
+  % \appendix
+  % \onecolumn
   
-\section{You \emph{can} have an appendix here.}
+% \section{You \emph{can} have an appendix here.}
 
-\textbf{Truncation Bias}
-When sampling $E$ using truncated rollouts of length $T$ rather than episodic episodes, 
-one can use the $T$-step bootstrapped return, leading to the following approximation of $e_i$ 
-\begin{equation}
-  G^T_i &= \sum_{t=0}^{T-1} \gamma^t r_t + \gamma^T \overline{v}(s_T) | s_0=s_i \\
-  e_i &\approx \delta^T_i &= G^T_i - \overline{v}(s_i) \label{eq:approxewithdelta}
-\end{equation}
+% \textbf{Truncation Bias}
+% When sampling $E$ using truncated rollouts of length $T$ rather than episodic episodes, 
+% one can use the $T$-step bootstrapped return, leading to the following approximation of $e_i$ 
+% \begin{equation}
+%   G^T_i &= \sum_{t=0}^{T-1} \gamma^t r_t + \gamma^T \overline{v}(s_T) | s_0=s_i \\
+%   e_i &\approx \delta^T_i &= G^T_i - \overline{v}(s_i) \label{eq:approxewithdelta}
+% \end{equation}
 
-The quality of the approximation in Equation \ref{eq:approxewithdelta} improves with $T$, becoming exact as $T \rightarrow \infty$. 
+% The quality of the approximation in Equation \ref{eq:approxewithdelta} improves with $T$, becoming exact as $T \rightarrow \infty$. 
 
-We call the bias in estimating the the Bellman Smoothed Value Error with $\delta^T_i$ instead of $e_i$ \textit{truncation bias}. Using the Generalized Advantage Estimation (GAE) with $\lambda=1$ on fixed-length rollouts will result in truncation bias increasing with the position in the rollout, finally resulting in $e_T$ being approximated by $\delta_t$. Examining the energy for this final transition:
+% We call the bias in estimating the the Bellman Smoothed Value Error with $\delta^T_i$ instead of $e_i$ \textit{truncation bias}. Using the Generalized Advantage Estimation (GAE) with $\lambda=1$ on fixed-length rollouts will result in truncation bias increasing with the position in the rollout, finally resulting in $e_T$ being approximated by $\delta_t$. Examining the energy for this final transition:
 
-\begin{align}
-  \mathcal{E}_T &\approx \frac{1}{2} (G_T - v(s_T) - G_{T+1} + v(s_{T+1}) )^2 \\
-  &\approx \frac{1}{2} (r_T + \gamma \overline v(s_{T+1}) - v(s_T) - (v(s_{T+1}) - v(s_{T+1}) ))^2 \\
-  &\approx \frac{1}{2} (r_T + \gamma \overline v(s_{T+1}) - v(s_T))^2
-\end{align}
+% \begin{align}
+%   \mathcal{E}_T &\approx \frac{1}{2} (G_T - v(s_T) - G_{T+1} + v(s_{T+1}) )^2 \\
+%   &\approx \frac{1}{2} (r_T + \gamma \overline v(s_{T+1}) - v(s_T) - (v(s_{T+1}) - v(s_{T+1}) ))^2 \\
+%   &\approx \frac{1}{2} (r_T + \gamma \overline v(s_{T+1}) - v(s_T))^2
+% \end{align}
 
-That is, the estimate of $E$ obtained at the final step in the batch reverts to $\mathcal{L}_{TD}$. 
+% That is, the estimate of $E$ obtained at the final step in the batch reverts to $\mathcal{L}_{TD}$. 
 
-\textbf{Experiment: Truncation Bias}
-We examine how truncation bias scales on small environments. We run PPO on each environment. PPO's update step first collects $B$ parallel trajectories of length $T$, and then updates the actor and critic for a number of gradient steps. At each update step, we compute the expectation of the gradient $\bm{g}^* = \mathbb{E}_\mu \nabla_\theta E$, and the estimate on the sampled data $\hat{\bm{g}} = \frac{1}{TB}\sum_{b=1}^B \sum_{t=1}^T \nabla_\theta l_e(s_{b,t}, s_{b,t+1}, G^T_{b,t}, G^T_{b, t+1})$. Both $\hat{\bm{g}}$ and $\bm{g}^*$ are length $k$ vectors in paramter space. The MSE $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ is the sum of the squared truncation bias and variance.
+% \textbf{Experiment: Truncation Bias}
+% We examine how truncation bias scales on small environments. We run PPO on each environment. PPO's update step first collects $B$ parallel trajectories of length $T$, and then updates the actor and critic for a number of gradient steps. At each update step, we compute the expectation of the gradient $\bm{g}^* = \mathbb{E}_\mu \nabla_\theta E$, and the estimate on the sampled data $\hat{\bm{g}} = \frac{1}{TB}\sum_{b=1}^B \sum_{t=1}^T \nabla_\theta l_e(s_{b,t}, s_{b,t+1}, G^T_{b,t}, G^T_{b, t+1})$. Both $\hat{\bm{g}}$ and $\bm{g}^*$ are length $k$ vectors in paramter space. The MSE $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ is the sum of the squared truncation bias and variance.
 
-% ------------------------------------------------------------------------------
-% Figure: Performance on Tasks with T
-% ------------------------------------------------------------------------------
-\begin{figure*}[ht]
-  \centering
-  \includegraphics[width=\textwidth]{figures/cross_env_policy_returns_all_T.pdf}
-  \caption{\textbf{Performance of PPO using E-Based Critic by Horizon} 
-  Performance of PPO with value learning due to the (sampled) Bellman Smoothed Value Loss for different horizon values $T$. Each horizon still has the same number of samples and gradient steps per update.}
-  \label{fig:small_ppo_performance_by_T}
-\end{figure*}
-% ------------------------------------------------------------------------------
-% End Figure
-% ------------------------
+% % ------------------------------------------------------------------------------
+% % Figure: Performance on Tasks with T
+% % ------------------------------------------------------------------------------
+% \begin{figure*}[ht]
+%   \centering
+%   \includegraphics[width=\textwidth]{figures/cross_env_policy_returns_all_T.pdf}
+%   \caption{\textbf{Performance of PPO using E-Based Critic by Horizon} 
+%   Performance of PPO with value learning due to the (sampled) Bellman Smoothed Value Loss for different horizon values $T$. Each horizon still has the same number of samples and gradient steps per update.}
+%   \label{fig:small_ppo_performance_by_T}
+% \end{figure*}
+% % ------------------------------------------------------------------------------
+% % End Figure
+% % ------------------------
 
-Figure \ref{fig:small_ppo_performance_by_T} shows performance during learning for each considered rollout length $T$, demonstrating that performance generally improved with $T$. 
+% Figure \ref{fig:small_ppo_performance_by_T} shows performance during learning for each considered rollout length $T$, demonstrating that performance generally improved with $T$. 
 
-Figure \ref{fig:squared_error_trajectories} shows estimated $\text{Bias}^2$ and Variance, finding that generally the bias decreases with $T$, while variance increases. 
+% Figure \ref{fig:squared_error_trajectories} shows estimated $\text{Bias}^2$ and Variance, finding that generally the bias decreases with $T$, while variance increases. 
 
-Figure \ref{fig:squared_error_trajectories} shows the mean squared error of the gradient $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ during learning. 
+% Figure \ref{fig:squared_error_trajectories} shows the mean squared error of the gradient $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ during learning. 
 
-% Figure \ref{fig:final_return_vs_T} shows final performance as a function of $T$.
-------------------------------------------------------
+% % Figure \ref{fig:final_return_vs_T} shows final performance as a function of $T$.
+% ------------------------------------------------------
 
-% ------------------------------------------------------------------------------
-% Figure 1: Main Bias-Variance Decomposition across Horizons T
-% ------------------------------------------------------------------------------
-\begin{figure*}[ht]
-  \centering
-  \includegraphics[width=\textwidth]{figures/cross_env_bias_variance_summary.pdf}
-  \caption{\textbf{Bias-Variance Trade-off in Bellman Error Gradient Estimation ($N = B \times T = 16{,}384$).} 
-  Decomposition of the total gradient mean squared error $\|\hat{\bm{g}} - \bm{g}^*\|_2^2 = \text{Bias}^2 + \text{Variance}$ across rollout horizons $T \in \{8, 64, 128, 512, 1024\}$. As the rollout horizon $T$ increases, truncation bias strictly decreases as the $T$-step return approximation $\delta_i^T \to e_i$ becomes exact. Concurrently, sample variance increases due to the reduced number of parallel trajectory rollouts $B = N / T$ under a fixed computational budget. Note that there is bias in the estimate of $\text{Bias}^2$ itself, preventing it from going to zero.}
-  \label{fig:truncation_bias_variance}
-\end{figure*}
-% ------------------------------------------------------------------------------
-% End Figure
-% ------------------------------------------------------------------------------
-% ------------------------------------------------------------------------------
-% Figure 2: Learning Curves (Gradient MSE Trajectories & Final Return vs T)
-% ------------------------------------------------------------------------------
-\begin{figure*}[t]
-  \centering
-  % Top panel: Full page width
-  \begin{subfigure}[b]{\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/cross_env_squared_error_trajectories.pdf}
-    \caption{Gradient Squared Error $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ Across Learning Updates (Log Scale)}
-    \label{fig:squared_error_trajectories}
-  \end{subfigure}
+% % ------------------------------------------------------------------------------
+% % Figure 1: Main Bias-Variance Decomposition across Horizons T
+% % ------------------------------------------------------------------------------
+% \begin{figure*}[ht]
+%   \centering
+%   \includegraphics[width=\textwidth]{figures/cross_env_bias_variance_summary.pdf}
+%   \caption{\textbf{Bias-Variance Trade-off in Bellman Error Gradient Estimation ($N = B \times T = 16{,}384$).} 
+%   Decomposition of the total gradient mean squared error $\|\hat{\bm{g}} - \bm{g}^*\|_2^2 = \text{Bias}^2 + \text{Variance}$ across rollout horizons $T \in \{8, 64, 128, 512, 1024\}$. As the rollout horizon $T$ increases, truncation bias strictly decreases as the $T$-step return approximation $\delta_i^T \to e_i$ becomes exact. Concurrently, sample variance increases due to the reduced number of parallel trajectory rollouts $B = N / T$ under a fixed computational budget. Note that there is bias in the estimate of $\text{Bias}^2$ itself, preventing it from going to zero.}
+%   \label{fig:truncation_bias_variance}
+% \end{figure*}
+% % ------------------------------------------------------------------------------
+% % End Figure
+% % ------------------------------------------------------------------------------
+% % ------------------------------------------------------------------------------
+% % Figure 2: Learning Curves (Gradient MSE Trajectories & Final Return vs T)
+% % ------------------------------------------------------------------------------
+% \begin{figure*}[t]
+%   \centering
+%   % Top panel: Full page width
+%   \begin{subfigure}[b]{\textwidth}
+%     \centering
+%     \includegraphics[width=\textwidth]{figures/cross_env_squared_error_trajectories.pdf}
+%     \caption{Gradient Squared Error $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ Across Learning Updates (Log Scale)}
+%     \label{fig:squared_error_trajectories}
+%   \end{subfigure}
   
-  \vspace{0.8em} % Spacing between panels
+%   \vspace{0.8em} % Spacing between panels
   
-  % Bottom panel: Full page width
-  \begin{subfigure}[b]{\textwidth}
-    \centering
-    \includegraphics[width=\textwidth]{figures/cross_env_final_return_vs_T.pdf}
-    \caption{Asymptotic Policy Performance $V^\pi(s_0)$ as a Function of Rollout Horizon $T$}
-    \label{fig:final_return_vs_T}
-  \end{subfigure}
+%   % Bottom panel: Full page width
+%   \begin{subfigure}[b]{\textwidth}
+%     \centering
+%     \includegraphics[width=\textwidth]{figures/cross_env_final_return_vs_T.pdf}
+%     \caption{Asymptotic Policy Performance $V^\pi(s_0)$ as a Function of Rollout Horizon $T$}
+%     \label{fig:final_return_vs_T}
+%   \end{subfigure}
   
-  \caption{\textbf{Gradient Error and Policy Performance by Rollout Length.} 
-  \textbf{(a)} The empirical gradient MSE $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ over policy updates across 7 environments. Shorter horizons suffer from persistent truncation bias floors, while longer horizons ($T \ge 512$) drive gradient error orders of magnitude lower. 
-  \textbf{(b)} Final policy return $V^\pi(s_0)$ vs. horizon $T$, demonstrating that reducing truncation bias usually improves downstream policy optimization.}
-  \label{fig:error_and_return_curves}
-\end{figure*}
-% ------------------------------------------------------------------------------
-% End Figure
-% ------------------------------------------------------------------------------
+%   \caption{\textbf{Gradient Error and Policy Performance by Rollout Length.} 
+%   \textbf{(a)} The empirical gradient MSE $\|\hat{\bm{g}} - \bm{g}^*\|_2^2$ over policy updates across 7 environments. Shorter horizons suffer from persistent truncation bias floors, while longer horizons ($T \ge 512$) drive gradient error orders of magnitude lower. 
+%   \textbf{(b)} Final policy return $V^\pi(s_0)$ vs. horizon $T$, demonstrating that reducing truncation bias usually improves downstream policy optimization.}
+%   \label{fig:error_and_return_curves}
+% \end{figure*}
+% % ------------------------------------------------------------------------------
+% % End Figure
+% % ------------------------------------------------------------------------------
 
 
-\section{Deep RL Experiments}
+% \section{Deep RL Experiments}
 
-\begin{figure*}[ht]
-  \centering
-  \includegraphics[width=\textwidth]{figures/td0_vs_e_gymnax.pdf}
-  \caption{\textbf{Gymnax TD(0) vs E(0).} 
-  Decomposition of the total gradient mean squared error $\|\hat{\bm{g}} - \bm{g}^*\|_2^2 = \text{Bias}^2 + \text{Variance}$ across rollout horizons $T \in \{8, 64, 128, 512, 1024\}$. As the rollout horizon $T$ increases, truncation bias strictly decreases as the $T$-step return approximation $\delta_i^T \to e_i$ becomes exact. Concurrently, sample variance increases due to the reduced number of parallel trajectory rollouts $B = N / T$ under a fixed computational budget. Note that there is bias in the estimate of $\text{Bias}^2$ itself, preventing it from going to zero.}
-  \label{fig:gymnaxetd}
-\end{figure*}
-
-
+% \begin{figure*}[ht]
+%   \centering
+%   \includegraphics[width=\textwidth]{figures/td0_vs_e_gymnax.pdf}
+%   \caption{\textbf{Gymnax TD(0) vs E(0).} 
+%   Decomposition of the total gradient mean squared error $\|\hat{\bm{g}} - \bm{g}^*\|_2^2 = \text{Bias}^2 + \text{Variance}$ across rollout horizons $T \in \{8, 64, 128, 512, 1024\}$. As the rollout horizon $T$ increases, truncation bias strictly decreases as the $T$-step return approximation $\delta_i^T \to e_i$ becomes exact. Concurrently, sample variance increases due to the reduced number of parallel trajectory rollouts $B = N / T$ under a fixed computational budget. Note that there is bias in the estimate of $\text{Bias}^2$ itself, preventing it from going to zero.}
+%   \label{fig:gymnaxetd}
+% \end{figure*}
 
 
 
-\subsection*{Bias-Variance Decomposition of Gradient Estimates}
-
-Let $\bm{g}^* = \mathbb{E}_{\mu^\pi}[\nabla_\theta \mathcal{E}]$ denote the exact expected Bellman error gradient in parameter space $\mathbb{R}^k$, and let $\hat{\bm{g}} \in \mathbb{R}^k$ denote the empirical gradient computed from a batch of $B$ rollout trajectories of horizon $T$. 
-
-\subsubsection*{1. Population Bias-Variance Decomposition}
-Defining the population expectation of the sampled gradient as $\bm{\mu}_{\hat{\bm{g}}} \triangleq \mathbb{E}[\hat{\bm{g}}]$, the total Mean Squared Error (MSE) decomposes into the squared truncation bias and the trace of the gradient covariance matrix:
-\begin{align}
-  \mathrm{MSE}(\hat{\bm{g}}) 
-  &\triangleq \mathbb{E}\left[ \|\hat{\bm{g}} - \bm{g}^*\|_2^2 \right] \nonumber \\
-  &= \mathbb{E}\left[ \|\left(\hat{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\right) + \left(\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\right)\|_2^2 \right] \nonumber \\
-  &= \|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2 
-     + \mathbb{E}\left[ \|\hat{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\|_2^2 \right] 
-     + 2\,\underbrace{\mathbb{E}\left[\hat{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\right]^\top}_{=\,\bm{0}} \left(\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\right) \nonumber \\
-  &= \underbrace{\|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2}_{\text{Truncation Bias}^2} 
-     + \underbrace{\vphantom{\|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2} \operatorname{Tr}\left(\operatorname{Cov}(\hat{\bm{g}})\right)}_{\text{Sample Variance}}. \label{eq:pop_bias_var}
-\end{align}
-
-\subsubsection*{2. Empirical Sample-Level Decomposition}
-In empirical experiments, we evaluate $M$ independent stochastic runs (seeds) $\{\hat{\bm{g}}^{(m)}\}_{m=1}^M$ under identical policy parameters, and compute the sample mean gradient:
-\begin{equation}
-  \bar{\bm{g}} = \frac{1}{M} \sum_{m=1}^M \hat{\bm{g}}^{(m)}.
-\end{equation}
-By Huygens' sum-of-squares identity, the total empirical MSE partitions exactly into two non-negative terms:
-\begin{align}
-  \underbrace{\frac{1}{M} \sum_{m=1}^M \|\hat{\bm{g}}^{(m)} - \bm{g}^*\|_2^2}_{\widehat{\mathrm{MSE}}} 
-  &= \underbrace{\|\bar{\bm{g}} - \bm{g}^*\|_2^2}_{\widehat{\mathrm{Bias}}^2_{\mathrm{sample}}} 
-   + \underbrace{\frac{1}{M} \sum_{m=1}^M \|\hat{\bm{g}}^{(m)} - \bar{\bm{g}}\|_2^2}_{\widehat{\mathrm{Var}}_{\mathrm{sample}}}. \label{eq:sample_bias_var}
-\end{align}
-This algebraic identity guarantees that $\widehat{\mathrm{MSE}} \equiv \widehat{\mathrm{Bias}}^2_{\mathrm{sample}} + \widehat{\mathrm{Var}}_{\mathrm{sample}}$ strictly holds across all seeds and horizons without leaving an unassigned residual or generating negative quantities on logarithmic plots.
-
-\subsubsection*{3. Finite-Sample Expectation of the Estimator}
-Taking the expectation of the empirical plug-in bias estimator $\widehat{\mathrm{Bias}}^2_{\mathrm{sample}}$ reveals that it is a biased estimator of the true population squared bias $\|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2$:
-\begin{align}
-  \mathbb{E}\left[ \widehat{\mathrm{Bias}}^2_{\mathrm{sample}} \right] 
-  &= \mathbb{E}\left[ \|\bar{\bm{g}} - \bm{g}^*\|_2^2 \right] \nonumber \\
-  &= \mathbb{E}\left[ \|\left(\bar{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\right) + \left(\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\right)\|_2^2 \right] \nonumber \\
-  &= \|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2 + \mathbb{E}\left[ \|\bar{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\|_2^2 \right] \nonumber \\
-  &= \|\text{Bias}(\hat{\bm{g}})\|_2^2 + \frac{1}{M} \operatorname{Tr}\left(\operatorname{Cov}(\hat{\bm{g}})\right). \label{eq:bias_floor}
-\end{align}
-Consequently, due to the convexity of the $L_2$ norm (Jensen's inequality), $\widehat{\mathrm{Bias}}^2_{\mathrm{sample}}$ carries an unavoidable additive variance penalty of $\frac{1}{M}\mathrm{Var}(\hat{\bm{g}})$. Even in the asymptotic limit where truncation bias vanishes ($\bm{\mu}_{\hat{\bm{g}}} \to \bm{g}^*$ as $T \to \infty$), the empirical sample bias hits a noise floor of $\frac{1}{M}\mathrm{Var}(\hat{\bm{g}}) > 0$.
-
-An unbiased estimator of population squared bias is given by:
-\begin{equation}
-  \widehat{\mathrm{Bias}}^2_{\mathrm{unbiased}} = \|\bar{\bm{g}} - \bm{g}^*\|_2^2 - \frac{1}{M-1}\widehat{\mathrm{Var}}_{\mathrm{sample}},
-\end{equation}
-which subtracts the finite-sample variance penalty at the expense of potentially admitting negative values under finite sample noise when the true bias is negligible.
 
 
-You can have as much text here as you want. The main body must be at most $8$
-pages long. For the final version, one more page can be added. If you want, you
-can use an appendix like this one.
+% \subsection*{Bias-Variance Decomposition of Gradient Estimates}
 
-The $\mathtt{\backslash onecolumn}$ command above can be kept in place if you
-prefer a one-column appendix, or can be removed if you prefer a two-column
-appendix.  Apart from this possible change, the style (font size, spacing,
-margins, page numbering, etc.) should be kept the same as the main body.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Let $\bm{g}^* = \mathbb{E}_{\mu^\pi}[\nabla_\theta \mathcal{E}]$ denote the exact expected Bellman error gradient in parameter space $\mathbb{R}^k$, and let $\hat{\bm{g}} \in \mathbb{R}^k$ denote the empirical gradient computed from a batch of $B$ rollout trajectories of horizon $T$. 
 
-\end{document}
+% \subsubsection*{1. Population Bias-Variance Decomposition}
+% Defining the population expectation of the sampled gradient as $\bm{\mu}_{\hat{\bm{g}}} \triangleq \mathbb{E}[\hat{\bm{g}}]$, the total Mean Squared Error (MSE) decomposes into the squared truncation bias and the trace of the gradient covariance matrix:
+% \begin{align}
+%   \mathrm{MSE}(\hat{\bm{g}}) 
+%   &\triangleq \mathbb{E}\left[ \|\hat{\bm{g}} - \bm{g}^*\|_2^2 \right] \nonumber \\
+%   &= \mathbb{E}\left[ \|\left(\hat{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\right) + \left(\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\right)\|_2^2 \right] \nonumber \\
+%   &= \|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2 
+%      + \mathbb{E}\left[ \|\hat{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\|_2^2 \right] 
+%      + 2\,\underbrace{\mathbb{E}\left[\hat{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\right]^\top}_{=\,\bm{0}} \left(\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\right) \nonumber \\
+%   &= \underbrace{\|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2}_{\text{Truncation Bias}^2} 
+%      + \underbrace{\vphantom{\|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2} \operatorname{Tr}\left(\operatorname{Cov}(\hat{\bm{g}})\right)}_{\text{Sample Variance}}. \label{eq:pop_bias_var}
+% \end{align}
 
-% This document was modified from the file originally made available by
-% Pat Langley and Andrea Danyluk for ICML-2K. This version was created
-% by Iain Murray in 2018, and modified by Alexandre Bouchard in
-% 2019 and 2021 and by Csaba Szepesvari, Gang Niu and Sivan Sabato in 2022.
-% Modified again in 2023 and 2024 by Sivan Sabato and Jonathan Scarlett.
-% Previous contributors include Dan Roy, Lise Getoor and Tobias
-% Scheffer, which was slightly modified from the 2010 version by
-% Thorsten Joachims & Johannes Fuernkranz, slightly modified from the
-% 2009 version by Kiri Wagstaff and Sam Roweis's 2008 version, which is
-% slightly modified from Prasad Tadepalli's 2007 version which is a
-% lightly changed version of the previous year's version by Andrew
-% Moore, which was in turn edited from those of Kristian Kersting and
-% Codrina Lauth. Alex Smola contributed to the algorithmic style files.
+% \subsubsection*{2. Empirical Sample-Level Decomposition}
+% In empirical experiments, we evaluate $M$ independent stochastic runs (seeds) $\{\hat{\bm{g}}^{(m)}\}_{m=1}^M$ under identical policy parameters, and compute the sample mean gradient:
+% \begin{equation}
+%   \bar{\bm{g}} = \frac{1}{M} \sum_{m=1}^M \hat{\bm{g}}^{(m)}.
+% \end{equation}
+% By Huygens' sum-of-squares identity, the total empirical MSE partitions exactly into two non-negative terms:
+% \begin{align}
+%   \underbrace{\frac{1}{M} \sum_{m=1}^M \|\hat{\bm{g}}^{(m)} - \bm{g}^*\|_2^2}_{\widehat{\mathrm{MSE}}} 
+%   &= \underbrace{\|\bar{\bm{g}} - \bm{g}^*\|_2^2}_{\widehat{\mathrm{Bias}}^2_{\mathrm{sample}}} 
+%    + \underbrace{\frac{1}{M} \sum_{m=1}^M \|\hat{\bm{g}}^{(m)} - \bar{\bm{g}}\|_2^2}_{\widehat{\mathrm{Var}}_{\mathrm{sample}}}. \label{eq:sample_bias_var}
+% \end{align}
+% This algebraic identity guarantees that $\widehat{\mathrm{MSE}} \equiv \widehat{\mathrm{Bias}}^2_{\mathrm{sample}} + \widehat{\mathrm{Var}}_{\mathrm{sample}}$ strictly holds across all seeds and horizons without leaving an unassigned residual or generating negative quantities on logarithmic plots.
+
+% \subsubsection*{3. Finite-Sample Expectation of the Estimator}
+% Taking the expectation of the empirical plug-in bias estimator $\widehat{\mathrm{Bias}}^2_{\mathrm{sample}}$ reveals that it is a biased estimator of the true population squared bias $\|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2$:
+% \begin{align}
+%   \mathbb{E}\left[ \widehat{\mathrm{Bias}}^2_{\mathrm{sample}} \right] 
+%   &= \mathbb{E}\left[ \|\bar{\bm{g}} - \bm{g}^*\|_2^2 \right] \nonumber \\
+%   &= \mathbb{E}\left[ \|\left(\bar{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\right) + \left(\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\right)\|_2^2 \right] \nonumber \\
+%   &= \|\bm{\mu}_{\hat{\bm{g}}} - \bm{g}^*\|_2^2 + \mathbb{E}\left[ \|\bar{\bm{g}} - \bm{\mu}_{\hat{\bm{g}}}\|_2^2 \right] \nonumber \\
+%   &= \|\text{Bias}(\hat{\bm{g}})\|_2^2 + \frac{1}{M} \operatorname{Tr}\left(\operatorname{Cov}(\hat{\bm{g}})\right). \label{eq:bias_floor}
+% \end{align}
+% Consequently, due to the convexity of the $L_2$ norm (Jensen's inequality), $\widehat{\mathrm{Bias}}^2_{\mathrm{sample}}$ carries an unavoidable additive variance penalty of $\frac{1}{M}\mathrm{Var}(\hat{\bm{g}})$. Even in the asymptotic limit where truncation bias vanishes ($\bm{\mu}_{\hat{\bm{g}}} \to \bm{g}^*$ as $T \to \infty$), the empirical sample bias hits a noise floor of $\frac{1}{M}\mathrm{Var}(\hat{\bm{g}}) > 0$.
+
+% An unbiased estimator of population squared bias is given by:
+% \begin{equation}
+%   \widehat{\mathrm{Bias}}^2_{\mathrm{unbiased}} = \|\bar{\bm{g}} - \bm{g}^*\|_2^2 - \frac{1}{M-1}\widehat{\mathrm{Var}}_{\mathrm{sample}},
+% \end{equation}
+% which subtracts the finite-sample variance penalty at the expense of potentially admitting negative values under finite sample noise when the true bias is negligible.
+
+
+% You can have as much text here as you want. The main body must be at most $8$
+% pages long. For the final version, one more page can be added. If you want, you
+% can use an appendix like this one.
+
+% The $\mathtt{\backslash onecolumn}$ command above can be kept in place if you
+% prefer a one-column appendix, or can be removed if you prefer a two-column
+% appendix.  Apart from this possible change, the style (font size, spacing,
+% margins, page numbering, etc.) should be kept the same as the main body.
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+% % This document was modified from the file originally made available by
+% % Pat Langley and Andrea Danyluk for ICML-2K. This version was created
+% % by Iain Murray in 2018, and modified by Alexandre Bouchard in
+% % 2019 and 2021 and by Csaba Szepesvari, Gang Niu and Sivan Sabato in 2022.
+% % Modified again in 2023 and 2024 by Sivan Sabato and Jonathan Scarlett.
+% % Previous contributors include Dan Roy, Lise Getoor and Tobias
+% % Scheffer, which was slightly modified from the 2010 version by
+% % Thorsten Joachims & Johannes Fuernkranz, slightly modified from the
+% % 2009 version by Kiri Wagstaff and Sam Roweis's 2008 version, which is
+% % slightly modified from Prasad Tadepalli's 2007 version which is a
+% % lightly changed version of the previous year's version by Andrew
+% % Moore, which was in turn edited from those of Kristian Kersting and
+% % Codrina Lauth. Alex Smola contributed to the algorithmic style files.
 

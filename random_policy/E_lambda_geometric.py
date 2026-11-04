@@ -112,7 +112,7 @@ def make_train(base_config):
 
             # 4. PREPARE JUMP PAIRS ONCE PER ROLLOUT
             rng, _rng = jax.random.split(rng)
-            jump_mode = config.get("E_LAMBDA_JUMP_MODE", "mc_invalid_jump")
+            jump_mode = config.get("E_LAMBDA_JUMP_MODE", "full_mc_invalid_jump")
             if config.get("E_LAMBDA_FULL_WEIGHT_MC", config.get("FULL_WEIGHT_MC_INVALID", False)):
                 jump_mode = "full_mc_invalid_jump"
 

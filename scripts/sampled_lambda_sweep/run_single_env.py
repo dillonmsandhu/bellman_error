@@ -125,8 +125,8 @@ def parse_args():
     parser.add_argument("--out_dir", type=str, default="results/sampled_lambda_sweep", help="Root output directory")
     parser.add_argument("--algos", type=str, nargs="+", default=["td_lambda", "e_lambda", "e_lambda_fwd"], choices=["td_lambda", "e_lambda", "e_lambda_fwd"], help="Algorithms to evaluate")
     parser.add_argument("--eval_grad_fidelity", action="store_true", default=True, help="Compute exact gradient MSE, variance, and cossim (default: True)")
-    parser.add_argument("--jump_mode", type=str, default="mc_invalid_jump", choices=["mc_invalid_jump", "full_mc_invalid_jump", "mc_full_weight", "drop_invalid_jump"], help="Invalid jump handling mode (default: mc_invalid_jump)")
-    parser.add_argument("--full_weight_mc", action="store_true", default=False, help="Train at full weight towards MC target on invalid jumps")
+    parser.add_argument("--jump_mode", type=str, default="full_mc_invalid_jump", choices=["full_mc_invalid_jump", "mc_invalid_jump", "mc_full_weight", "drop_invalid_jump"], help="Invalid jump handling mode (default: full_mc_invalid_jump)")
+    parser.add_argument("--full_weight_mc", action="store_true", default=True, help="Train at full weight towards MC target on invalid jumps")
     return parser.parse_args()
 
 
