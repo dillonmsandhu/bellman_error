@@ -60,9 +60,10 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
-def make_custom_train(base_config, mode="boot_v"):
+def make_custom_train(base_config, mode="boot_self"):
     """
-    mode in ["boot_v", "boot_self", "fwd_only"]
+    mode in ["boot_self", "fwd_only"]
+    v_aux automatically self-bootstraps from its own predictions.
     """
     base_config = base_config.copy()
     batch_size = base_config["NUM_STEPS"] * base_config["NUM_ENVS"]
@@ -126,18 +127,14 @@ def make_custom_train(base_config, mode="boot_v"):
             advantages, _ = helpers.calculate_gae(traj_batch, config["GAMMA"], config["GAE_LAMBDA"])
             _, returns_v = helpers.calculate_gae(traj_batch, config["GAMMA"], config["RETURN_LAMBDA"])
 
-            # 3. COMPUTE AUX TARGET RETURNS
-            if mode == "boot_self":
-                # Self-bootstrapping for v_aux: evaluate aux_network on obs and horizon next_obs
-                aux_vals = aux_network.apply(aux_train_state.params, traj_batch.obs)
-                final_next_aux_val = aux_network.apply(aux_train_state.params, traj_batch.next_obs[-1])
-                next_aux_vals = jnp.concatenate([aux_vals[1:], final_next_aux_val[None]], axis=0)
-
-                traj_batch_aux = traj_batch._replace(value=aux_vals, next_value=next_aux_vals)
-                _, returns_aux = helpers.calculate_gae(traj_batch_aux, config["GAMMA"], config["RETURN_LAMBDA"])
-            else:
-                # Baseline: v_aux bootstraps off primary critic v
-                returns_aux = returns_v
+            # 3. SELF-BOOTSTRAPPED AUXILIARY RETURNS
+            returns_aux = helpers.calculate_self_bootstrapped_aux_returns(
+                aux_network=aux_network,
+                aux_params=aux_train_state.params,
+                traj_batch=traj_batch,
+                gamma=config["GAMMA"],
+                return_lambda=config["RETURN_LAMBDA"],
+            )
 
             # 4. PREPARE JUMP PAIRS ONCE PER ROLLOUT
             rng, _rng = jax.random.split(rng)
@@ -276,10 +273,9 @@ def make_custom_train(base_config, mode="boot_v"):
 
 def run_benchmark():
     envs = ["fourrooms-mines", "mountaincar"]
-    modes = ["boot_v", "boot_self", "fwd_only"]
+    modes = ["boot_self", "fwd_only"]
     mode_names = {
-        "boot_v": "E(0.50) [v_aux: boot from v] (Baseline)",
-        "boot_self": "E(0.50) [v_aux: boot from self] (New)",
+        "boot_self": "E(0.50) [v_aux: self-bootstrapped]",
         "fwd_only": "E(0.50) [Forward-Only]",
     }
 

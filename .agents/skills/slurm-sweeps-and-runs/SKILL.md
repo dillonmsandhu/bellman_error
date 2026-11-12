@@ -144,11 +144,21 @@ fi
 
 ## 4. Submission Dispatcher & Chained Post-Processing
 
-To automatically generate plots/diagnostics as soon as all array tasks complete, provide a dispatcher script `submit_*.sh` that chains a dependent job via `--dependency=afterany:<ARRAY_JOB_ID>`:
+Always route SLURM logs under `slurm/{DATE}/{SWEEP}/` so experiments remain cleanly organized by execution date and sweep name.
+
+To automatically generate plots/diagnostics as soon as all array tasks complete, provide a dispatcher script `submit_*.sh` that configures `LOG_DIR`, passes explicit log paths to `sbatch`, and chains a dependent job via `--dependency=afterany:<ARRAY_JOB_ID>`:
 
 ```bash
-# 1. Submit Array Job
+DATE=${DATE:-$(date +%Y-%m-%d)}
+SWEEP_NAME="my_sweep"
+LOG_DIR="slurm/${DATE}/${SWEEP_NAME}"
+mkdir -p "$LOG_DIR"
+
+# 1. Submit Array Job with explicit log outputs
 SBATCH_ARRAY_CMD="sbatch --parsable \
+    --chdir=\"$REPO_ROOT\" \
+    --output=\"${LOG_DIR}/%A_%a.out\" \
+    --error=\"${LOG_DIR}/%A_%a.err\" \
     --export=ALL,SWEEP_ID=$SWEEP_ID,SLURM_SUBMIT_DIR=$REPO_ROOT \
     \"$ARRAY_SCRIPT\""
 ARRAY_JOB_ID=$(eval "$SBATCH_ARRAY_CMD")
@@ -156,8 +166,10 @@ ARRAY_JOB_ID=$(eval "$SBATCH_ARRAY_CMD")
 # 2. Submit Chained Post-Processing (Runs after array finishes)
 sbatch \
     --dependency=afterany:$ARRAY_JOB_ID \
+    --chdir="$REPO_ROOT" \
     --job-name="plot_${SWEEP_ID}" \
-    --output="slurm/%j_plot_${SWEEP_ID}.out" \
+    --output="${LOG_DIR}/%j_plot_${SWEEP_ID}.out\" \
+    --error="${LOG_DIR}/%j_plot_${SWEEP_ID}.err\" \
     --time=00:30:00 \
     --partition=compsci \
     --wrap="$PYTHON '$PLOT_SCRIPT' --sweep-id '$SWEEP_ID'"

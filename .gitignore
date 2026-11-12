@@ -226,6 +226,9 @@ slurmslurm/
 .DS_Store
 .agents/*
 !.agents/skills/
+!.agents/rules/
+external_*
+*.code-workspace
 .vscode/
 .python-version.bak
 scratch/
