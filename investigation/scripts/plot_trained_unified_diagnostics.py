@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import pickle
 import numpy as np
 import pandas as pd
 import jax
@@ -119,25 +120,36 @@ def train_and_average(
     jac_fn = jax.jit(jax.vmap(jax.jacrev(single_v), in_axes=(None, 0)))
 
     n_chunks = steps // eval_every
-    ntk_all, rho_all, cos_all = [], [], []
+    ntk_traj, rho_traj, cos_traj = [], [], []
 
     for s in seeds:
         params = net.init(jax.random.PRNGKey(s), obs_j[:1])
         opt_state = tx.init(params)
+        s_ntk, s_rho, s_cos = [], [], []
 
         ntk0, rho0, cos0 = eval_checkpoint(net, params, obs_j, jac_fn, mu, P_pi, A, S, A_fwd, V)
-        ntk_all.append(ntk0)
-        rho_all.append(rho0)
-        cos_all.append(cos0)
+        s_ntk.append(ntk0)
+        s_rho.append(rho0)
+        s_cos.append(cos0)
 
         for _ in range(n_chunks):
             params, opt_state = update_chunk(params, opt_state)
             ntk_c, rho_c, cos_c = eval_checkpoint(net, params, obs_j, jac_fn, mu, P_pi, A, S, A_fwd, V)
-            ntk_all.append(ntk_c)
-            rho_all.append(rho_c)
-            cos_all.append(cos_c)
+            s_ntk.append(ntk_c)
+            s_rho.append(rho_c)
+            s_cos.append(cos_c)
 
-    return float(np.mean(ntk_all)), float(np.mean(rho_all)), float(np.mean(cos_all))
+        ntk_traj.append(s_ntk)
+        rho_traj.append(s_rho)
+        cos_traj.append(s_cos)
+
+    traj = {
+        "steps": [i * eval_every for i in range(n_chunks + 1)],
+        "ntk_sum": np.asarray(ntk_traj),
+        "rho_c": np.asarray(rho_traj),
+        "cos_fwd": np.asarray(cos_traj),
+    }
+    return float(np.mean(ntk_traj)), float(np.mean(rho_traj)), float(np.mean(cos_traj)), traj
 
 
 def main():
@@ -145,6 +157,7 @@ def main():
     gamma = 0.99
     policy = "optimal"
     records = []
+    trajectories = {}
 
     env_specs = [
         ("FourRooms-misc", "FourRooms", True, True),
@@ -161,8 +174,9 @@ def main():
         A = np.diag(mu) @ (np.eye(n_states) - gamma * P_pi)
         env_sum = eig_rotation_metric(np.linalg.eigvals(A), metric="sum")
 
-        ntk_s, rho, cf = train_and_average(MLPNet(), np.eye(n_states, dtype=np.float32), mu, P_pi, V, gamma)
+        ntk_s, rho, cf, traj = train_and_average(MLPNet(), np.eye(n_states, dtype=np.float32), mu, P_pi, V, gamma)
         records.append({"env": label, "rep": "1-Hot + MLP", "env_sum": env_sum, "ntk_sum": ntk_s, "rho_c": rho, "cos_fwd": cf})
+        trajectories[(label, "1-Hot + MLP")] = traj
 
         if has_xy:
             if "mountaincar" in env_name.lower():
@@ -170,13 +184,15 @@ def main():
                 xy_obs = ((obs_stack - lo) / np.maximum(hi - lo, 1e-6)).astype(np.float32)
             else:
                 xy_obs = extract_grid_xy(obs_stack)
-            ntk_s, rho, cf = train_and_average(MLPNet(), xy_obs, mu, P_pi, V, gamma)
+            ntk_s, rho, cf, traj = train_and_average(MLPNet(), xy_obs, mu, P_pi, V, gamma)
             records.append({"env": label, "rep": "(x, y) + MLP", "env_sum": env_sum, "ntk_sum": ntk_s, "rho_c": rho, "cos_fwd": cf})
+            trajectories[(label, "(x, y) + MLP")] = traj
 
         if has_cnn:
             cnn_obs = mountaincar_to_grid(obs_stack) if "mountaincar" in env_name.lower() else obs_stack
-            ntk_s, rho, cf = train_and_average(GridCNN2D(), cnn_obs, mu, P_pi, V, gamma)
+            ntk_s, rho, cf, traj = train_and_average(GridCNN2D(), cnn_obs, mu, P_pi, V, gamma)
             records.append({"env": label, "rep": "Grid CNN", "env_sum": env_sum, "ntk_sum": ntk_s, "rho_c": rho, "cos_fwd": cf})
+            trajectories[(label, "Grid CNN")] = traj
 
     mrp_c = build_chain_mrp(N=32, gamma=gamma, p_fwd=0.75, ring=False)
     N = mrp_c["N"]
@@ -188,14 +204,23 @@ def main():
         ("Grid CNN", GridCNN1D(), np.eye(N, dtype=np.float32)[:, :, None]),
         ("CNN (AvgPool)", ChainCNN(use_avg_pool=True), np.eye(N, dtype=np.float32)[:, :, None]),
     ]:
-        ntk_s, rho, cf = train_and_average(net, obs_c, mrp_c["mu"], mrp_c["P_ep"], mrp_c["V"], gamma)
+        ntk_s, rho, cf, traj = train_and_average(net, obs_c, mrp_c["mu"], mrp_c["P_ep"], mrp_c["V"], gamma)
         records.append({"env": "Chain (p_fwd=0.75)", "rep": rep_name, "env_sum": env_sum_c, "ntk_sum": ntk_s, "rho_c": rho, "cos_fwd": cf})
+        trajectories[("Chain (p_fwd=0.75)", rep_name)] = traj
 
     df = pd.DataFrame(records)
     print(df.to_string(index=False))
 
+    fig_dir = os.path.join(REPO_ROOT, "investigation", "figures")
+    os.makedirs(fig_dir, exist_ok=True)
+    csv_path = os.path.join(fig_dir, "unified_diagnostics_optimal_trained_summary.csv")
+    pkl_path = os.path.join(fig_dir, "unified_diagnostics_optimal_trained_trajectories.pkl")
+    df.to_csv(csv_path, index=False)
+    with open(pkl_path, "wb") as f:
+        pickle.dump(trajectories, f)
+
     make_plot(df, policy="optimal", out_name="unified_diagnostics_optimal_trained", title_suffix=", Avg over 100 Steps")
-    print(f"\nSaved unified_diagnostics_optimal_trained.{{png,pdf}} in {time.time() - t0:.1f}s")
+    print(f"\nSaved {csv_path}, {pkl_path}, and unified_diagnostics_optimal_trained.{{png,pdf}} in {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":
