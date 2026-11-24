@@ -48,4 +48,10 @@ config = {
     "LIGHT_METRICS": True,
     "POLICY_COEFF": 1.0,
     "RECOMPUTE_TARGETS_EACH_EPOCH": False,
+    "AUX_VF_COEF": 1.0,
+    "SHARED_TORSO": True,
+    "ROT_GATE_TAU": 0.25,
+    "ROT_GATE_EMA": 0.8,
+    "ROT_GATE_MODE": "adaptive",  # "adaptive", "forward_only", "full_e"
+    "ROT_PROBE_BATCH": 256,
 }
