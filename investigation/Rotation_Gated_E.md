@@ -72,9 +72,23 @@ To prevent single-minibatch divide-by-zero spikes (when a noisy batch occasional
 $$
 \bar{r}_{\text{rot}} \doteq \frac{\bar{\beta}_{\text{eff}}}{\max(\bar{\alpha}_{\text{eff}},\, 10^{-6})}.
 $$
-Notice why $\bar{r}_{\text{rot}}$ is an ideal detector:
-- **Reversible MDP ($K = 0$) even with aliased features:** forward and reverse transitions cancel in $\hat{K}_J u \to \mathbf{0}$, so $\bar{\beta}_{\text{eff}} \approx 0 \implies \bar{r}_{\text{rot}} \approx 0$ (zero false positives).
-- **Irreversible MDP ($K \neq 0$) + aliased features:** $\bar{\alpha}_{\text{eff}}$ collapses while $\bar{\beta}_{\text{eff}}$ stays large, driving $\bar{r}_{\text{rot}} \gtrsim 1$.
+#### Centering the JVP/VJP ($J_c = J - \mathbb{E}_\mu[J]$) to Remove the Episodic Bias Artifact
+In any value network with an output bias, the Jacobian decomposes into a constant (DC) mean gradient and a spatially centered component:
+$$
+J = \mathbf{1}\,\bar{g}^\intercal + J_c, \qquad \bar{g} \doteq \mathbb{E}_\mu[\nabla \mathbf{v}(s)], \qquad J_c \doteq J - \mathbf{1}\,\bar{g}^\intercal.
+$$
+For the constant mode $j = \mathbf{1}$, consecutive states have zero difference ($j(s) - j(s') = 0$), so $\mathbf{1}^\intercal S \mathbf{1} = 1 - \gamma$ is tiny. Meanwhile, in an **episodic** MDP, probability enters at start states and exits at terminal states ($D P_{\text{ep}} \mathbf{1} \neq P_{\text{ep}}^\intercal D \mathbf{1}$), so $K \mathbf{1} \neq \mathbf{0}$. Consequently, whenever $u$ aligns with the output bias (e.g. at step 0 when $v_\theta \approx 0$ or late in training), uncentered $r_{\text{rot}}$ artificially spikes even when true spatial cancellation $\tilde{T}_2 / \tilde{T}_1 \approx 0$.
+
+Replacing $J$ with the centered Jacobian $J_c$ (matching the centered NTK $\Theta_c = J_c J_c^\intercal$ in `Investigation_into_TD_vs_E.md`) removes this artifact at **zero extra compute** via three mean-subtractions:
+1. Center the probe TD errors before forming $u_c$: $\delta_b \leftarrow \delta_b - \bar{\delta}$ (so $u_c = \mathrm{normalize}(J_c^\intercal (-A \mathbf{e}))$).
+2. Center the JVP output: $j_c = j_{u_c} - \mathbb{E}_\mu[j_{u_c}]$.
+3. Center the VJP pullback weights: $w_k \leftarrow w_k - \mathbb{E}_\mu[w_k]$ (so $J_c^\intercal w_k = J^\intercal(w_k - (\mathbf{1}^\intercal w_k)\mu)$).
+
+Across 14 tabular environment-representation pairs (`Chain 0.75`, `FourRooms`, `Space Invaders`, `Whirlpool`, `MountainCar` $\times$ `1-Hot + MLP`, `(x, y) + MLP`, `Grid CNN`, `CNN AvgPool`), centering lifts correlation with true $\tilde{T}_2 / \tilde{T}_1$ from **Spearman $\rho = +0.670 \to +0.776$** (Pearson $r = +0.658 \to +0.721$), placing every low-cancellation run in $\bar{r}_{\text{rot}, c} \in [0.40, 0.82]$ (`Space Invaders Grid CNN` lowest at `0.399`) and every aliased `(x, y) + MLP` failure mode in $[1.18, 2.53]$.
+
+Notice why $\bar{r}_{\text{rot}, c}$ is an ideal detector:
+- **Reversible MDP ($K = 0$) even with aliased features:** forward and reverse transitions cancel in $\hat{K}_J u \to \mathbf{0}$, so $\bar{\beta}_{\text{eff}} \approx 0 \implies \bar{r}_{\text{rot}, c} \approx 0$ (zero false positives).
+- **Irreversible MDP ($K \neq 0$) + aliased features:** $\bar{\alpha}_{\text{eff}}$ collapses while $\bar{\beta}_{\text{eff}}$ stays large, driving $\bar{r}_{\text{rot}, c} \gtrsim 1$.
 
 #### Closed-Form Contraction Gate $\omega^*$
 To **guarantee** that the worst-case gated cancellation stays at or below a target tolerance $\tau \in (0, 1]$:
@@ -124,3 +138,8 @@ We implemented this online gate directly on top of `E_sample_v_aux_surgical.py` 
 *(Note: table VE numbers shown for `adaptive` were measured at $c = 1.0$, $\omega = 0.010$ on `FourRooms-misc` and $\omega = 0.454$ on `mountaincar`; with the derived $\omega^*(\bar{r}_{\text{rot}}; \tau = 0.25)$, `FourRooms-misc` is identically $\omega^* = 0.000$ and `mountaincar` increases to $\omega^* = 0.600$, moving even closer to `full_e`.)*
 
 The online JVP+VJP detector achieves an **11× separation** in $\bar{r}_{\text{rot}}$ between reversible `FourRooms-misc` (`0.088`) and irreversible/aliased `mountaincar` (`1.001`)—entirely from single-trajectory samples, with zero `v_aux` dependency.
+
+#### Exact `Space Invaders` Diagnostic (Centered JVP)
+On exact tabular `Space Invaders` (`SpaceInvadersExactValue`, near-optimal policy, `Grid CNN`, $\gamma = 0.99$), the branching DAG structure keeps true contraction cancellation small (`8.3%`), so `TD(0)` and `Full E(0)` are nearly identical. With the centered JVP, peak $\bar{r}_{\text{rot}, c}$ drops from `1.135` to `0.658` (eliminating the $>1$ step-0 bias spike), and `Rot-Gated E(0)` achieves the lowest final Relative MSE (`0.00203` vs. `0.00206` for `TD(0)` and `0.00249` for `Full E(0)`):
+
+![Exact Space Invaders Diagnostic with Centered JVP](figures/space_invaders_gated_diagnostic.png)
